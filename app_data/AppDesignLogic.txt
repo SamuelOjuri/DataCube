@@ -1,0 +1,215 @@
+I need to extract the necessary data from the Monday CRM boards:
+"""
+PARENT_BOARD_ID = "1825117125"   # Tapered Enquiry Maintenance (main)
+SUBITEM_BOARD_ID = "1825117144"  # Source subitems board
+HIDDEN_ITEMS_BOARD_ID = "1825138260"  # Tapered Hidden Items (source of truth)
+"""
+The extracted data should be stored in an appropriate format that can be easily fed to an LLM to make real time analysis to give some desired results.
+
+Below are the details for the desired results from the LLM:
+"""
+Based on the existing data, can you give me the Expected Gestation Period and Conversion Rate, also give the project a Rating Score between 1 and 100, with 1 being the lowest (bad project) and 100 being the highest (good project).
+ 
+Please look at the data for each record that matches the Account, Project Type, Category, New Enquiry Value, Gestation Period, and Product Type for inference (Each item/record in the parent board is a project)
+ 
+Please note that the Conversion Rate is worked out by looking at the number of Won - Open / Won - Closed projects, against those that are Lost / Open enquiry
+
+Desired Results:
+⦁	Expected Gestation Period
+⦁	Expected Conversion Rate
+⦁	Rating Score [between 1 and 100, with 1 being the lowest (bad project) and 100 being the highest (good project)]
+⦁	Reasoning for each result provided
+"""
+
+Column of Interest	         Column ID	           Title in Board	           Type
+Account	                    lookup_mkq010zk        "Account Mirror"	           mirror
+Project Type	            dropdown7__1	       "Type"	                   dropdown
+Category	                dropdown__1	           "Category"	               dropdown
+New Enquiry Value	        lookup_mkqanpbe	       "New Enq Value"	           mirror
+Gestation Period	        formula_mkpp85yw	   "Gestation Period (DAYS)"   formula
+Product Type	            lookup_mkt3xgz1	       "Product Mirror"	           mirror
+
+
+From the mirror column settings, note that:
+lookup_mkq010zk (Account Mirror) mirrors from mirror_12__1 in subitems
+lookup_mkt3xgz1 (Product Mirror) mirrors from mirror875__1 in subitems
+
+
+Note Number of Items in Boards for data calculations and aggregation:
+{
+    "data": {
+        "boards": [
+            {
+                "id": "1825117125",
+                "name": "Tapered Enquiry Maintenance",
+                "items_count": 13708
+            }
+        ]
+    }
+}
+##########
+{
+    "data": {
+        "boards": [
+            {
+                "id": "1825117144",
+                "name": "Subitems of Tapered Enquiry Maintenance",
+                "items_count": 32836
+            }
+        ]
+    }
+}
+#########
+{
+    "data": {
+        "boards": [
+            {
+                "id": "1825138260",
+                "name": "Tapered Hidden Items",
+                "items_count": 32962
+            }
+        ]
+    }
+}
+
+
+Understanding the Formula Dependencies
+
+From the schema:
+1.	formula_mkqa31kh (New Enquiry Value):
+⦁	Formula: IF({mirror03__1} = "New Enquiry", {mirror77__1}, 0)
+⦁	Depends on mirror03__1 (Reason For Change) and mirror77__1 (Quote Amount)
+hidden_items columns:
+- 'quote_amount': 'formula63__1',          # Quote Amount
+- 'reason_for_change': 'dropdown2__1',     # Reason For Change
+
+2. mirror35__1 (Gestation Period):
+⦁	This is a mirror that pulls from another board (1825138260)
+⦁	Gets data from formula1__1 on the connected board
+
+###########################
+PARENT BOARD SCHEMA (1825117125):
+                    {
+                        "id": "lookup_mkqanpbe",
+                        "title": "New Enq Value",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkqa31kh\"]}}"
+                    },
+
+
+ Sub_items board details (1825117144):
+		   
+                   {
+                        "id": "formula_mkqa31kh",
+                        "title": "New Enquiry Value",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF({mirror03__1} = \\\"New Enquiry\\\",{mirror77__1},0)\"}"
+                    },
+		    
+                    {
+                        "id": "mirror03__1",
+                        "title": "Reason For Change",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"dropdown2__1\"]}}"
+                    },
+
+                    {
+                        "id": "mirror77__1",
+                        "title": "Quote Amount",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"formula63__1\"]}}"
+                    },
+
+
+Tapered Hidden Items Board Schema (1825138260)
+		{
+                        "id": "formula63__1",
+                        "title": "Quote Amount",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"ROUND(({numbers22__1} + {numbers9__1}) / (1- ({formula__1}/100)),2)\\n\\n\\n\\n\"}"
+                    },
+
+###########################
+
+       PARENT BOARD SCHEMA (1825117125):  Formula: [ IF(ROUNDUP(DAYS({FDI}, {FDD Date}),0)>500000,0,ROUNDUP(DAYS({FDI}, {FDD Date}),0))   ]
+		    {
+                        "id": "formula_mkpp85yw",
+                        "title": "Gestation Period (DAYS)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF(ROUNDUP(DAYS({formula_mkppyqzg}, {formula_mkppmyke}),0)\\u003e500000,0,ROUNDUP(DAYS({formula_mkppyqzg}, {formula_mkppmyke}),0))\\r\\n\"}"
+                    },
+
+		    {
+                        "id": "formula_mkppyqzg",
+                        "title": "FDI",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"FORMAT_DATE({lookup_mkppq0gc})\"}"
+                    },
+
+		    {
+                        "id": "formula_mkppmyke",
+                        "title": "FDD Date",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"FORMAT_DATE({lookup_mkpptgsn})\"}"
+                    },
+		    {
+                        "id": "lookup_mkppq0gc",
+                        "title": "First Date Invoiced",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkppwkkq\"]},\"function\":\"min\"}"
+                    },
+		    {
+                        "id": "lookup_mkpptgsn",
+                        "title": "First Date Designed",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkpp1x74\"]},\"function\":\"min\"}"
+                    },
+
+         Sub_items board details (1825117144):
+                   
+ 		    {
+                        "id": "mirror35__1",
+                        "title": "Gestation Period",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"formula1__1\"]}}"
+                    },
+	            {
+                        "id": "formula_mkpp1x74",
+                        "title": "DDC",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"DATEVALUE({mirror98__1})\"}"
+                    },
+                    {
+                        "id": "formula_mkppwkkq",
+                        "title": "FDI",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF({mirror082__1}=\\\"\\\", 1000000, DATEVALUE({mirror082__1}))\"}"
+                    },
+		    {
+                        "id": "mirror98__1",
+                        "title": "Date Design Completed",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"date__1\"]}}"
+                    },
+		    {
+                        "id": "mirror082__1",
+                        "title": "Invoice Date",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"date42__1\"]}}"
+                    },
+
+	Tapered Hidden Items Board Schema (1825138260)
+ 		    {
+                        "id": "date__1",
+                        "title": "Date Design Completed",
+                        "type": "date",
+                        "settings_str": "{\"hide_footer\":false,\"date_format\":\"WITH_YEAR\"}"
+                    },
+		    {
+                        "id": "date42__1",
+                        "title": "Invoice Date",
+                        "type": "date",
+                        "settings_str": "{\"hide_footer\":false,\"date_format\":\"WITH_YEAR\"}"
+                    },
+
+##########################

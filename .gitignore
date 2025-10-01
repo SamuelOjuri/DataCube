@@ -101,7 +101,7 @@ share/python-wheels/
 MANIFEST
 
 # app-docs
-app_data/
+#app_data/
 data/
 output/
-tests/
+#tests/

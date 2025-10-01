@@ -1,0 +1,1317 @@
+
+###########################
+SAMPLE BOARD DATA
+###########################
+
+
+PARENT BOARD DATA:
+###########################
+query GetItems($board_id: ID!, $limit: Int!, $cursor: String) {
+    boards(ids: [$board_id]) {
+        items_page(limit: $limit, cursor: $cursor) {
+            cursor
+            items {
+                id
+                name
+                column_values(ids: ["name", "text3__1", "status4__1", "dropdown7__1", "dropdown__1", "formula_mkpp85yw", "lookup_mkq010zk", "lookup_mkqanpbe", "lookup_mkt3xgz1", "formula_mkq8gyr", "date9__1", "date_mkpx4163"]) {
+                    column {
+                    title
+                    }
+                    id
+                    text
+                    value
+                    type
+                    ... on FormulaValue {
+                        display_value
+                    }
+                    ... on MirrorValue {
+                        display_value
+                    }
+                }
+            }
+        }
+    }
+}
+
+=========================
+
+{
+    "board_id": "1825117125",
+    "limit": 5,
+    "cursor": null
+}
+
+===========================
+
+{
+    "data": {
+        "boards": [
+            {
+                "items_page": {
+                    "cursor": "MSwxODI1MTE3MTI1LDh5MmExNVhpRERmNXJveWE5U2UxSiwxMzc0Niw1LHwzNjk2MzQ2Mjcx",
+                    "items": [
+                        {
+                            "id": "2151860735",
+                            "name": "17425",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Project Name"
+                                    },
+                                    "id": "text3__1",
+                                    "text": "M&S, St.Martins,Guernsey",
+                                    "value": "\"M&S, St.Martins,Guernsey\"",
+                                    "type": "text"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Category"
+                                    },
+                                    "id": "dropdown__1",
+                                    "text": "Commercial",
+                                    "value": "{\"ids\":[2],\"changed_at\":\"2025-09-16T14:00:55.694Z\",\"override_all_ids\":\"true\"}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Type"
+                                    },
+                                    "id": "dropdown7__1",
+                                    "text": "New Build",
+                                    "value": "{\"ids\":[2]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Pipeline Stage"
+                                    },
+                                    "id": "status4__1",
+                                    "text": "Open Enquiry",
+                                    "value": "{\"index\":5,\"invalid\":false,\"changed_at\":\"2025-09-16T14:00:49.752Z\"}",
+                                    "type": "status"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Follow Up Date"
+                                    },
+                                    "id": "date_mkpx4163",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Created"
+                                    },
+                                    "id": "date9__1",
+                                    "text": "2025-09-16",
+                                    "value": "{\"date\":\"2025-09-16\",\"changed_at\":\"2025-09-16T14:00:47.459Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Gestation Period (DAYS)"
+                                    },
+                                    "id": "formula_mkpp85yw",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account Mirror"
+                                    },
+                                    "id": "lookup_mkq010zk",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Sarnian Roofing"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Mirror"
+                                    },
+                                    "id": "lookup_mkt3xgz1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Tissue Faced PIR"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Formula"
+                                    },
+                                    "id": "formula_mkq8gyr",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "Open or Lost"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enq Value"
+                                    },
+                                    "id": "lookup_mkqanpbe",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": ""
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2151415393",
+                            "name": "17424",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Project Name"
+                                    },
+                                    "id": "text3__1",
+                                    "text": "Aseptic New Build Pharmacy, Osborne Building, Leicester Royal Infirmary, LE1 5WW",
+                                    "value": "\"Aseptic New Build Pharmacy, Osborne Building, Leicester Royal Infirmary, LE1 5WW\"",
+                                    "type": "text"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Category"
+                                    },
+                                    "id": "dropdown__1",
+                                    "text": "Health",
+                                    "value": "{\"ids\":[5],\"changed_at\":\"2025-09-16T11:48:45.681Z\",\"override_all_ids\":\"true\"}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Type"
+                                    },
+                                    "id": "dropdown7__1",
+                                    "text": "New Build",
+                                    "value": "{\"ids\":[2]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Pipeline Stage"
+                                    },
+                                    "id": "status4__1",
+                                    "text": "Open Enquiry",
+                                    "value": "{\"index\":5,\"invalid\":false,\"changed_at\":\"2025-09-16T11:48:03.051Z\"}",
+                                    "type": "status"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Follow Up Date"
+                                    },
+                                    "id": "date_mkpx4163",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Created"
+                                    },
+                                    "id": "date9__1",
+                                    "text": "2025-09-16",
+                                    "value": "{\"date\":\"2025-09-16\",\"changed_at\":\"2025-09-16T11:48:05.442Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Gestation Period (DAYS)"
+                                    },
+                                    "id": "formula_mkpp85yw",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account Mirror"
+                                    },
+                                    "id": "lookup_mkq010zk",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Protan (New Addition)"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Mirror"
+                                    },
+                                    "id": "lookup_mkt3xgz1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "ROCKWOOL HardRock Multi-Fix (DD)"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Formula"
+                                    },
+                                    "id": "formula_mkq8gyr",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "Open or Lost"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enq Value"
+                                    },
+                                    "id": "lookup_mkqanpbe",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": ""
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2150960814",
+                            "name": "17423",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Project Name"
+                                    },
+                                    "id": "text3__1",
+                                    "text": "Colchester Castle, Car Park,  CO",
+                                    "value": "\"Colchester Castle, Car Park,  CO\"",
+                                    "type": "text"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Category"
+                                    },
+                                    "id": "dropdown__1",
+                                    "text": "Commercial",
+                                    "value": "{\"ids\":[2]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Type"
+                                    },
+                                    "id": "dropdown7__1",
+                                    "text": "New Build",
+                                    "value": "{\"ids\":[2]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Pipeline Stage"
+                                    },
+                                    "id": "status4__1",
+                                    "text": "Open Enquiry",
+                                    "value": "{\"index\":5,\"invalid\":false,\"changed_at\":\"2025-09-16T09:23:35.017Z\"}",
+                                    "type": "status"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Follow Up Date"
+                                    },
+                                    "id": "date_mkpx4163",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Created"
+                                    },
+                                    "id": "date9__1",
+                                    "text": "2025-09-16",
+                                    "value": "{\"date\":\"2025-09-16\",\"changed_at\":\"2025-09-16T09:23:32.607Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Gestation Period (DAYS)"
+                                    },
+                                    "id": "formula_mkpp85yw",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account Mirror"
+                                    },
+                                    "id": "lookup_mkq010zk",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "FATRA UK LTD"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Mirror"
+                                    },
+                                    "id": "lookup_mkt3xgz1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Foil Faced PIR"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Formula"
+                                    },
+                                    "id": "formula_mkq8gyr",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "Open or Lost"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enq Value"
+                                    },
+                                    "id": "lookup_mkqanpbe",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": ""
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2150846131",
+                            "name": "17422",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Project Name"
+                                    },
+                                    "id": "text3__1",
+                                    "text": "Walton Leigh, Special Needs School",
+                                    "value": "\"Walton Leigh, Special Needs School\"",
+                                    "type": "text"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Category"
+                                    },
+                                    "id": "dropdown__1",
+                                    "text": "Education",
+                                    "value": "{\"ids\":[3],\"changed_at\":\"2025-09-16T09:05:56.780Z\",\"override_all_ids\":\"true\"}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Type"
+                                    },
+                                    "id": "dropdown7__1",
+                                    "text": "New Build",
+                                    "value": "{\"ids\":[2]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Pipeline Stage"
+                                    },
+                                    "id": "status4__1",
+                                    "text": "Open Enquiry",
+                                    "value": "{\"index\":5,\"invalid\":false,\"changed_at\":\"2025-09-16T09:05:47.962Z\"}",
+                                    "type": "status"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Follow Up Date"
+                                    },
+                                    "id": "date_mkpx4163",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Created"
+                                    },
+                                    "id": "date9__1",
+                                    "text": "2025-09-16",
+                                    "value": "{\"date\":\"2025-09-16\",\"changed_at\":\"2025-09-16T09:05:50.552Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Gestation Period (DAYS)"
+                                    },
+                                    "id": "formula_mkpp85yw",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account Mirror"
+                                    },
+                                    "id": "lookup_mkq010zk",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Axter Limited"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Mirror"
+                                    },
+                                    "id": "lookup_mkt3xgz1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Tissue Faced PIR"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Formula"
+                                    },
+                                    "id": "formula_mkq8gyr",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "Open or Lost"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enq Value"
+                                    },
+                                    "id": "lookup_mkqanpbe",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": ""
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2150726686",
+                            "name": "17421",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Project Name"
+                                    },
+                                    "id": "text3__1",
+                                    "text": "Renolit RAAC Removal, Station Road, Cramlington",
+                                    "value": "\"Renolit RAAC Removal, Station Road, Cramlington\"",
+                                    "type": "text"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Category"
+                                    },
+                                    "id": "dropdown__1",
+                                    "text": "Commercial",
+                                    "value": "{\"ids\":[2]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Type"
+                                    },
+                                    "id": "dropdown7__1",
+                                    "text": "Refurbishment",
+                                    "value": "{\"ids\":[1]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Pipeline Stage"
+                                    },
+                                    "id": "status4__1",
+                                    "text": "Open Enquiry",
+                                    "value": "{\"index\":5,\"invalid\":false,\"changed_at\":\"2025-09-16T08:40:43.984Z\"}",
+                                    "type": "status"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Follow Up Date"
+                                    },
+                                    "id": "date_mkpx4163",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Created"
+                                    },
+                                    "id": "date9__1",
+                                    "text": "2025-09-16",
+                                    "value": "{\"date\":\"2025-09-16\",\"changed_at\":\"2025-09-16T08:40:45.984Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Gestation Period (DAYS)"
+                                    },
+                                    "id": "formula_mkpp85yw",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account Mirror"
+                                    },
+                                    "id": "lookup_mkq010zk",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "CCF Limited"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Mirror"
+                                    },
+                                    "id": "lookup_mkt3xgz1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Tissue Faced PIR"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Formula"
+                                    },
+                                    "id": "formula_mkq8gyr",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "Open or Lost"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enq Value"
+                                    },
+                                    "id": "lookup_mkqanpbe",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": ""
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "extensions": {
+        "request_id": "970613fc-5900-9572-9de4-ed5b218fb8c3"
+    }
+}
+
+####################
+SUBITEMS BOARD DATA
+####################
+
+query GetItems($board_id: ID!, $limit: Int!, $cursor: String) {
+    boards(ids: [$board_id]) {
+        items_page(limit: $limit, cursor: $cursor) {
+            cursor
+            items {
+                id
+                name
+                column_values(ids: ["mirror_12__1", "mirror875__1", "formula_mkqa31kh", "formula_mkpp1x74", "formula_mkppwkkq", "connect_boards8__1"]) {
+                    column {
+                    title
+                    }
+                    id
+                    text
+                    value
+                    type
+                    ... on FormulaValue {
+                        display_value
+                    }
+                    ... on MirrorValue {
+                        display_value
+                    }
+                }
+            }
+        }
+    }
+}
+
+=============================
+
+{
+    "board_id": "1825117144",
+    "limit": 5,
+    "cursor": null
+}
+
+==============================
+
+{
+    "data": {
+        "boards": [
+            {
+                "items_page": {
+                    "cursor": "MSwxODI1MTE3MTQ0LEUyWk53U2gxU3pBOWNZd1pxek1BUiwzMjk3MSw1LHwxNTYwODM0OTg1",
+                    "items": [
+                        {
+                            "id": "1775982071",
+                            "name": "11181_22.09 - J",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Tapered Hidden Items"
+                                    },
+                                    "id": "connect_boards8__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "board_relation"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account"
+                                    },
+                                    "id": "mirror_12__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Axter Limited"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Type"
+                                    },
+                                    "id": "mirror875__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "VIPs"
+                                },
+                                {
+                                    "column": {
+                                        "title": "DDC"
+                                    },
+                                    "id": "formula_mkpp1x74",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "FDI"
+                                    },
+                                    "id": "formula_mkppwkkq",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enquiry Value"
+                                    },
+                                    "id": "formula_mkqa31kh",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "1931059963",
+                            "name": "16969_25.01 - A",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Tapered Hidden Items"
+                                    },
+                                    "id": "connect_boards8__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "board_relation"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account"
+                                    },
+                                    "id": "mirror_12__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Axter Limited"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Type"
+                                    },
+                                    "id": "mirror875__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Tissue Faced PIR"
+                                },
+                                {
+                                    "column": {
+                                        "title": "DDC"
+                                    },
+                                    "id": "formula_mkpp1x74",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "FDI"
+                                    },
+                                    "id": "formula_mkppwkkq",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enquiry Value"
+                                    },
+                                    "id": "formula_mkqa31kh",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "1771997458",
+                            "name": "15930_24.01 - A",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Tapered Hidden Items"
+                                    },
+                                    "id": "connect_boards8__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "board_relation"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account"
+                                    },
+                                    "id": "mirror_12__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Widopan Limited"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Type"
+                                    },
+                                    "id": "mirror875__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Tissue Faced PIR"
+                                },
+                                {
+                                    "column": {
+                                        "title": "DDC"
+                                    },
+                                    "id": "formula_mkpp1x74",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "FDI"
+                                    },
+                                    "id": "formula_mkppwkkq",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enquiry Value"
+                                    },
+                                    "id": "formula_mkqa31kh",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "1774433784",
+                            "name": "12821_23.01 - A",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Tapered Hidden Items"
+                                    },
+                                    "id": "connect_boards8__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "board_relation"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account"
+                                    },
+                                    "id": "mirror_12__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Garland"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Type"
+                                    },
+                                    "id": "mirror875__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Torch On PIR (Prebonded)"
+                                },
+                                {
+                                    "column": {
+                                        "title": "DDC"
+                                    },
+                                    "id": "formula_mkpp1x74",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "FDI"
+                                    },
+                                    "id": "formula_mkppwkkq",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enquiry Value"
+                                    },
+                                    "id": "formula_mkqa31kh",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "1884481571",
+                            "name": "16878_25.01 - A",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Tapered Hidden Items"
+                                    },
+                                    "id": "connect_boards8__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "board_relation"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Account"
+                                    },
+                                    "id": "mirror_12__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "ICB (Waterproofing) Ltd"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Product Type"
+                                    },
+                                    "id": "mirror875__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "mirror",
+                                    "display_value": "Tissue Faced PIR"
+                                },
+                                {
+                                    "column": {
+                                        "title": "DDC"
+                                    },
+                                    "id": "formula_mkpp1x74",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "FDI"
+                                    },
+                                    "id": "formula_mkppwkkq",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                },
+                                {
+                                    "column": {
+                                        "title": "New Enquiry Value"
+                                    },
+                                    "id": "formula_mkqa31kh",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "null"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "extensions": {
+        "request_id": "94cf1727-16c3-9a13-b1b8-173f29b02a6e"
+    }
+}
+
+
+
+########################
+HIDDEN_ITEMS BOARD DATA
+########################
+
+query GetItems($board_id: ID!, $limit: Int!, $cursor: String) {
+    boards(ids: [$board_id]) {
+        items_page(limit: $limit, cursor: $cursor) {
+            cursor
+            items {
+                id
+                name
+                column_values(ids: ["formula63__1", "dropdown2__1", "date__1", "date42__1", "date4__1"]) {
+                    column {
+                    title
+                    }
+                    id
+                    text
+                    value
+                    type
+                    ... on FormulaValue {
+                        display_value
+                    }
+                    ... on MirrorValue {
+                        display_value
+                    }
+                }
+            }
+        }
+    }
+}
+
+================================
+
+{
+    "board_id": "1825138260",
+    "limit": 5,
+    "cursor": null
+}
+
+================================
+
+{
+    "data": {
+        "boards": [
+            {
+                "items_page": {
+                    "cursor": "MSwxODI1MTM4MjYwLEgwMjhhTTJRTE55b2VKTnBjNEFKMSwzMzA5NCw1LHwyODUzMjczOTI",
+                    "items": [
+                        {
+                            "id": "2143042682",
+                            "name": "New project",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Date Received"
+                                    },
+                                    "id": "date4__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Design Completed"
+                                    },
+                                    "id": "date__1",
+                                    "text": "2025-09-11",
+                                    "value": "{\"date\":\"2025-09-11\",\"changed_at\":\"2025-09-11T08:47:47.951Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Reason For Change"
+                                    },
+                                    "id": "dropdown2__1",
+                                    "text": null,
+                                    "value": null,
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Quote Amount"
+                                    },
+                                    "id": "formula63__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "0"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Invoice Date"
+                                    },
+                                    "id": "date42__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2038372002",
+                            "name": "15525_24.01 - B",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Date Received"
+                                    },
+                                    "id": "date4__1",
+                                    "text": "2025-07-04",
+                                    "value": "{\"date\":\"2025-07-04\",\"changed_at\":\"2025-07-07T08:37:38.367Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Design Completed"
+                                    },
+                                    "id": "date__1",
+                                    "text": "2025-07-07",
+                                    "value": "{\"date\":\"2025-07-07\",\"changed_at\":\"2025-07-07T08:35:01.300Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Reason For Change"
+                                    },
+                                    "id": "dropdown2__1",
+                                    "text": "Amendment - U - Value",
+                                    "value": "{\"ids\":[13]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Quote Amount"
+                                    },
+                                    "id": "formula63__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "18737.37"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Invoice Date"
+                                    },
+                                    "id": "date42__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2036504177",
+                            "name": "14470_25.07 - A",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Date Received"
+                                    },
+                                    "id": "date4__1",
+                                    "text": "2025-07-03",
+                                    "value": "{\"date\":\"2025-07-03\",\"changed_at\":\"2025-07-04T15:05:16.061Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Design Completed"
+                                    },
+                                    "id": "date__1",
+                                    "text": "2025-07-04",
+                                    "value": "{\"date\":\"2025-07-04\",\"changed_at\":\"2025-07-04T15:02:27.893Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Reason For Change"
+                                    },
+                                    "id": "dropdown2__1",
+                                    "text": "Amendment - Additional Roof Area",
+                                    "value": "{\"ids\":[3]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Quote Amount"
+                                    },
+                                    "id": "formula63__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "4266.29"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Invoice Date"
+                                    },
+                                    "id": "date42__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2036503745",
+                            "name": "14470_25.06 - A",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Date Received"
+                                    },
+                                    "id": "date4__1",
+                                    "text": "2025-07-03",
+                                    "value": "{\"date\":\"2025-07-03\",\"changed_at\":\"2025-07-04T15:05:17.624Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Design Completed"
+                                    },
+                                    "id": "date__1",
+                                    "text": "2025-07-04",
+                                    "value": "{\"date\":\"2025-07-04\",\"changed_at\":\"2025-07-04T15:02:17.910Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Reason For Change"
+                                    },
+                                    "id": "dropdown2__1",
+                                    "text": "Amendment - Alternative Customer",
+                                    "value": "{\"ids\":[16]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Quote Amount"
+                                    },
+                                    "id": "formula63__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "17597.29"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Invoice Date"
+                                    },
+                                    "id": "date42__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "2036318469",
+                            "name": "15660_24.02 - B",
+                            "column_values": [
+                                {
+                                    "column": {
+                                        "title": "Date Received"
+                                    },
+                                    "id": "date4__1",
+                                    "text": "2025-07-07",
+                                    "value": "{\"date\":\"2025-07-07\",\"changed_at\":\"2025-07-07T11:46:10.782Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Date Design Completed"
+                                    },
+                                    "id": "date__1",
+                                    "text": "2025-07-07",
+                                    "value": "{\"date\":\"2025-07-07\",\"changed_at\":\"2025-07-07T11:46:12.950Z\"}",
+                                    "type": "date"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Reason For Change"
+                                    },
+                                    "id": "dropdown2__1",
+                                    "text": "Amendment - Site Survey",
+                                    "value": "{\"ids\":[12]}",
+                                    "type": "dropdown"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Quote Amount"
+                                    },
+                                    "id": "formula63__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "formula",
+                                    "display_value": "159999.21"
+                                },
+                                {
+                                    "column": {
+                                        "title": "Invoice Date"
+                                    },
+                                    "id": "date42__1",
+                                    "text": "",
+                                    "value": null,
+                                    "type": "date"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "extensions": {
+        "request_id": "2dad1bed-47e3-91b3-9f2b-24b8b97411c8"
+    }
+}
+
+
+############################
