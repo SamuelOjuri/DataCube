@@ -1,0 +1,107 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+.env/
+*.venv
+env/
+pip-log.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# Data and Cache
+data/cache/*
+data/processed/*
+data/raw/*
+!data/cache/.gitkeep
+!data/processed/.gitkeep
+!data/raw/.gitkeep
+
+# Outputs
+outputs/
+outputs/analysis/
+*.csv
+*.json
+
+# Logs and temporary files
+*.log
+logs/
+*.log
+*.sqlite3
+*.csv
+*.xml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Database
+*.db
+*.sqlite
+
+# Ignore system-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Ignore VS Code settings
+.vscode/
+*.code-workspace
+
+# Ignore compiled files and dependencies
+node_modules/
+dist/
+build/
+
+# Ignore generated files (e.g., Jupyter Notebook checkpoints)
+.ipynb_checkpoints/
+
+# Ignore credentials or environment files
+.env
+*.secret
+config.yaml
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+#lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# app-docs
+app_data/
+data/
+output/
+tests/
