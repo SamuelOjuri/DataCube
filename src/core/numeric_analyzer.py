@@ -92,11 +92,12 @@ class NumericBaseline:
 
     def calculate_gestation_baseline(
         self, 
-        segment_data: pd.DataFrame
+        segment_data: pd.DataFrame,
+        apply_time_weighting: bool = True,
+        half_life_days: float = 730  # 2 years
     ) -> Tuple[Optional[int], Dict[str, Any]]:
         """
-        Calculate expected gestation period using median with IQR
-        Returns: (expected_days, statistics)
+        Calculate expected gestation period using weighted median/statistics
         """
         if segment_data.empty:
             logger.warning("Empty segment data for gestation calculation")
@@ -104,46 +105,71 @@ class NumericBaseline:
         
         # Extract and clean gestation values
         gestation_values = segment_data['gestation_period'].dropna()
-        
-        # Filter out invalid values (zeros and extreme outliers)
         gestation_values = gestation_values[
             (gestation_values > 0) & (gestation_values < 1000)
         ]
         
         if len(gestation_values) < 3:
             logger.warning(f"Insufficient gestation data: {len(gestation_values)} samples")
-            return None, {
-                'confidence': 0,
-                'sample_size': len(gestation_values)
-            }
+            return None, {'confidence': 0, 'sample_size': len(gestation_values)}
         
-        # Calculate statistics
-        median_val = gestation_values.median()
-        p25 = gestation_values.quantile(0.25)
-        p75 = gestation_values.quantile(0.75)
-        iqr = p75 - p25
+        # Apply time weighting if enabled
+        if apply_time_weighting and 'date_created' in segment_data.columns:
+            weights = self._calculate_time_weights(
+                segment_data.loc[gestation_values.index, 'date_created'],
+                half_life_days=half_life_days
+            )
+            
+            # Weighted percentiles
+            sorted_indices = gestation_values.argsort()
+            sorted_values = gestation_values.iloc[sorted_indices].values
+            sorted_weights = weights.iloc[sorted_indices].values
+            cumsum = np.cumsum(sorted_weights)
+            cumsum = cumsum / cumsum[-1]  # Normalize to [0, 1]
+            
+            median_val = np.interp(0.5, cumsum, sorted_values)
+            p25 = np.interp(0.25, cumsum, sorted_values)
+            p75 = np.interp(0.75, cumsum, sorted_values)
+            
+            # Weighted mean and std
+            mean_val = np.average(gestation_values, weights=weights)
+            variance = np.average((gestation_values - mean_val)**2, weights=weights)
+            std_val = np.sqrt(variance)
+            
+            weighting_note = f"time_weighted_half_life_{half_life_days}d"
+        else:
+            # Original unweighted calculations
+            median_val = gestation_values.median()
+            p25 = gestation_values.quantile(0.25)
+            p75 = gestation_values.quantile(0.75)
+            mean_val = gestation_values.mean()
+            std_val = gestation_values.std()
+            weighting_note = "unweighted"
         
         # Calculate confidence based on sample size and spread
         sample_confidence = min(len(gestation_values) / 30, 1.0)
         
         # Penalize high variance
-        cv = gestation_values.std() / gestation_values.mean() if gestation_values.mean() > 0 else 1
+        cv = std_val / mean_val if mean_val > 0 else 1
         spread_confidence = max(0, 1 - cv)
         
         overall_confidence = sample_confidence * 0.7 + spread_confidence * 0.3
+        
+        iqr = p75 - p25
         
         statistics = {
             'median': int(median_val),
             'p25': int(p25),
             'p75': int(p75),
             'iqr': int(iqr),
-            'mean': int(gestation_values.mean()),
-            'std': int(gestation_values.std()),
+            'mean': int(mean_val),
+            'std': int(std_val),
             'count': len(gestation_values),
-            'confidence': round(overall_confidence, 2)
+            'confidence': round(overall_confidence, 2),
+            'weighting': weighting_note
         }
         
-        logger.info(f"Gestation baseline: {int(median_val)} days (n={len(gestation_values)})")
+        logger.info(f"Gestation baseline: {int(median_val)} days (n={len(gestation_values)}, {weighting_note})")
         
         return int(median_val), statistics
     
@@ -152,7 +178,9 @@ class NumericBaseline:
         segment_data: pd.DataFrame, 
         method: str = 'inclusive',
         prior_rate: Optional[float] = None,
-        prior_strength: Optional[int] = None
+        prior_strength: Optional[int] = None,
+        apply_time_weighting: bool = True,
+        half_life_days: float = 730
     ) -> Tuple[float, Dict[str, Any]]:
         if segment_data.empty:
             return 0.5, {'confidence': 0}
@@ -172,6 +200,78 @@ class NumericBaseline:
 
         open_count = int(total - won_closed - lost)
 
+        if apply_time_weighting and 'date_created' in segment_data.columns:
+            weights = self._calculate_time_weights(
+                segment_data['date_created'],
+                half_life_days=half_life_days
+            )
+            
+            # Calculate weighted counts
+            if use_pipeline:
+                won_closed_weighted = weights[stages == PipelineStage.WON_CLOSED.value].sum()
+                lost_weighted = weights[stages == PipelineStage.LOST.value].sum()
+            else:
+                won_closed_weighted = weights[sc == StatusCategory.WON.value].sum()
+                lost_weighted = weights[sc == StatusCategory.LOST.value].sum()
+            
+            # For closed_only method
+            if method == 'closed_only':
+                total_weighted = won_closed_weighted + lost_weighted
+                if total_weighted < 1.0:  # Effective sample size too small
+                    return None, {
+                        'confidence': 0, 
+                        'note': 'Insufficient weighted samples',
+                        'wins': won_closed,
+                        'losses': lost,
+                        'open': open_count
+                    }
+                
+                # Beta smoothing with weighted counts
+                rate = self._beta_smoothed_rate(
+                    int(won_closed_weighted), 
+                    int(lost_weighted), 
+                    prior_rate, 
+                    prior_strength
+                )
+                confidence = min(total_weighted / 100, 1.0)
+                
+                statistics = {
+                    'wins_weighted': round(won_closed_weighted, 2),
+                    'losses_weighted': round(lost_weighted, 2),
+                    'total_weighted': round(total_weighted, 2),
+                    'wins': won_closed,  # Keep actual counts for backward compatibility
+                    'losses': lost,
+                    'open': open_count,
+                    'total': total,
+                    'smoothed_rate': rate,
+                    'confidence': round(confidence, 2),
+                    'method': 'closed_only_time_weighted',
+                    'half_life_days': half_life_days
+                }
+                return rate, statistics
+            
+            # For inclusive method
+            else:
+                total_weighted = weights.sum()
+                rate = float(won_closed_weighted + self.smoothing_k) / float(total_weighted + 2 * self.smoothing_k)
+                confidence = min(total_weighted / 100, 1.0)
+                
+                statistics = {
+                    'wins_weighted': round(won_closed_weighted, 2),
+                    'total_weighted': round(total_weighted, 2),
+                    'wins': won_closed,  # Keep actual counts for backward compatibility
+                    'losses': lost,
+                    'open': open_count,
+                    'total': total,
+                    'raw_rate': (won_closed / total) if total > 0 else 0.0,
+                    'smoothed_rate': rate,
+                    'confidence': round(confidence, 2),
+                    'method': 'inclusive_time_weighted',
+                    'half_life_days': half_life_days
+                }
+                return rate, statistics
+        
+        # Original unweighted calculation as fallback
         if method == 'closed_only':
             total_closed = won_closed + lost
             if total_closed == 0:
@@ -568,3 +668,66 @@ class NumericBaseline:
             prior_strength=use_prior_strength
         )
         return predictions
+
+    def _calculate_time_weights(self, dates: pd.Series, half_life_days: float = 730) -> pd.Series:
+        """
+        Calculate exponential decay weights based on project age.
+        
+        Args:
+            dates: Series of date_created values
+            half_life_days: Number of days for weight to decay to 50% (default: 2 years)
+        
+        Returns:
+            Series of weights (0-1) where recent projects have weight ~1.0
+        """
+        if dates.empty:
+            return pd.Series(dtype=float)
+        
+        # Convert to datetime if needed
+        dates = pd.to_datetime(dates)
+        reference_date = pd.Timestamp.now()
+        
+        # Calculate days ago
+        days_ago = (reference_date - dates).dt.days
+        
+        # Exponential decay: weight = 0.5 ^ (days_ago / half_life_days)
+        weights = np.power(0.5, days_ago / half_life_days)
+        
+        # Normalize weights to sum to effective sample size
+        weights = weights / weights.sum() * len(weights)
+        
+        return weights
+
+    def _adjust_confidence_for_recency(
+        self,
+        base_confidence: float,
+        segment_data: pd.DataFrame,
+        recency_threshold_days: int = 730
+    ) -> Tuple[float, str]:
+        """
+        Boost confidence if segment has substantial recent data.
+        """
+        if segment_data.empty or 'date_created' not in segment_data.columns:
+            return base_confidence, "no_date_data"
+        
+        cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=recency_threshold_days)
+        segment_data['date_created'] = pd.to_datetime(segment_data['date_created'])
+        
+        recent_count = (segment_data['date_created'] >= cutoff_date).sum()
+        total_count = len(segment_data)
+        recent_ratio = recent_count / total_count if total_count > 0 else 0
+        
+        # Boost confidence if high proportion of data is recent
+        if recent_ratio >= 0.5 and recent_count >= 15:
+            boost = 0.15  # +15% confidence
+            note = f"high_recent_data_{recent_count}/{total_count}"
+        elif recent_ratio >= 0.3 and recent_count >= 10:
+            boost = 0.10  # +10% confidence
+            note = f"moderate_recent_data_{recent_count}/{total_count}"
+        else:
+            boost = 0.0
+            note = f"low_recent_data_{recent_count}/{total_count}"
+        
+        adjusted_confidence = min(1.0, base_confidence + boost)
+        
+        return adjusted_confidence, note

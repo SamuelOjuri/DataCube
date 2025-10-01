@@ -250,3 +250,12 @@ def get_lookback_days(preset: str = '5_years') -> Optional[int]:
         Number of days to look back, or None for all_time
     """
     return LOOKBACK_PRESETS.get(preset, ANALYSIS_LOOKBACK_DAYS)
+
+# Time-weighting configuration
+TIME_WEIGHTING_ENABLED = True  # Enable/disable time weighting
+TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # 2 years (how quickly old data loses influence)
+
+# Recency options
+RECENCY_ANALYSIS_WINDOW_DAYS = 730  # Compare last 2 years vs full 5 years
+RECENCY_CONFIDENCE_BOOST_ENABLED = True
+RECENCY_MIN_SAMPLE_SIZE = 10  # Minimum recent samples for trend analysis

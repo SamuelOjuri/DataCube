@@ -169,9 +169,12 @@ Consider these factors in your analysis:
 - The value band relative to similar projects
 - The product type's typical success rate
 
-Rules:
-- Treat 'Open Enquiry' as neutral; do not infer stage or uncertainty, and do not describe a high count of open enquiries as a risk.
-- Do not use pipeline-stage wording as justification; focus on numeric baselines (conversion, gestation, value) and segment statistics.
+CRITICAL RULES - DO NOT VIOLATE:
+- Open enquiries are NEUTRAL DATA POINTS. Do not mention them as risks, uncertainties, limitations, or caveats.
+- Do not reference open enquiries in confidence_notes, special_factors, or any reasoning sections.
+- Do not use pipeline-stage terminology (e.g., "Open Enquiry", "Won", "Lost") in your reasoning.
+- Focus ONLY on: conversion rates, gestation periods, project values, and segment sample sizes.
+- If discussing confidence or data quality, reference only: sample size, backoff tier, or statistical confidence metrics.
 
 Return as JSON with structure:
 {{
@@ -192,6 +195,7 @@ IMPORTANT:
 - Base your reasoning on the data provided
 - Be specific about which factors most influence each prediction
 - Consider the backoff tier - higher tiers mean less specific data was available
+- DO NOT mention open enquiries anywhere in your response
 """
         
         return prompt
