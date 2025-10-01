@@ -37,6 +37,10 @@ MAX_RETRIES = 3  # Maximum number of retry attempts for API calls
 # Data Processing Settings
 MIN_SAMPLE_SIZE = 15  # Minimum sample size for statistical analysis
 
+# Numeric baseline weighting configuration
+TIME_WEIGHTING_ENABLED = True  # Prioritise recent projects in baseline stats
+TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay
+
 # Project directories
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
