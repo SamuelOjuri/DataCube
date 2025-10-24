@@ -569,5 +569,64 @@ class MondayClient:
         data = result.get("data", {}).get("next_items_page") or {}
         return {"items": data.get("items", []) or [], "next_cursor": data.get("cursor")}
 
+    def get_items_page_since_date(
+        self,
+        board_id: str,
+        column_ids: List[str],
+        cutoff_date: str,
+        limit: int = BATCH_SIZE,
+        cursor: Optional[str] = None,
+    ) -> Dict:
+        if cursor:
+            return self.get_next_items_page(cursor, column_ids, limit)
+
+        column_ids_str = ", ".join(f'"{col}"' for col in column_ids)
+        compare_values = f'["EXACT", "{cutoff_date}"]'
+
+        query = f"""
+        query GetItemsSinceDate($board: [ID!], $limit: Int!) {{
+          boards(ids: $board) {{
+            items_page(
+              limit: $limit
+              query_params: {{
+                rules: [
+                  {{
+                    column_id: "date9__1"
+                    compare_value: {compare_values}
+                    operator: greater_than_or_equals
+                  }}
+                ]
+              }}
+            ) {{
+              cursor
+              items {{
+                id
+                name
+                column_values(ids: [{column_ids_str}]) {{
+                  id
+                  text
+                  value
+                  ... on FormulaValue {{ display_value }}
+                  ... on MirrorValue {{ display_value }}
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+
+        variables = {"board": [board_id], "limit": limit}
+        result = self.execute_query(query, variables)
+
+        boards = result.get("data", {}).get("boards") or []
+        if not boards:
+            return {"items": [], "next_cursor": None}
+
+        page = boards[0].get("items_page") or {}
+        return {
+            "items": page.get("items") or [],
+            "next_cursor": page.get("cursor"),
+        }
+
 
     

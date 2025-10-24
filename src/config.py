@@ -17,7 +17,7 @@ MONDAY_API_URL = "https://api.monday.com/v2"
 
 # OpenAI API Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")  # Default to GPT-5
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # Default to GPT-5
 
 # Board IDs
 PARENT_BOARD_ID = "1825117125"   # Tapered Enquiry Maintenance
@@ -127,7 +127,7 @@ SUBITEM_COLUMNS = {
     'invoice_number': 'mirror682__1',           # Invoice Number (text)
     'amount_invoiced': 'mirror5__1',            # Amount Invoiced
 
-    # Link to hidden items board (board_relation)
+    # Link to hidden items board (Note:board_relation is mostly broken 'name' matching is more reliable)
     'hidden_item_id': 'connect_boards8__1',
 }
 # Complete HIDDEN_ITEMS_COLUMNS mapping

@@ -422,46 +422,49 @@ class NumericBaseline:
         gestation_score = scale_gestation(expected_gestation)
 
         # UPDATED: More generous value scoring with higher impact
-        def value_score_from_segment(val: float) -> Optional[float]:
-            try:
-                if segment_data is None or segment_data.empty:
-                    return None
-                vs = segment_data['new_enquiry_value'].dropna()
-                vs = vs[vs > 0]
-                if vs.empty:
-                    return None
-                arr = np.sort(vs.to_numpy() if isinstance(vs, pd.Series) else np.array(list(vs)))
-                pos = int(np.searchsorted(arr, val, side='right'))
-                # More aggressive percentile scaling
-                percentile = float(pos) / float(len(arr))
-                # Apply power curve to boost higher values
-                return percentile ** 0.8  # Power curve favors higher values
-            except Exception:
-                return None
+        # Value scoring mixes absolute band strength with within-segment percentile
+        band_baseline = {
+            'Zero': 0.05,
+            'Small (<15k)': 0.35,
+            'Medium (15-40k)': 0.55,
+            'Large (40-100k)': 0.75,
+            'XLarge (>100k)': 0.92,
+        }
+        band_cap = {
+            'Zero': 0.30,
+            'Small (<15k)': 0.70,
+            'Medium (15-40k)': 0.85,
+            'Large (40-100k)': 0.95,
+            'XLarge (>100k)': 1.00,
+        }
+
+        def value_score_from_segment(val: float) -> float:
+            baseline = band_baseline.get(value_band, 0.5)
+            cap = band_cap.get(value_band, 0.9)
+            if segment_data is None or segment_data.empty:
+                return baseline
+            vs = segment_data['new_enquiry_value'].dropna()
+            vs = vs[vs > 0]
+            if vs.empty:
+                return baseline
+            arr = np.sort(vs.to_numpy())
+            percentile = float(np.searchsorted(arr, val, side='right')) / float(len(arr))
+            blended = baseline + (cap - baseline) * percentile ** 0.8
+            return float(max(baseline, min(cap, blended)))
 
         value_score = value_score_from_segment(new_value)
-        if value_score is None:
-            # UPDATED: More generous fallback mapping by band
-            band_map = {
-                'Zero': 0.10,
-                'Small (<15k)': 0.40,
-                'Medium (15-40k)': 0.65,
-                'Large (40-100k)': 0.80,
-                'XLarge (>100k)': 1.00
-            }
-            value_score = band_map.get(value_band, 0.5)
 
         # Account/product performance (small modifiers with smoothing)
         account_score = self._calculate_account_performance(project_metrics.get('account'), segment_data) if segment_data is not None else 0.5
         product_score = self._calculate_product_performance(project_metrics.get('product_type'), segment_data) if segment_data is not None else 0.5
 
-        # UPDATED: Adjusted weights to better reflect stakeholder priorities
+        # UPDATED weights to balance priorities
         weights = {
-            'conversion': 0.30,  # Reduced from 0.55 to balance with other factors
-            'value': 0.43,       # Increased from 0.25
-            'gestation': 0.18,   # Increased from 0.12
-            'account': 0.06,     # Slight increase from 0.05
-            'product': 0.03
+            'conversion': 0.30,
+            'value': 0.43,
+            'gestation': 0.18,
+            'account': 0.06,
+            'product': 0.03,
         }
 
         raw_score = (
@@ -472,54 +475,50 @@ class NumericBaseline:
             weights['product'] * product_score
         )
 
-        # UPDATED: Stronger alignment bonuses for high-performing projects
         alignment_boost = 0.0
         all_weak_penalty = 0.0
         momentum_bonus = 0.0
 
-        # High performance alignment bonuses (significantly increased)
-        if cr >= 0.35 and value_score >= 0.70 and gestation_score >= 0.75:
-            # Very good conversion + high value + low gestation = major boost
-            alignment_boost = 0.15  # Increased from 0.08
-        elif cr >= 0.30 and value_score >= 0.65 and gestation_score >= 0.65:
-            # Above average on all fronts
-            alignment_boost = 0.10  # Increased from 0.05
-        elif cr >= 0.25 and value_score >= 0.60:
-            # Slightly above average conversion with decent value
-            alignment_boost = 0.06  # New tier
+        if value_score >= 0.80 and value_band not in ('Zero', 'Small (<15k)') and cr >= 0.35 and gestation_score >= 0.75:
+            alignment_boost = 0.10
+        elif value_score >= 0.70 and value_band not in ('Zero', 'Small (<15k)') and cr >= 0.30 and gestation_score >= 0.65:
+            alignment_boost = 0.06
+        elif value_score >= 0.60 and cr >= 0.25:
+            alignment_boost = 0.04
 
-        # Weak performance penalties (unchanged)
         if cr_score <= 0.25 and value_score <= 0.30 and gestation_score <= 0.40:
             all_weak_penalty = -0.08
 
-        # UPDATED: Stronger momentum bonuses for standout factors
-        if value_score >= 0.85 and gestation_score >= 0.75:
-            momentum_bonus += 0.08  # Increased from 0.05
+        if value_score >= 0.85 and value_band not in ('Zero', 'Small (<15k)') and gestation_score >= 0.75:
+            momentum_bonus += 0.08
         if cr >= 0.35 and gestation_score >= 0.85:
-            # Very good conversion with excellent gestation
-            momentum_bonus += 0.10  # Increased from 0.04
-        if cr >= 0.40:
-            # Excellent conversion rate deserves recognition
-            momentum_bonus += 0.08  # Increased from 0.04
-        if cr >= 0.50:
-            # Exceptional conversion rate
-            momentum_bonus += 0.05  # New bonus tier
+            momentum_bonus += 0.06
+        if cr >= 0.40 and value_band not in ('Zero', 'Small (<15k)'):
+            momentum_bonus += 0.06
+        if cr >= 0.50 and value_band not in ('Zero', 'Small (<15k)'):
+            momentum_bonus += 0.05
 
-        # Cap total bonuses to avoid overshooting
         total_bonus = alignment_boost + momentum_bonus + all_weak_penalty
-        total_bonus = max(-0.15, min(0.30, total_bonus))  # Cap at ±0.30
+        total_bonus = max(-0.15, min(0.30, total_bonus))
 
         raw_score = max(0.0, min(1.0, raw_score + total_bonus))
 
-        # UPDATED: More aggressive scaling to use full 1-100 range
-        # Apply slight exponential curve to push high scores higher
+        band_max_score = {
+            'Zero': 55,
+            'Small (<15k)': 65,
+            'Medium (15-40k)': 85,
+            'Large (40-100k)': 95,
+            'XLarge (>100k)': 100,
+        }
+        max_score_cap = band_max_score.get(value_band)
+        if max_score_cap is not None:
+            raw_score = min(raw_score, max_score_cap / 100.0)
+
         if raw_score > 0.7:
-            # Apply boost for high performers
-            raw_score = 0.7 + (raw_score - 0.7) * 1.3  # Amplify high scores
+            raw_score = 0.7 + (raw_score - 0.7) * 1.3
             raw_score = min(1.0, raw_score)
-        
-        # Scale to 1–100 with better distribution
-        final_score = max(1, min(100, round(raw_score * 98 + 2)))  # Changed from 99+1 to 98+2
+
+        final_score = max(1, min(100, round(raw_score * 98 + 2)))
 
         # Build components dictionary for transparency
         components = {
@@ -530,6 +529,7 @@ class NumericBaseline:
             'value': new_value,
             'value_band': value_band,
             'value_score': round(value_score, 3),
+            'value_band_cap': band_max_score.get(value_band),
             'account_score': round(account_score, 3),
             'product_score': round(product_score, 3),
             'raw_weighted_score': round(raw_score - total_bonus, 3),
@@ -539,7 +539,7 @@ class NumericBaseline:
             'total_bonus': round(total_bonus, 3),
             'final_raw_score': round(raw_score, 3),
             'final_score': final_score,
-            'weights': weights
+            'weights': weights,
         }
 
         return final_score, components

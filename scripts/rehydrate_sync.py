@@ -38,10 +38,10 @@ class IntelligentSyncManager:
         # Reuse intelligent defaults
         self.CHUNK_SIZE = 100
         self.SYNC_BATCH = 1000
-        self.RATE_LIMIT_DELAY = 2
+        self.RATE_LIMIT_DELAY = 2.5
         self.MAX_RETRIES = 5
         self.BATCH_SIZE = 1000
-        self.BATCH_DELAY = 2.5
+        self.BATCH_DELAY = 3
 
     async def _retry(self, fn, *args, **kwargs):
         """Generic retry wrapper for Monday API calls (no cursor)."""

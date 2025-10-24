@@ -563,4 +563,3 @@ IMPORTANT:
                 estimated_output_tokens / 1000 * output_price_per_1k)
         
         return round(cost, 4)
-

@@ -191,28 +191,34 @@ class HierarchicalSegmentation:
             []                                                                # Tier 5: Global
         ]
         
-    def create_value_bands(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Create quartile-based value bands"""
-        # Handle missing or zero values
-        values = df['new_enquiry_value'].fillna(0)
+    # def create_value_bands(self, df: pd.DataFrame) -> pd.DataFrame:
+    #     """Create quartile-based value bands"""
+    #     # Handle missing or zero values
+    #     values = df['new_enquiry_value'].fillna(0)
         
-        # Only create bands if we have non-zero values
-        non_zero_values = values[values > 0]
+    #     # Only create bands if we have non-zero values
+    #     non_zero_values = values[values > 0]
         
-        if len(non_zero_values) >= 4:
-            try:
-                df['value_band'] = pd.qcut(
-                    values,
-                    q=4,
-                    labels=['Q1 (0-25%)', 'Q2 (25-50%)', 'Q3 (50-75%)', 'Q4 (75-100%)'],
-                    duplicates='drop'
-                )
-            except Exception as e:
-                logger.warning(f"Failed to create quartile bands: {e}. Using fallback method.")
-                df['value_band'] = self._create_fallback_bands(values)
-        else:
-            df['value_band'] = self._create_fallback_bands(values)
+    #     if len(non_zero_values) >= 4:
+    #         try:
+    #             df['value_band'] = pd.qcut(
+    #                 values,
+    #                 q=4,
+    #                 labels=['Q1 (0-25%)', 'Q2 (25-50%)', 'Q3 (50-75%)', 'Q4 (75-100%)'],
+    #                 duplicates='drop'
+    #             )
+    #         except Exception as e:
+    #             logger.warning(f"Failed to create quartile bands: {e}. Using fallback method.")
+    #             df['value_band'] = self._create_fallback_bands(values)
+    #     else:
+    #         df['value_band'] = self._create_fallback_bands(values)
             
+    #     return df
+
+    def create_value_bands(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Create simple value bands using fixed thresholds"""
+        values = df['new_enquiry_value'].fillna(0)
+        df['value_band'] = self._create_fallback_bands(values)
         return df
     
     def _create_fallback_bands(self, values: pd.Series) -> pd.Series:

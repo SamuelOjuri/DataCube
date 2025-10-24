@@ -804,7 +804,7 @@ class DataSyncService:
                 prefix = (item.get('name') or item.get('item_name') or '').strip()
                 hidden_vals = list(self._hidden_lookup_by_name.values()) if hasattr(self, '_hidden_lookup_by_name') else []
                 related_hidden = [h for h in hidden_vals if isinstance(h.get('item_name'), str) and h.get('item_name', '').startswith(prefix + '_')] if prefix else []
-                
+
                 # Compute fallback new_enquiry_value (sum of quotes with "New Enquiry")
                 fallback_nev = None
                 if related_hidden:
@@ -824,7 +824,7 @@ class DataSyncService:
                         invoice_dates = [d for d in (h.get('invoice_date') for h in related_hidden) if d]
                         if design_dates and invoice_dates:
                             earliest_design = min(design_dates)
-                            earliest_invoice = min(invoice_dates)  # use earliest invoice, not latest
+                            earliest_invoice = min(invoice_dates)
                             d_dt = datetime.strptime(earliest_design, '%Y-%m-%d')
                             i_dt = datetime.strptime(earliest_invoice, '%Y-%m-%d')
                             days_diff = (i_dt - d_dt).days
@@ -852,12 +852,12 @@ class DataSyncService:
                 account_val = self._dedup_csv_labels(account_val)
                 product_val = self._dedup_csv_labels(product_val)
 
-                # Primary project build
+                # Primary project build with corrected gestation preference order
                 project = {
                     'monday_id': item.get('monday_id') or item.get('id'),
                     'item_name': item.get('name', ''),
                     'project_name': project_name or '',
-                    
+
                     # Prefer resolver-computed values first, then mirrors (deduped)
                     'account': account_val,
                     'product_type': product_val,
@@ -867,7 +867,7 @@ class DataSyncService:
                         or fallback_nev  # hidden-items fallback
                         or 0.0
                     ),
-                    
+
                     # Standard fields
                     'pipeline_stage': self._normalize_pipeline_stage(item.get('pipeline_stage')),
                     'type': self._normalize_type(item.get('type')),
@@ -877,8 +877,8 @@ class DataSyncService:
                     'funding': item.get('funding', ''),
                     'feedback': item.get('feedback', ''),
                     'lost_to_who_or_why': item.get('lost_to_who_or_why', ''),
-                    
-                    # Calculate gestation period - prefer calculated over raw formula; else fallback from hidden
+
+                    # Calculate gestation period: prefer calc or item value, else fallback
                     'gestation_period': (
                         self._parse_gestation_period(
                             self._calculate_gestation_period(item) or item.get('gestation_period')
@@ -886,7 +886,7 @@ class DataSyncService:
                         if (self._calculate_gestation_period(item) or item.get('gestation_period')) is not None
                         else self._parse_gestation_period(fallback_gestation)
                     ),
-                    
+
                     # Numeric fields
                     'project_value': self._parse_numeric_value(
                         item.get('project_value') or item.get('overall_project_value')
@@ -897,7 +897,7 @@ class DataSyncService:
                     'probability_percent': self._parse_probability(
                         item.get('probability_percent', 0)
                     ),
-                    
+
                     # Date fields
                     'date_created': self._parse_date_value(item.get('date_created')),
                     'expected_start_date': self._parse_date_value(item.get('expected_start_date')),
@@ -905,18 +905,18 @@ class DataSyncService:
                     'first_date_designed': self._parse_date_value(item.get('first_date_designed')),
                     'last_date_designed': self._parse_date_value(item.get('last_date_designed')),
                     'first_date_invoiced': self._parse_date_value(item.get('first_date_invoiced')),
-                    
+
                     # Metadata
                     'last_synced_at': datetime.now().isoformat()
                 }
-                
+
                 project['new_enquiry_value'] = round(float(project['new_enquiry_value'] or 0.0), 2)
                 transformed.append(project)
-                
+
             except Exception as e:
                 logger.error(f"Error transforming project {item.get('monday_id')}: {e}")
                 continue
-        
+
         if transformed:
             df = pd.DataFrame(transformed)
             df = self.segmentation.create_value_bands(df)
@@ -1209,18 +1209,29 @@ class DataSyncService:
         
         return normalized
     
+    # def _map_column_to_field(self, column_id: str) -> Optional[str]:
+    #     """Map Monday column IDs to database field names using config mappings"""
+    #     # Create reverse mapping from config
+    #     all_config_mappings = {
+    #         **PARENT_COLUMNS,
+    #         **SUBITEM_COLUMNS, 
+    #         **HIDDEN_ITEMS_COLUMNS
+    #     }
+        
+    #     # Reverse the mapping (column_id → field_name)
+    #     reverse_mapping = {v: k for k, v in all_config_mappings.items()}
+        
+    #     return reverse_mapping.get(column_id)
+
     def _map_column_to_field(self, column_id: str) -> Optional[str]:
-        """Map Monday column IDs to database field names using config mappings"""
-        # Create reverse mapping from config
-        all_config_mappings = {
-            **PARENT_COLUMNS,
-            **SUBITEM_COLUMNS, 
-            **HIDDEN_ITEMS_COLUMNS
-        }
-        
-        # Reverse the mapping (column_id → field_name)
-        reverse_mapping = {v: k for k, v in all_config_mappings.items()}
-        
+        # Build reverse map by column_id → field_name across all boards (avoid field-name collisions)
+        reverse_mapping = {}
+        for field, col in PARENT_COLUMNS.items():
+            reverse_mapping[col] = field
+        for field, col in SUBITEM_COLUMNS.items():
+            reverse_mapping[col] = field
+        for field, col in HIDDEN_ITEMS_COLUMNS.items():
+            reverse_mapping[col] = field
         return reverse_mapping.get(column_id)
     
     def _normalize_pipeline_stage(self, stage_value: Any) -> str:
@@ -1424,6 +1435,8 @@ class DataSyncService:
             rolled = gmap.get(pid)
             if rolled is not None and rolled > 0 and (current is None or int(current) <= 0):
                 p['gestation_period'] = rolled
+            # if rolled is not None and (current is None):
+            #     p['gestation_period'] = rolled
     
     async def _batch_upsert_projects(self, projects_data: List[Dict]) -> int:
         """Batch upsert projects with error handling"""
