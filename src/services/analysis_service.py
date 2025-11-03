@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
-from ..config import ANALYSIS_LOOKBACK_DAYS
+from ..config import ANALYSIS_LOOKBACK_DAYS, GEMINI_API_KEY, GEMINI_MODEL
 from ..database.supabase_client import SupabaseClient
 from ..core.llm_analyzer import LLMAnalyzer
 from ..core.models import ProjectFeatures, NumericPredictions, SegmentStatistics
@@ -155,7 +155,7 @@ class AnalysisService:
         pf = self._to_project_features(proj)
 
         # 2) Store baseline if LLM disabled or no key
-        if not with_llm or not os.getenv("OPENAI_API_KEY"):
+        if not with_llm or not GEMINI_API_KEY:
             self.db.store_analysis_result(monday_id, base)
             # Enrich returned result (do not store these extra fields)
             returned = {
@@ -175,7 +175,7 @@ class AnalysisService:
         np = self._to_numeric_predictions(base, seg)
 
         # 4) LLM reasoning + optional ±1 rating adjustment
-        llm = LLMAnalyzer()  # uses OPENAI_API_KEY
+        llm = LLMAnalyzer()  # uses GEMINI
         llm_out, meta = llm.analyze_project(pf, np, seg)
         final = llm.create_final_analysis(pf, np, llm_out, meta)
 
@@ -190,7 +190,7 @@ class AnalysisService:
             'adjustments': llm_out.adjustments,
             'confidence_notes': llm_out.confidence_notes,
             'special_factors': final.analysis_metadata.get('special_factors'),
-            'llm_model': meta.get('llm_model', 'gpt-4o'),
+            'llm_model': meta.get('llm_model', GEMINI_MODEL),
             'analysis_version': 'v1.0-llm',
             'processing_time_ms': int(float(meta.get('response_time', 0)) * 1000)
         }

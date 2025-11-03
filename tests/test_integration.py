@@ -13,7 +13,7 @@ import json
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.config import CACHE_DIR, MONDAY_API_KEY
+from src.config import CACHE_DIR, MONDAY_API_KEY, GEMINI_API_KEY
 from src.core.monday_client import MondayClient
 from src.core.enhanced_extractor import EnhancedMondayExtractor
 from src.core.data_processor import HierarchicalSegmentation
@@ -40,8 +40,8 @@ async def run_integration_test():
         print("✗ MONDAY_API_KEY not set")
         return False
     
-    if not os.getenv("OPENAI_API_KEY"):
-        print("⚠️  OPENAI_API_KEY not set - LLM analysis will be limited")
+    if not GEMINI_API_KEY:
+        print("⚠️  GEMINI_API_KEY not set - LLM analysis will be limited")
     
     # Stage 1: Initialize clients
     print("\n1. Initializing components...")
@@ -52,7 +52,7 @@ async def run_integration_test():
     
     # Only initialize LLM if API key is available
     llm_analyzer = None
-    if os.getenv("OPENAI_API_KEY"):
+    if GEMINI_API_KEY:
         llm_analyzer = LLMAnalyzer()
         print("   ✓ All components initialized")
     else:

@@ -1,4 +1,4 @@
-# scripts/test_llm_analysis_all.py
+# scripts/llm_analysis_all.py
 import os
 import sys
 import time
@@ -20,7 +20,7 @@ from src.services.analysis_service import AnalysisService
 from src.core.llm_analyzer import LLMAnalyzer
 from src.core.models import ProjectFeatures, NumericPredictions, SegmentStatistics
 from src.core.numeric_analyzer import NumericBaseline
-from src.config import ANALYSIS_LOOKBACK_DAYS
+from src.config import ANALYSIS_LOOKBACK_DAYS, GEMINI_API_KEY, GEMINI_MODEL
 
 from scripts.test_llm_analysis import (
     build_segment_stats,
@@ -39,7 +39,7 @@ def stream_projects(
     batch_size: int = 200,
     order_field: str = "monday_id",
     resume_after: Optional[str] = None,
-    created_after: Optional[str] = None,
+    since: Optional[str] = None,
 ) -> Generator[List[Dict[str, Any]], None, None]:
     """
     Yield batches of projects ordered by `order_field`, using keyset pagination.
@@ -49,7 +49,7 @@ def stream_projects(
         batch_size: Number of rows to fetch per batch.
         order_field: Column to order by (must be indexed / sortable).
         resume_after: Optional last-seen value to resume from.
-        created_after: Optional ISO timestamp string to only include projects created after this date.
+        since: Optional ISO timestamp string to only include projects created on/after this date.
 
     Yields:
         Lists of project dicts.
@@ -64,8 +64,8 @@ def stream_projects(
             .order(order_field, desc=False)
             .limit(batch_size)
         )
-        if created_after:
-            query = query.gte("date_created", created_after)
+        if since:
+            query = query.gte("date_created", since)
         if cursor:
             query = query.gt(order_field, cursor)
 
@@ -135,6 +135,7 @@ def process_projects(
                 "type": features.type,
                 "category": features.category,
                 "product_type": features.product_type,
+                "date_created": project.get("date_created"),
                 "value": features.new_enquiry_value,
                 "value_band": features.value_band,
                 "baseline": {
@@ -150,7 +151,7 @@ def process_projects(
                 "reasoning": llm_out.reasoning,
                 "adjustments": llm_out.adjustments,
                 "confidence_notes": llm_out.confidence_notes,
-                "llm_model": meta.get("llm_model", "gpt-4o"),
+                "llm_model": meta.get("llm_model", GEMINI_MODEL),
                 "response_time_s": meta.get("response_time", 0.0),
                 "tokens_used": meta.get("tokens_used", 0),
                 "segment": {
@@ -207,14 +208,15 @@ def main() -> None:
         help="Sleep seconds between LLM calls to respect rate limits.",
     )
     parser.add_argument(
-        "--created-after",
+        "--since",
         type=str,
         help="Only analyze projects with date_created on/after YYYY-MM-DD",
     )
+
     args = parser.parse_args()
 
-    if not os.getenv("OPENAI_API_KEY"):
-        logger.error("OPENAI_API_KEY not set. Export it before running.")
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY not set. Export it before running.")
         sys.exit(1)
 
     lookback = args.lookback_days or ANALYSIS_LOOKBACK_DAYS
@@ -230,12 +232,12 @@ def main() -> None:
     json_path = args.out_json or (PROJECT_ROOT / "outputs" / "analysis" / f"llm_all_{timestamp}.json")
     csv_path = args.out_csv or json_path.with_suffix(".csv")
 
-    created_after = None
-    if args.created_after:
+    since = None
+    if args.since:
         try:
-            created_after = datetime.strptime(args.created_after, "%Y-%m-%d").date().isoformat()
+            since = datetime.strptime(args.since, "%Y-%m-%d").date().isoformat()
         except ValueError:
-            parser.error("--created-after must be YYYY-MM-DD")
+            parser.error("--since must be YYYY-MM-DD")
 
     all_results: List[Dict[str, Any]] = []
     processed = 0
@@ -247,7 +249,7 @@ def main() -> None:
             db,
             batch_size=args.batch_size,
             resume_after=args.resume_after,
-            created_after=created_after,
+            since=since,
         ),
         start=1,
     ):

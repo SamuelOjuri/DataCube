@@ -302,6 +302,67 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Failed to store analysis result: {e}")
 
+    
+    def get_latest_analysis_result(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch the most recent analysis_results row for a project_id.
+
+        Returns numeric fields normalised as ints/floats and keeps the JSON/text
+        blobs (reasoning, confidence_notes, etc.) as-is.
+        """
+        if not project_id:
+            return None
+
+        try:
+            response = (
+                self.client.table("analysis_results")
+                .select("*")
+                .eq("project_id", str(project_id))
+                .order("analysis_timestamp", desc=True)  # newest first
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load analysis result for %s: %s", project_id, exc)
+            return None
+
+        row = (response.data or [None])[0]
+        if not row:
+            return None
+
+        def _to_int(value: Any) -> Optional[int]:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                try:
+                    return int(float(value))
+                except (TypeError, ValueError):
+                    return None
+
+        def _to_float(value: Any) -> Optional[float]:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        result = {
+            "project_id": row.get("project_id"),
+            "analysis_timestamp": row.get("analysis_timestamp"),
+            "expected_gestation_days": _to_int(row.get("expected_gestation_days")),
+            "gestation_confidence": _to_float(row.get("gestation_confidence")),
+            "expected_conversion_rate": _to_float(row.get("expected_conversion_rate")),
+            "conversion_confidence": _to_float(row.get("conversion_confidence")),
+            "rating_score": _to_int(row.get("rating_score")),
+            "reasoning": row.get("reasoning"),
+            "adjustments": row.get("adjustments"),
+            "confidence_notes": row.get("confidence_notes"),
+            "special_factors": row.get("special_factors"),
+            "llm_model": row.get("llm_model"),
+            "analysis_version": row.get("analysis_version"),
+            "processing_time_ms": _to_int(row.get("processing_time_ms")),
+        }
+        return result
+
+
     def get_existing_project_ids(self) -> set:
         """Return set of all existing monday_id in projects table (paged)."""
         page_size = 1000

@@ -628,5 +628,188 @@ class MondayClient:
             "next_cursor": page.get("cursor"),
         }
 
+    def update_item_columns(
+        self,
+        board_id: str,
+        item_id: str,
+        column_values: Dict[str, Any],
+        throttle: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Change multiple column values on a Monday item with retry/backoff handling.
+        """
+        if not column_values:
+            logger.debug("No column values supplied for item %s; skipping update.", item_id)
+            return None
+
+        mutation = """
+        mutation ChangeMultipleColumnValues(
+            $board_id: ID!,
+            $item_id: ID!,
+            $column_values: JSON!
+        ) {
+            change_multiple_column_values(
+                board_id: $board_id,
+                item_id: $item_id,
+                column_values: $column_values
+            ) {
+                id
+            }
+        }
+        """
+        variables = {
+            "board_id": str(board_id),
+            "item_id": str(item_id),
+            "column_values": json.dumps(column_values),
+        }
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                logger.debug("Updating Monday item %s (attempt %d)", item_id, attempt)
+                result = self.execute_query(mutation, variables)
+                if throttle and RATE_LIMIT_DELAY:
+                    time.sleep(RATE_LIMIT_DELAY)
+                return result.get("data", {}).get("change_multiple_column_values")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to update Monday item %s on attempt %d/%d: %s",
+                    item_id,
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+                if attempt == MAX_RETRIES:
+                    logger.error("Giving up on Monday item %s after %d attempts.", item_id, attempt)
+                    raise
+                time.sleep(RATE_LIMIT_DELAY * attempt)
+
+        return None
+
+    def create_item_update(
+        self,
+        item_id: str,
+        body: str,
+        throttle: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create an update (activity log post) on a Monday item.
+        """
+        if not body:
+            logger.debug("Empty update body for item %s; skipping create_update.", item_id)
+            return None
+
+        mutation = """
+        mutation CreateUpdate($item_id: ID!, $body: String!) {
+            create_update(item_id: $item_id, body: $body) {
+                id
+                text_body
+            }
+        }
+        """
+        variables = {"item_id": str(item_id), "body": body}
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                logger.debug("Posting update to Monday item %s (attempt %d)", item_id, attempt)
+                result = self.execute_query(mutation, variables)
+                if throttle and RATE_LIMIT_DELAY:
+                    time.sleep(RATE_LIMIT_DELAY)
+                return result.get("data", {}).get("create_update")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to create update for item %s on attempt %d/%d: %s",
+                    item_id,
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+                if attempt == MAX_RETRIES:
+                    logger.error("Giving up on Monday update for item %s after %d attempts.", item_id, attempt)
+                    raise
+                time.sleep(RATE_LIMIT_DELAY * attempt)
+
+        return None
+
+    def edit_item_update(
+        self,
+        update_id: str,
+        body: str,
+        throttle: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Edit an existing Monday item update (activity log entry).
+        """
+        if not update_id or not body:
+            logger.debug("Missing update_id/body for edit_update; skipping.")
+            return None
+
+        mutation = """
+        mutation EditUpdate($update_id: ID!, $body: String!) {
+            edit_update(id: $update_id, body: $body) {
+                id
+                item_id
+                creator_id
+            }
+        }
+        """
+        variables = {"update_id": str(update_id), "body": body}
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                logger.debug("Editing Monday update %s (attempt %d)", update_id, attempt)
+                result = self.execute_query(mutation, variables)
+                if throttle and RATE_LIMIT_DELAY:
+                    time.sleep(RATE_LIMIT_DELAY)
+                return result.get("data", {}).get("edit_update")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to edit update %s on attempt %d/%d: %s",
+                    update_id,
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+                if attempt == MAX_RETRIES:
+                    logger.error("Giving up on Monday edit_update %s after %d attempts.", update_id, attempt)
+                    raise
+                time.sleep(RATE_LIMIT_DELAY * attempt)
+
+        return None
+
+    def get_item_updates(
+        self,
+        item_id: str,
+        limit: int = 10,
+        throttle: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch recent updates for an item (used to detect prior Datacube posts).
+        """
+        query = """
+        query GetItemUpdates($item_id: [ID!], $limit: Int!) {
+            items(ids: $item_id) {
+                updates(limit: $limit) {
+                    id
+                    body
+                    text_body
+                    created_at
+                    creator {
+                        id
+                        name
+                    }
+                }
+            }
+        }
+        """
+        variables = {"item_id": [str(item_id)], "limit": limit}
+        result = self.execute_query(query, variables)
+        if throttle and RATE_LIMIT_DELAY:
+            time.sleep(RATE_LIMIT_DELAY)
+
+        items = result.get("data", {}).get("items") or []
+        if not items:
+            return []
+        return items[0].get("updates") or []
+
 
     

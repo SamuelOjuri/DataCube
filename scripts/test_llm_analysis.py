@@ -21,7 +21,7 @@ from src.core.models import ProjectFeatures, NumericPredictions, SegmentStatisti
 from src.core.numeric_analyzer import NumericBaseline
 from datetime import timedelta
 import pandas as pd
-from src.config import ANALYSIS_LOOKBACK_DAYS
+from src.config import ANALYSIS_LOOKBACK_DAYS, GEMINI_API_KEY, GEMINI_MODEL
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger("llm_test")
@@ -157,7 +157,7 @@ def to_numeric_predictions(base: Dict[str, Any], seg: Optional[SegmentStatistics
 
 def write_csv(results: List[Dict[str, Any]], csv_file: Path) -> None:
     headers = [
-        'project_id', 'item_name', 'project_name', 'account', 'type', 'category', 'product_type', 'value', 'value_band',
+        'project_id', 'item_name', 'project_name', 'account', 'type', 'category', 'product_type', 'date_created', 'value', 'value_band',
         'baseline_expected_gestation_days', 'baseline_expected_conversion_rate', 'baseline_rating_score',
         'final_expected_gestation_days', 'final_expected_conversion_rate', 'final_rating_score',
         'rating_adjustment', 'confidence_notes',
@@ -186,6 +186,7 @@ def write_csv(results: List[Dict[str, Any]], csv_file: Path) -> None:
                 'type': r.get('type'),
                 'category': r.get('category'),
                 'product_type': r.get('product_type'),
+                'date_created': r.get('date_created'),
                 'value': r.get('value') if r.get('value') is not None else r.get('new_enquiry_value'),
                 'value_band': r.get('value_band'),
                 'baseline_expected_gestation_days': baseline.get('expected_gestation_days'),
@@ -227,8 +228,8 @@ def fetch_global_df(db: SupabaseClient, lookback_days: Optional[int] = None) -> 
 
 
 def main(n: int = 100, out_path: Optional[str] = None, csv_path: Optional[str] = None, lookback_days: Optional[int] = None):
-    if not os.getenv("OPENAI_API_KEY"):
-        logger.error("OPENAI_API_KEY not set. Export it and retry.")
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY not set. Export it and retry.")
         sys.exit(1)
 
     # Log the lookback period being used
@@ -304,7 +305,7 @@ def main(n: int = 100, out_path: Optional[str] = None, csv_path: Optional[str] =
                 'reasoning': out.reasoning,
                 'adjustments': out.adjustments,
                 'confidence_notes': out.confidence_notes,
-                'llm_model': meta.get('llm_model', 'gpt-4o'),
+                'llm_model': meta.get('llm_model', GEMINI_MODEL),
                 'response_time_s': meta.get('response_time', 0.0),
                 'tokens_used': meta.get('tokens_used', 0),
                 'segment': {

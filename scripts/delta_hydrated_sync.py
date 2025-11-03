@@ -215,6 +215,12 @@ class DeltaRehydrationManager:
         try:
             stats = await self._collect_hidden_ids(prefixes, log_id)
             matched_ids = set(stats.get("matched_ids") or [])
+            if stats.get("unmatched_prefix_values"):
+                logger.warning(
+                    "Hidden warm-up finished with unmatched prefixes: %s",
+                    ", ".join(stats["unmatched_prefix_values"]),
+                )
+            stats.setdefault("unmatched_prefix_values", [])
             if not matched_ids:
                 logger.warning("No hidden items matched requested prefixes; subitem fallback will rely on full cache")
                 self._hidden_rows_by_prefix.clear()
@@ -458,6 +464,7 @@ class DeltaRehydrationManager:
             "pages": hidden_pages,
             "processed_total": hidden_processed,
             "unmatched_prefixes": len(pending),
+            "unmatched_prefix_values": sorted(pending),
         }
 
     async def _fast_forward_to_known_ids(self, board_id: str, known_ids: List[str], max_hops: int = 500) -> Optional[str]:

@@ -10,10 +10,18 @@ from datetime import datetime
 import time
 from pathlib import Path
 import os
+from textwrap import dedent
 
-from openai import OpenAI
+from google import genai
+from google.genai import types as genai_types
+from google.api_core import exceptions as google_exceptions
 from pydantic import ValidationError
 import pandas as pd
+
+# logger = logging.getLogger(__name__)
+# _env_level = os.getenv("LLM_ANALYZER_LOG_LEVEL", "").upper()
+# if _env_level:
+#     logger.setLevel(getattr(logging, _env_level, logging.INFO))
 
 try:
     from .models import (
@@ -24,7 +32,7 @@ try:
         AnalysisResult,
         SegmentStatistics
     )
-    from src.config import ANALYSIS_DIR, CACHE_DIR
+    from src.config import ANALYSIS_DIR, CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
 except ImportError:
     from models import (
         ProjectFeatures,
@@ -36,6 +44,34 @@ except ImportError:
     )
     from config import ANALYSIS_DIR, CACHE_DIR
 
+LLM_RESPONSE_SCHEMA = genai_types.Schema(
+    type=genai_types.Type.OBJECT,
+    properties={
+        "reasoning": genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                "gestation": genai_types.Schema(type=genai_types.Type.STRING),
+                "conversion": genai_types.Schema(type=genai_types.Type.STRING),
+                "rating": genai_types.Schema(type=genai_types.Type.STRING),
+            },
+            required=["gestation", "conversion", "rating"],
+        ),
+        "adjustments": genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                "rating_adjustment": genai_types.Schema(
+                    type=genai_types.Type.INTEGER,
+                    description="Whole-number rating adjustment between -5 and +5."
+                )
+            },
+            required=["rating_adjustment"],
+        ),
+        "special_factors": genai_types.Schema(type=genai_types.Type.STRING),
+        "confidence_notes": genai_types.Schema(type=genai_types.Type.STRING),
+    },
+    required=["reasoning", "adjustments", "confidence_notes"],
+)
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -43,29 +79,37 @@ logger = logging.getLogger(__name__)
 class LLMAnalyzer:
     """
     LLM analyzer that provides reasoning for pre-computed numeric baselines.
-    Uses OpenAI model for analysis and reasoning only.
+    Uses Google Gemini model for analysis and reasoning only.
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o"):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        *,
+        max_token_retries: int = 2,
+    ):
         """
         Initialize the LLM analyzer.
-        
+
         Args:
-            api_key: OpenAI API key. If None, will try to get from environment
-            model: OpenAI model to use (default: gpt-4o)
+            api_key: Gemini API key. If None, pulled from environment.
+            model: Gemini model to use (defaults to config GEMINI_MODEL).
+            max_token_retries: Number of retries when hitting token limit.
         """
-        # Initialize OpenAI client
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or GEMINI_API_KEY
         if not self.api_key:
-            raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable.")
-        
-        self.client = OpenAI(api_key=self.api_key)
-        self.model = model
-        
-        # Track API usage
+            raise ValueError(
+                "Gemini API key not provided. Set GEMINI_API_KEY or GOOGLE_API_KEY."
+            )
+
+        self.client = genai.Client(api_key=self.api_key)
+        self.model = model or GEMINI_MODEL
+        self.max_token_retries = max(0, max_token_retries)
+
         self.api_calls = 0
         self.total_tokens = 0
-        
+
         logger.info(f"LLM Analyzer initialized with model: {self.model}")
     
     def _create_analysis_prompt(
@@ -106,32 +150,17 @@ class LLMAnalyzer:
             "backoff_tier": segment_statistics.backoff_tier if segment_statistics else 5
         }
         
+        sample_size = segment_info["sample_size"]
+        backoff_tier = segment_info["backoff_tier"]
+        conv_conf = numeric_predictions.conversion_confidence or 0.0
+        gest_conf = numeric_predictions.gestation_confidence or 0.0
+        conv_conf_pct = f"{conv_conf:.0%}"
+        gest_conf_pct = f"{gest_conf:.0%}"
+        
         # Calculate confidence level
         confidence = "High" if segment_info['sample_size'] > 50 else \
                     "Medium" if segment_info['sample_size'] > 15 else "Low"
         
-        prompt = f"""
-You are analyzing a project with pre-computed baseline predictions. Your role is to:
-1. Provide clear reasoning for why these predictions make sense
-2. Identify any special factors that might adjust the rating by ±1
-3. Explain the predictions in business terms
-
-Project Data:
-{json.dumps(project_json, indent=2)}
-
-Historical Context:
-- Segment used: {', '.join(segment_info['keys']) if segment_info['keys'] else 'Global data'}
-- Similar projects analyzed: {segment_info['sample_size']}
-- Backoff tier: {segment_info['backoff_tier']} (0=most specific, 5=global)
-- Confidence level: {confidence}
-
-Baseline Predictions (already calculated):
-- Expected Gestation Period: {numeric_predictions.expected_gestation_days} days (range: {numeric_predictions.gestation_range.get('p25', 'N/A')}-{numeric_predictions.gestation_range.get('p75', 'N/A')} days)
-- Expected Conversion Rate: {numeric_predictions.expected_conversion_rate:.1%} (confidence: {numeric_predictions.conversion_confidence:.1%})
-- Rating Score: {numeric_predictions.rating_score}/100
-
-Historical Performance in this segment:"""
-
         # Format historical performance separately to avoid f-string issues
         if segment_statistics and segment_statistics.conversion_rate:
             win_rate = f"{segment_statistics.conversion_rate:.1%}"
@@ -151,50 +180,143 @@ Historical Performance in this segment:"""
         else:
             avg_value = "N/A"
         
-        prompt += f"""
-- Win rate: {win_rate}
-- Total projects: {total_projects} (Wins: {wins}, Losses: {losses}, Open enquiries: {open_count})
-- Average project value: {avg_value}
-- Open enquiries simply indicate no recorded outcome yet; they must not be treated as a negative signal.
+        prompt = f"""
+        You are analyzing a project with pre-computed baseline predictions. Your role is to:
+        1. Provide clear reasoning for why these predictions make sense
+        2. Identify any special factors that might adjust the rating by ±1
+        3. Explain the predictions in business terms
 
-Please provide:
-1. **Gestation Period Reasoning**: Why {numeric_predictions.expected_gestation_days} days makes sense for this project
-2. **Conversion Rate Reasoning**: What factors support the {numeric_predictions.expected_conversion_rate:.1%} conversion rate
-3. **Rating Score Reasoning**: Why this project deserves a {numeric_predictions.rating_score}/100 rating
-4. **Special Factors**: Any unique aspects that might adjust the rating by ±5?
+        Project Data:
+        {json.dumps(project_json, indent=2)}
 
-Consider these factors in your analysis:
-- The account's historical performance
-- The project type and category combination
-- The value band relative to similar projects
-- The product type's typical success rate
+        Historical Context:
+        - Segment used: {', '.join(segment_info['keys']) if segment_info['keys'] else 'Global data'}
+        - Similar projects analyzed: {segment_info['sample_size']}
+        - Backoff tier: {segment_info['backoff_tier']} (0=most specific, 5=global)
+        - Confidence level: {confidence}
+        - Conversion confidence: {conv_conf_pct}
+        - Gestation confidence: {gest_conf_pct}
 
-Rules:
-- Treat 'Open Enquiry' as neutral; do not infer stage or uncertainty, and do not describe a high count of open enquiries as a risk.
-- Do not use pipeline-stage wording as justification; focus on numeric baselines (conversion, gestation, value) and segment statistics.
+        Baseline Predictions (already calculated):
+        - Expected Gestation Period: {numeric_predictions.expected_gestation_days} days (range: {numeric_predictions.gestation_range.get('p25', 'N/A')}-{numeric_predictions.gestation_range.get('p75', 'N/A')} days)
+        - Expected Conversion Rate: {numeric_predictions.expected_conversion_rate:.1%} (confidence: {numeric_predictions.conversion_confidence:.1%})
+        - Rating Score: {numeric_predictions.rating_score}/100
 
-Return as JSON with structure:
-{{
-  "reasoning": {{
-    "gestation": "Clear explanation of why the gestation period makes sense...",
-    "conversion": "Explanation of conversion rate factors...",
-    "rating": "Justification for the rating score..."
-  }},
-  "adjustments": {{
-    "rating_adjustment": 0
-  }},
-  "special_factors": "Any notable considerations or risk factors...",
-  "confidence_notes": "Any caveats about data quality or sample size..."
-}}
+        Historical Performance in this segment:
+        - Win rate: {win_rate}
+        - Total projects: {total_projects} (Wins: {wins}, Losses: {losses}, Open enquiries: {open_count})
+        - Average project value: {avg_value}
+        - Open enquiries simply indicate no recorded outcome yet; they must not be treated as a negative signal.
 
-IMPORTANT: 
-- Only suggest rating_adjustment of -5, 0, or +5
-- Base your reasoning on the data provided
-- Be specific about which factors most influence each prediction
-- Consider the backoff tier - higher tiers mean less specific data was available
-"""
+        Adjustment Guardrails (non-negotiable):
+        - rating_adjustment must be an integer between -5 and +5. Zero is the default and should be used unless a statistically significant deviation is proven.
+        - Only consider a non-zero adjustment if every one of these conditions is satisfied:
+          * sample_size ≥ 60 (current: {sample_size})
+          * conversion confidence ≥ 70% (current: {conv_conf_pct})
+          * backoff tier ≤ 2 (current: {backoff_tier})
+          * You identify and cite a quantified deviation from baselines (e.g., segment win rate vs baseline conversion, project value vs segment average) large enough to justify the magnitude you choose.
+        - If any condition is not met, you must leave rating_adjustment at 0 and explicitly state that no statistically significant adjustment is justified.
+        - When you do apply a non-zero adjustment, you must reference the exact metrics (sample size, conversion confidence, quantified deviation) inside both reasoning.rating and special_factors.
+
+        Please provide:
+        1. **Gestation Period Reasoning**: Why {numeric_predictions.expected_gestation_days} days makes sense for this project
+        2. **Conversion Rate Reasoning**: What factors support the {numeric_predictions.expected_conversion_rate:.1%} conversion rate
+        3. **Rating Score Reasoning**: Why this project deserves a {numeric_predictions.rating_score}/100 rating
+        4. **Special Factors**: Any unique aspects that might adjust the rating by ±5?
+
+        Consider these factors in your analysis:
+        - The account's historical performance
+        - The project type and category combination
+        - The value band relative to similar projects
+        - The product type's typical success rate
+
+        Rules:
+        - Treat 'Open Enquiry' as neutral; do not infer stage or uncertainty, and do not describe a high count of open enquiries as a risk.
+        - Do not use pipeline-stage wording as justification; focus on numeric baselines (conversion, gestation, value) and segment statistics.
+        - Cite the concrete metrics (sample size, confidence, win/value comparisons) that underpin every conclusion.
+
+        Return as JSON with structure:
+        {{
+        "reasoning": {{
+            "gestation": "Clear explanation of why the gestation period makes sense...",
+            "conversion": "Explanation of conversion rate factors...",
+            "rating": "Justification for the rating score..."
+        }},
+        "adjustments": {{
+            "rating_adjustment": 0
+        }},
+        "special_factors": "Any notable considerations or risk factors...",
+        "confidence_notes": "Any caveats about data quality or sample size..."
+        }}
+
+        IMPORTANT: 
+        - rating_adjustment must stay between -5 and +5 (inclusive) and be a whole number
+        - Base your reasoning on the data provided and the guardrails above
+        - Be specific about which factors most influence each prediction
+        - Consider the backoff tier - higher tiers mean less specific data was available
+        """
         
         return prompt
+
+    def _extract_response_content(self, response: Any) -> str:
+        """Normalize structured Gemini responses into a JSON string."""
+        text = getattr(response, "text", None)
+        if text:
+            return text
+
+        chunks: List[str] = []
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if not parts:
+                continue
+            for part in parts:
+                chunk = self._normalize_part(part)
+                if chunk:
+                    chunks.append(chunk)
+
+        return "".join(chunks)
+
+    def _normalize_part(self, part: Any) -> Optional[str]:
+        part_text = getattr(part, "text", None)
+        if part_text:
+            return part_text
+
+        def _as_json(value: Any) -> Optional[str]:
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            try:
+                if hasattr(value, "model_dump_json"):
+                    return value.model_dump_json()
+                if hasattr(value, "model_dump"):
+                    return json.dumps(value.model_dump())
+                if hasattr(value, "to_dict"):
+                    return json.dumps(value.to_dict())
+                if hasattr(value, "items"):
+                    return json.dumps(dict(value))
+                if isinstance(value, (dict, list, tuple)):
+                    return json.dumps(value)
+                # Fallback: try interpreting stringified form as JSON
+                return json.dumps(json.loads(str(value)))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                logger.debug("Unable to normalise part value %r", value)
+                return None
+
+        func_call = getattr(part, "function_call", None)
+        if func_call:
+            normalized = _as_json(getattr(func_call, "args", None))
+            if normalized:
+                return normalized
+
+        json_value = getattr(part, "json_value", None)
+        normalized = _as_json(json_value)
+        if normalized:
+            return normalized
+
+        return None
     
     def _parse_llm_response(self, response_text: str) -> ProjectAnalysisOutput:
         """
@@ -243,7 +365,7 @@ IMPORTANT:
             
             # Validate rating adjustment is within bounds
             rating_adj = response_data["adjustments"].get("rating_adjustment", 0)
-            if rating_adj not in [-5, 0, 5]:
+            if not isinstance(rating_adj, int) or rating_adj < -5 or rating_adj > 5:
                 logger.warning(f"Invalid rating adjustment {rating_adj}, setting to 0")
                 response_data["adjustments"]["rating_adjustment"] = 0
             
@@ -285,19 +407,9 @@ IMPORTANT:
     ) -> Tuple[ProjectAnalysisOutput, Dict[str, Any]]:
         """
         Analyze a project using LLM for reasoning.
-        
-        Args:
-            project_features: Project characteristics
-            numeric_predictions: Pre-computed numeric baselines
-            segment_statistics: Statistics of the segment used
-            historical_context: Additional historical data
-            
-        Returns:
-            Tuple of (analysis output, metadata)
         """
         start_time = time.time()
-        
-        # Create prompt
+
         prompt = self._create_analysis_prompt(
             project_features,
             numeric_predictions,
@@ -308,71 +420,96 @@ IMPORTANT:
             ),
             historical_context or {}
         )
-        
+
         try:
-            # Use regular create with JSON object format (skip structured parsing)
-            token_param_options = [
-                {"max_tokens": 1500, "temperature": 0.0},
-            ]
-            last_exc: Optional[Exception] = None
+            prompt_text = dedent(f"""
+                You are a data analyst specializing in project evaluation and risk assessment.
+                Provide concise, evidence-based reasoning for each prediction, grounded in quantitative metrics such as conversion rates, gestation periods, and project values.
+                Limit each reasoning section to 2-3 concise sentences.
+                Treat 'Open Enquiry' as a neutral category (neither early-stage nor high-uncertainty).
+                Do NOT justify predictions using qualitative or pipeline-stage terminology.
+                Focus strictly on numeric baselines, statistical trends, and segment-level insights when forming conclusions.
+
+                {prompt}
+            """)
+
             response = None
-            messages = [
-                {
-                    "role": "system",
-                    "content": "You are a data analyst specializing in project evaluation and risk assessment. Provide clear, evidence-based reasoning for predictions. Treat 'Open Enquiry' as neutral (neither early-stage nor high-uncertainty). Do not use pipeline-stage wording to justify predictions; focus on numeric baselines (conversion, gestation, value) and segment statistics.",
-                },
-                {"role": "user", "content": prompt},
-            ]
-            
-            # Use regular create with JSON object format (skip structured parsing)
-            for token_kwargs in token_param_options:
+            finish_reason = None
+
+            for attempt in range(self.max_token_retries + 1):
                 try:
-                    response = self.client.chat.completions.create(
+                    response = self.client.models.generate_content(
                         model=self.model,
-                        messages=messages,
-                        response_format={"type": "json_object"},
-                        **token_kwargs,
+                        contents=[{"role": "user", "parts": [{"text": prompt_text}]}],
+                        config=genai_types.GenerateContentConfig(
+                            temperature=0.0,
+                            response_mime_type="application/json",
+                            response_schema=LLM_RESPONSE_SCHEMA,
+                        ),
                     )
-                    break
-                except Exception as e:
-                    last_exc = e
+                except google_exceptions.ServiceUnavailable as svc_err:
+                    if attempt == self.max_token_retries:
+                        raise
+                    sleep_for = 2 ** attempt
+                    logger.warning(
+                        "Gemini 503 (attempt %s/%s); backing off %ss",
+                        attempt + 1,
+                        self.max_token_retries + 1,
+                        sleep_for,
+                    )
+                    time.sleep(sleep_for)
                     continue
 
-            if response is None:
-                raise last_exc or RuntimeError("OpenAI call failed with all token parameter variants")
-
-            # Track API usage
-            self.api_calls += 1
-            if response.usage:
-                self.total_tokens += response.usage.total_tokens
-
-            # Use parsed object if available, otherwise fall back to manual parse
-            message = response.choices[0].message
-            # If parse-helper path was used, .parsed may exist
-            if getattr(message, "parsed", None):
-                llm_output: ProjectAnalysisOutput = message.parsed  # already validated
+                finish_reason = getattr(
+                    response.candidates[0], "finish_reason", None
+                ) if getattr(response, "candidates", None) else None
+                if finish_reason != genai_types.FinishReason.MAX_TOKENS:
+                    break
+                logger.warning(
+                    "LLM output truncated by service limit (attempt %s/%s); retrying",
+                    attempt + 1,
+                    self.max_token_retries + 1,
+                )
             else:
-                # Otherwise, parse content text manually
-                content_text = getattr(message, "content", "") or ""
-                llm_output = self._parse_llm_response(content_text)
+                logger.error("LLM response still truncated after retries")
 
-            # Create metadata
+            self.api_calls += 1
+            usage = getattr(response, "usage_metadata", None)
+            total_tokens_used = getattr(usage, "total_token_count", 0) if usage else 0
+            self.total_tokens += total_tokens_used
+
+            content_text = self._extract_response_content(response)
+            llm_output = self._parse_llm_response(content_text)
+
             metadata = {
                 "llm_model": self.model,
                 "api_calls": self.api_calls,
                 "response_time": time.time() - start_time,
-                "tokens_used": response.usage.total_tokens if response.usage else 0,
-                "finish_reason": response.choices[0].finish_reason,
+                "tokens_used": total_tokens_used,
+                "finish_reason": finish_reason,
             }
 
             logger.info(f"LLM analysis completed in {metadata['response_time']:.2f}s")
 
             return llm_output, metadata
-            
+
+        except google_exceptions.ServiceUnavailable as svc_err:
+            logger.error("LLM analysis failed due to service overload: %s", svc_err)
+            return ProjectAnalysisOutput(
+                reasoning={
+                    "gestation": "LLM temporarily unavailable",
+                    "conversion": "LLM temporarily unavailable",
+                    "rating": "LLM temporarily unavailable"
+                },
+                adjustments={"rating_adjustment": 0},
+                confidence_notes="LLM service overloaded; try again later."
+            ), {
+                "error": f"Service unavailable: {svc_err}",
+                "response_time": time.time() - start_time,
+            }
         except Exception as e:
             logger.error(f"LLM analysis failed: {e}")
-            
-            # Return default output on API failure
+
             return ProjectAnalysisOutput(
                 reasoning={
                     "gestation": "LLM analysis unavailable",
@@ -549,11 +686,11 @@ IMPORTANT:
     def _estimate_cost(self) -> float:
         """
         Estimate API cost based on token usage.
-        Prices as of 2025 for GPT-4o.
+        Prices aligned with Gemini 2.5 Flash (update when pricing changes).
         """
-        # GPT-4o pricing (approximate)
-        input_price_per_1k = 0.00025 # $0.25 per 1M input tokens
-        output_price_per_1k = 0.002 # $2 per 1M output tokens
+        # Approximate Gemini 2.5 Flash pricing (USD)
+        input_price_per_1k = 0.00018
+        output_price_per_1k = 0.00054
         
         # Rough estimate (assuming 70% input, 30% output)
         estimated_input_tokens = self.total_tokens * 0.7

@@ -52,3 +52,14 @@ supabase-auth==2.12.3
 supabase-functions==0.10.1 
 uvicorn==0.35.0 
 websockets==15.0.1
+cachetools==6.2.1 
+google-auth==2.41.1 
+google-genai==1.46.0 
+pyasn1==0.6.1 
+pyasn1-modules==0.4.2 
+rsa==4.9.1 
+tenacity==9.1.2
+google-api-core==2.27.0 
+googleapis-common-protos==1.71.0 
+proto-plus==1.26.1 
+protobuf==6.33.0

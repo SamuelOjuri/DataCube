@@ -154,6 +154,11 @@ class RecentRehydrationManager:
             updated = await self.sync_service._batch_upsert_hidden_items(hidden_data)
             self.hidden_rows_upserted = updated
             stats["hidden_rows_upserted"] = updated
+            if stats.get("unmatched_prefix_values"):
+                logger.warning(
+                    "Hidden warm-up complete with unmatched prefixes: %s",
+                    ", ".join(stats["unmatched_prefix_values"]),
+                )
             logger.info(
                 "Hidden warm-up complete | matched=%d fetched=%d upserted=%d pages=%d scanned=%d",
                 len(matched_ids),
@@ -383,6 +388,7 @@ class RecentRehydrationManager:
             "pages": hidden_pages,
             "processed_total": hidden_processed,
             "unmatched_prefixes": len(pending),
+            "unmatched_prefix_values": sorted(pending),
         }
 
     async def _fast_forward_to_known_ids(self, board_id: str, known_ids: List[str], max_hops: int = 500) -> Optional[str]:

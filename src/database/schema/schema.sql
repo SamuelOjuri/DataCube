@@ -13,8 +13,8 @@ CREATE TABLE projects (
     project_name TEXT,
     pipeline_stage TEXT,
     status_category TEXT GENERATED ALWAYS AS (
-        CASE 
-            WHEN pipeline_stage IN ('Won - Closed (Invoiced)', 'Won - Open (Order Received)', 'Won Via Other Ref') THEN 'Won'
+        CASE
+            WHEN pipeline_stage = 'Won - Closed (Invoiced)' THEN 'Won'
             WHEN pipeline_stage = 'Lost' THEN 'Lost'
             ELSE 'Open'
         END

@@ -17,7 +17,11 @@ MONDAY_API_URL = "https://api.monday.com/v2"
 
 # OpenAI API Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # Default to GPT-5
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # Default to GPT-4o
+
+# Gemini API Configuration
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") 
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Board IDs
 PARENT_BOARD_ID = "1825117125"   # Tapered Enquiry Maintenance
@@ -25,14 +29,14 @@ SUBITEM_BOARD_ID = "1825117144"  # Subitems board
 HIDDEN_ITEMS_BOARD_ID = "1825138260"  # Tapered Hidden Items (source of truth)
 
 # Batch Processing Configuration
-BATCH_SIZE = 500  # Default for simple boards
-PARENT_BOARD_BATCH_SIZE = 500  # Reduced for complex main board
-SUBITEM_BOARD_BATCH_SIZE = 500  # Moderate for subitems
-HIDDEN_ITEMS_BATCH_SIZE = 500  # Keep high for simple hidden items board
+BATCH_SIZE = 100  # Default for simple boards
+PARENT_BOARD_BATCH_SIZE = 100  # Reduced for complex main board
+SUBITEM_BOARD_BATCH_SIZE = 100  # Moderate for subitems
+HIDDEN_ITEMS_BATCH_SIZE = 100  # Keep high for simple hidden items board
 
 RATE_LIMIT_DELAY = 0.5  # Seconds between batches
 CACHE_EXPIRY_HOURS = 24  # Cache duration for label mappings
-MAX_RETRIES = 3  # Maximum number of retry attempts for API calls
+MAX_RETRIES = 5  # Maximum number of retry attempts for API calls
 
 # Data Processing Settings
 MIN_SAMPLE_SIZE = 15  # Minimum sample size for statistical analysis
@@ -68,8 +72,6 @@ PARENT_COLUMNS = {
     'won_vs_open_lost': 'formula_mkq8gyr',   # Helper: "Won" vs "Open or Lost"
     'date_created': 'date9__1',              # Date Created (for time filtering)
     'follow_up_date': 'date_mkpx4163',       # Follow Up Date
-    
-    # Add these missing columns
     'zip_code': 'dropdown_mknfpjbt',         # Zip Code
     'sales_representative': 'person',        # Sales Representative  
     'funding': 'dropdown_mkrb9mq5',          # Funding
@@ -85,6 +87,11 @@ PARENT_COLUMNS = {
     'last_date_designed': 'lookup_mkqsqcck', # Last Date Designed
     'first_date_invoiced': 'lookup_mkppq0gc', # First Date Invoiced
 }
+
+# Monday analysts columns
+PARENT_COLUMN_GESTATION_DAYS = "numeric_mkw8t5cw"
+PARENT_COLUMN_EXPECTED_CONVERSION = "numeric_mkw86evn"
+PARENT_COLUMN_PROJECT_RATING = "numeric_mkw8nx25"
 
 # Complete SUBITEM_COLUMNS mapping
 SUBITEM_COLUMNS = {
@@ -181,6 +188,7 @@ PIPELINE_STAGE_LABELS = {
     "4": "Customer Has Order - TP Preferred Supplier",
     "5": "Open Enquiry",
     "7": "Won Via Other Ref",
+    "8": "Check with IS",
     "10": "Won - Open (Order Received)"
 }
 
