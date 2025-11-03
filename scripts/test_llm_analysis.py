@@ -290,6 +290,7 @@ def main(n: int = 100, out_path: Optional[str] = None, csv_path: Optional[str] =
                 'type': pf.type,
                 'category': pf.category,
                 'product_type': pf.product_type,
+                "date_created": p.get("date_created"),
                 'value': pf.new_enquiry_value,
                 'value_band': pf.value_band,
                 'baseline': {

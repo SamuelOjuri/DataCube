@@ -65,7 +65,7 @@ Then run a targeted rehydrate for subitems to backfill those fields.
 - **Goal**: For each project, compute
   - expected_gestation_days (from similar historical projects)
   - expected_conversion_rate (win_rate)
-  - rating_score (1–10; matches your DB constraint)
+  - rating_score (1–100; matches your DB constraint)
   - store to `analysis_results` with light reasoning JSON
 
 Use the existing `conversion_metrics` materialized view and simple fallbacks.

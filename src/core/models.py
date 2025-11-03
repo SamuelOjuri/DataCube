@@ -114,16 +114,21 @@ class ProjectAnalysisInput(BaseModel):
 
 class ProjectAnalysisOutput(BaseModel):
     """Expected output structure from LLM"""
+
+    summary: str = Field(
+        default="Plain-English summary unavailable.",
+        description="Plain-language overview suitable for business stakeholders"
+    )
     adjustments: Dict[str, int] = Field(
-        default_factory=dict, 
+        default_factory=dict,
         description="Optional ±1 adjustments to baselines"
     )
     reasoning: Dict[str, str] = Field(
-        ..., 
+        ...,
         description="Explanations for each metric"
     )
     confidence_notes: str = Field(
-        ..., 
+        ...,
         description="Any caveats or confidence factors"
     )
     # Optional field that models may include; used downstream in metadata

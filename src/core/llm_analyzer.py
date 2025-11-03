@@ -47,6 +47,10 @@ except ImportError:
 LLM_RESPONSE_SCHEMA = genai_types.Schema(
     type=genai_types.Type.OBJECT,
     properties={
+        "summary": genai_types.Schema(
+            type=genai_types.Type.STRING,
+            description="Plain-language overview for non-technical stakeholders."
+        ),
         "reasoning": genai_types.Schema(
             type=genai_types.Type.OBJECT,
             properties={
@@ -69,7 +73,7 @@ LLM_RESPONSE_SCHEMA = genai_types.Schema(
         "special_factors": genai_types.Schema(type=genai_types.Type.STRING),
         "confidence_notes": genai_types.Schema(type=genai_types.Type.STRING),
     },
-    required=["reasoning", "adjustments", "confidence_notes"],
+    required=["summary", "reasoning", "adjustments", "confidence_notes"],
 )
 
 # Set up logging
@@ -186,6 +190,8 @@ class LLMAnalyzer:
         2. Identify any special factors that might adjust the rating by ±1
         3. Explain the predictions in business terms
 
+        Speak directly to a business stakeholder with no analytics background. Use short sentences, avoid jargon, and translate percentages into relatable odds (e.g., "around one in five"). When you mention confidence, say what it means in practice (e.g., "we're fairly sure, but there is some room for surprises"). Example tone: "We usually see a decision in about seven weeks because around 30 similar refurb jobs wrapped up in that window last year."
+
         Project Data:
         {json.dumps(project_json, indent=2)}
 
@@ -219,6 +225,7 @@ class LLMAnalyzer:
         - When you do apply a non-zero adjustment, you must reference the exact metrics (sample size, conversion confidence, quantified deviation) inside both reasoning.rating and special_factors.
 
         Please provide:
+        0. **Plain-English Overview**: Two or three sentences or bullet points that summarise the key takeaways in everyday language.
         1. **Gestation Period Reasoning**: Why {numeric_predictions.expected_gestation_days} days makes sense for this project
         2. **Conversion Rate Reasoning**: What factors support the {numeric_predictions.expected_conversion_rate:.1%} conversion rate
         3. **Rating Score Reasoning**: Why this project deserves a {numeric_predictions.rating_score}/100 rating
@@ -234,9 +241,12 @@ class LLMAnalyzer:
         - Treat 'Open Enquiry' as neutral; do not infer stage or uncertainty, and do not describe a high count of open enquiries as a risk.
         - Do not use pipeline-stage wording as justification; focus on numeric baselines (conversion, gestation, value) and segment statistics.
         - Cite the concrete metrics (sample size, confidence, win/value comparisons) that underpin every conclusion.
+        - Every time you mention a percentage or confidence, add a short interpretation in plain English.
+        - Avoid analytics jargon ("quantile", "standard deviation"); use everyday alternatives ("middle of the range", "spread").
 
         Return as JSON with structure:
         {{
+        "summary": "An overview of the analysis...",
         "reasoning": {{
             "gestation": "Clear explanation of why the gestation period makes sense...",
             "conversion": "Explanation of conversion rate factors...",
@@ -345,8 +355,10 @@ class LLMAnalyzer:
             
             # Parse JSON
             response_data = json.loads(response_text.strip())
-            
+
             # Ensure required fields exist
+            if "summary" not in response_data or not response_data.get("summary"):
+                response_data["summary"] = "Plain-English summary unavailable."
             if "reasoning" not in response_data:
                 response_data["reasoning"] = {
                     "gestation": "Unable to provide reasoning",
@@ -378,6 +390,7 @@ class LLMAnalyzer:
             
             # Return default output on parse failure
             return ProjectAnalysisOutput(
+                summary="Plain-English summary unavailable.",
                 reasoning={
                     "gestation": "Error parsing LLM response",
                     "conversion": "Error parsing LLM response",
@@ -425,7 +438,10 @@ class LLMAnalyzer:
             prompt_text = dedent(f"""
                 You are a data analyst specializing in project evaluation and risk assessment.
                 Provide concise, evidence-based reasoning for each prediction, grounded in quantitative metrics such as conversion rates, gestation periods, and project values.
-                Limit each reasoning section to 2-3 concise sentences.
+                Explain every point in plain English so that non-technical stakeholders can understand it easily.
+                Start with a short, friendly summary before the detailed sections.
+                Translate percentages into everyday odds where helpful (e.g., "roughly one in five").
+                Keep each reasoning section to 2-3 short sentences and avoid jargon.
                 Treat 'Open Enquiry' as a neutral category (neither early-stage nor high-uncertainty).
                 Do NOT justify predictions using qualitative or pipeline-stage terminology.
                 Focus strictly on numeric baselines, statistical trends, and segment-level insights when forming conclusions.
@@ -496,6 +512,7 @@ class LLMAnalyzer:
         except google_exceptions.ServiceUnavailable as svc_err:
             logger.error("LLM analysis failed due to service overload: %s", svc_err)
             return ProjectAnalysisOutput(
+                summary="Plain-English summary unavailable.",
                 reasoning={
                     "gestation": "LLM temporarily unavailable",
                     "conversion": "LLM temporarily unavailable",
@@ -511,6 +528,7 @@ class LLMAnalyzer:
             logger.error(f"LLM analysis failed: {e}")
 
             return ProjectAnalysisOutput(
+                summary="Plain-English summary unavailable.",
                 reasoning={
                     "gestation": "LLM analysis unavailable",
                     "conversion": "LLM analysis unavailable",
@@ -567,7 +585,8 @@ class LLMAnalyzer:
                 **metadata,
                 "adjustments_applied": llm_output.adjustments,
                 "confidence_notes": final_confidence_notes,
-                "special_factors": getattr(llm_output, 'special_factors', llm_output.confidence_notes)
+                "special_factors": getattr(llm_output, 'special_factors', llm_output.confidence_notes),
+                "plain_english_summary": llm_output.summary
             }
         )
         
