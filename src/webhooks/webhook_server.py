@@ -7,7 +7,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 import time
 from collections import defaultdict
 
@@ -55,6 +55,25 @@ processing_metrics = {
 recent_events = {}
 EVENT_CACHE_TTL = 300  # 5 minutes
 
+ANALYSIS_TRIGGER_COLUMNS = {
+    PARENT_BOARD_ID: {
+        "status4__1",      # pipeline_stage
+        "dropdown__1",     # category
+        "dropdown7__1",    # type
+        "lookup_mkq010zk", # Account mirror
+        "lookup_mkt3xgz1", # Product mirror
+        "lookup_mkqanpbe", # New enquiry mirror
+        "formula_mkpp85yw",  # Gestation period
+        "formula_mkpfesjh",  # Project value (value bands)
+        "mirror4__1",         # Overall project value mirror
+    },
+    SUBITEM_BOARD_ID: {
+        "mirror_12__1",    # account
+        "mirror875__1",    # product type
+        "formula_mkqa31kh",  # new enquiry value
+    },
+}
+
 class WebhookRateLimiter:
     """Simple rate limiter for webhook requests"""
     
@@ -78,6 +97,50 @@ class WebhookRateLimiter:
         return True
 
 rate_limiter = WebhookRateLimiter()
+
+
+def _lookup_parent_project_id(subitem_id: str) -> Optional[str]:
+    """Fetch parent project ID for a subitem from Supabase."""
+
+    try:
+        result = (
+            supabase_client.client.table('subitems')
+            .select('parent_monday_id')
+            .eq('monday_id', subitem_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            parent = result.data[0].get('parent_monday_id')
+            return str(parent) if parent is not None else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to lookup parent project for subitem %s: %s", subitem_id, exc
+        )
+    return None
+
+
+def _mark_analysis_warning(webhook_log_id: Optional[str], message: str) -> None:
+    """Annotate the webhook_events row when analysis fails."""
+
+    if not webhook_log_id:
+        return
+    try:
+        supabase_client.client.table('webhook_events')\
+            .update({
+                'status': 'processed_with_warnings',
+                'error_message': message[:500],
+                'processed_at': datetime.now().isoformat()
+            })\
+            .eq('id', webhook_log_id)\
+            .execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to record analysis warning for webhook %s: %s",
+            webhook_log_id,
+            exc,
+        )
+
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     """Enhanced HMAC verification with proper error handling"""
@@ -260,7 +323,7 @@ async def process_webhook_event_with_retry(
     while retry_count <= max_retries:
         try:
             await process_webhook_event_optimized(
-                event_type, board_id, item_id, payload
+                event_type, board_id, item_id, payload, webhook_log_id=webhook_log_id
             )
             
             # Mark as processed successfully
@@ -308,7 +371,9 @@ async def process_webhook_event_optimized(
     event_type: str,
     board_id: str,
     item_id: str,
-    payload: Dict[str, Any]
+    payload: Dict[str, Any],
+    *,
+    webhook_log_id: Optional[str] = None
 ):
     """Optimized webhook processing with board-specific handling"""
     
@@ -320,10 +385,10 @@ async def process_webhook_event_optimized(
     
     try:
         if event_type == "change_column_value":
-            await handle_column_changed_minimal(board_id, item_id, payload)
+            await handle_column_changed_minimal(board_id, item_id, payload, webhook_log_id=webhook_log_id)
         
         elif event_type == "create_item":
-            await handle_item_created(board_id, item_id, payload)
+            await handle_item_created(board_id, item_id, payload, webhook_log_id=webhook_log_id)
         
         elif event_type == "delete_item":
             await handle_item_deleted(board_id, item_id)
@@ -338,7 +403,13 @@ async def process_webhook_event_optimized(
         logger.error(f"Error processing {event_type} for item {item_id}: {e}")
         raise
 
-async def handle_item_created(board_id: str, item_id: str, payload: Dict):
+async def handle_item_created(
+    board_id: str,
+    item_id: str,
+    payload: Dict,
+    *,
+    webhook_log_id: Optional[str] = None
+):
     """Handle new item creation with enhanced error handling"""
     logger.info(f"Processing new item: {item_id} in board: {board_id}")
     
@@ -391,16 +462,26 @@ async def handle_item_created(board_id: str, item_id: str, payload: Dict):
         
         # Trigger compute
         from ..services.analysis_service import AnalysisService
+
         try:
             AnalysisService().analyze_and_store(item_id)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Analysis failed for newly created item %s on board %s", item_id, board_id
+            )
+            _mark_analysis_warning(webhook_log_id, f"analysis failed: {exc}")
         
     except Exception as e:
         logger.error(f"Failed to handle item creation for {item_id}: {e}")
         raise
 
-async def handle_column_changed_minimal(board_id: str, item_id: str, payload: Dict):
+async def handle_column_changed_minimal(
+    board_id: str,
+    item_id: str,
+    payload: Dict,
+    *,
+    webhook_log_id: Optional[str] = None
+):
     """Minimal column update with enhanced error handling and validation"""
     
     event_data = payload.get('event', {})
@@ -430,6 +511,16 @@ async def handle_column_changed_minimal(board_id: str, item_id: str, payload: Di
             logger.warning(f"Value transformation failed for {column_id}: {e}")
             return
     
+    analysis_targets: Set[str] = set()
+    trigger_columns = ANALYSIS_TRIGGER_COLUMNS.get(board_id, set())
+    if column_id in trigger_columns:
+        if board_id == PARENT_BOARD_ID:
+            analysis_targets.add(str(item_id))
+        elif board_id == SUBITEM_BOARD_ID:
+            parent_id = _lookup_parent_project_id(item_id)
+            if parent_id:
+                analysis_targets.add(parent_id)
+
     # CRITICAL: Single field update - very fast
     try:
         result = supabase_client.client.table(table_name)\
@@ -445,21 +536,19 @@ async def handle_column_changed_minimal(board_id: str, item_id: str, payload: Di
         else:
             logger.warning(f"No rows updated for item {item_id} in table {table_name}")
         
-        # Trigger analysis for key project fields (fire-and-forget; errors ignored)
-        try:
-            if board_id == PARENT_BOARD_ID and column_id in {
-                "status4__1",      # pipeline_stage
-                "dropdown__1",     # category
-                "dropdown7__1",    # type
-                "lookup_mkq010zk", # Account Mirror → subitems mirror_12__1 (adjust as needed)
-                "lookup_mkt3xgz1", # Product Mirror → subitems mirror875__1
-                "lookup_mkqanpbe",  # New Enq Value → subitems formula_mkqa31kh
-                "formula_mkpp85yw" # Gestation Period → projects formula_mkpp85yw   
-            }:
-                from ..services.analysis_service import AnalysisService
-                AnalysisService().analyze_and_store(item_id)
-        except Exception:
-            pass
+        if analysis_targets:
+            from ..services.analysis_service import AnalysisService
+
+            svc = AnalysisService()
+            for target_id in analysis_targets:
+                try:
+                    svc.analyze_and_store(target_id)
+                    logger.info("Triggered analysis for project %s due to column %s", target_id, column_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "Analysis failed for project %s after %s change", target_id, column_id
+                    )
+                    _mark_analysis_warning(webhook_log_id, f"analysis failed: {exc}")
 
     except Exception as e:
         logger.error(f"Failed to update {field_name} for item {item_id}: {e}")
