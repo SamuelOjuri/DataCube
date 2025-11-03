@@ -67,3 +67,5 @@ markdown-it-py==4.0.0
 mdurl==0.1.2 
 pygments==2.19.2 
 rich==14.2.0
+psycopg==3.2.12 
+psycopg-binary==3.2.12 

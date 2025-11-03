@@ -54,6 +54,13 @@ CACHE_DIR = DATA_DIR / "cache"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 ANALYSIS_DIR = OUTPUTS_DIR / "analysis"
 
+# Webhook Configuration
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8000"))
+WEBHOOK_RATE_LIMIT_MAX_REQUESTS = int(os.getenv("WEBHOOK_RATE_LIMIT_MAX_REQUESTS", "180"))
+WEBHOOK_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("WEBHOOK_RATE_LIMIT_WINDOW_SECONDS", "60"))
+WEBHOOK_DUPLICATE_TTL_SECONDS = int(os.getenv("WEBHOOK_DUPLICATE_TTL_SECONDS", "300"))
+
 # Create directories if they don't exist
 for dir_path in [RAW_DATA_DIR, PROCESSED_DATA_DIR, CACHE_DIR, ANALYSIS_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
