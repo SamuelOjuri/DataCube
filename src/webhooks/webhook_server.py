@@ -724,20 +724,36 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
         except (ValueError, TypeError):
             return None
 
-    def parse_date_value(text_value):
-        """Parse date values with multiple format support"""
-        if not text_value:
+    def parse_date_value(raw_value):
+        """Parse Monday date values from plain text or JSON objects."""
+        if not raw_value:
             return None
-        try:
-            # Try multiple date formats
-            for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
+
+        date_text = None
+
+        if isinstance(raw_value, dict):
+            date_text = raw_value.get("date") or raw_value.get("text")
+        else:
+            value_str = str(raw_value).strip()
+            if value_str.startswith("{") and value_str.endswith("}"):
                 try:
-                    return datetime.strptime(text_value, fmt).date().isoformat()
-                except ValueError:
-                    continue
-            return text_value  # Return as-is if parsing fails
-        except (ValueError, TypeError):
-            return text_value
+                    value_data = json.loads(value_str)
+                    date_text = value_data.get("date") or value_data.get("text")
+                except json.JSONDecodeError:
+                    date_text = value_str
+            else:
+                date_text = value_str
+
+        if not date_text:
+            return None
+
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                return datetime.strptime(date_text, fmt).date().isoformat()
+            except ValueError:
+                continue
+
+        return date_text
 
     # Enhanced mappings with transformations
     mappings = {
