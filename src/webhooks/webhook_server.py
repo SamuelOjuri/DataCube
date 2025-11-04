@@ -466,11 +466,9 @@ async def handle_item_created(
     logger.info(f"Processing new item: {item_id} in board: {board_id}")
 
     try:
-        # Fetch full item data from Monday
         from ..core.monday_client import MondayClient
         monday = MondayClient()
 
-        # Get item details with all necessary columns
         query = f"""
         query {{
             items(ids: [{item_id}]) {{
@@ -493,46 +491,48 @@ async def handle_item_created(
 
         item_data = result['data']['items'][0]
 
-        # Transform and insert to Supabase based on board
-        if board_id == PARENT_BOARD_ID:  # Parent board
+        if board_id == PARENT_BOARD_ID:
             transformed = sync_service._transform_for_projects_table([item_data])
             if transformed:
-                result = supabase_client.upsert_projects(transformed)
-                logger.info(f"Upserted project: {result}")
+                supabase_client.upsert_projects(transformed)
+                logger.info("Upserted project: %s", transformed[0].get("monday_id"))
+            from ..services.analysis_service import AnalysisService
 
-        elif board_id == SUBITEM_BOARD_ID:  # Subitems board
+            try:
+                logger.info(
+                    "Running analysis for new project %s on board %s",
+                    item_id,
+                    board_id,
+                )
+                analysis_started = time.time()
+                AnalysisService().analyze_and_store(item_id)
+                logger.info(
+                    "Analysis complete for project %s (%.2f ms)",
+                    item_id,
+                    (time.time() - analysis_started) * 1000,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Analysis failed for newly created item %s on board %s",
+                    item_id,
+                    board_id,
+                )
+                _mark_analysis_warning(webhook_log_id, f"analysis failed: {exc}")
+
+        elif board_id == SUBITEM_BOARD_ID:
             transformed = sync_service._transform_for_subitems_table([item_data])
             if transformed:
-                result = supabase_client.upsert_subitems(transformed)
-                logger.info(f"Upserted subitem: {result}")
+                supabase_client.upsert_subitems(transformed)
+                logger.info("Upserted subitem: %s", transformed[0].get("monday_id"))
 
-        elif board_id == HIDDEN_ITEMS_BOARD_ID:  # Hidden items board
+        elif board_id == HIDDEN_ITEMS_BOARD_ID:
             transformed = sync_service._transform_for_hidden_table([item_data])
             if transformed:
-                result = supabase_client.upsert_hidden_items(transformed)
-                logger.info(f"Upserted hidden item: {result}")
-
-        # Trigger compute
-        from ..services.analysis_service import AnalysisService
-
-        try:
-            logger.info(
-                "Running analysis for new project %s on board %s",
-                item_id,
-                board_id,
-            )
-            analysis_started = time.time()
-            AnalysisService().analyze_and_store(item_id)
-            logger.info(
-                "Analysis complete for project %s (%.2f ms)",
-                item_id,
-                (time.time() - analysis_started) * 1000,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(
-                "Analysis failed for newly created item %s on board %s", item_id, board_id
-            )
-            _mark_analysis_warning(webhook_log_id, f"analysis failed: {exc}")
+                supabase_client.upsert_hidden_items(transformed)
+                logger.info("Upserted hidden item: %s", transformed[0].get("monday_id"))
+            else:
+                logger.debug("Hidden item %s produced no rows after transform", item_id)
+            return  # skip AnalysisService for hidden items
 
     except Exception as e:
         logger.error(f"Failed to handle item creation for {item_id}: {e}")
