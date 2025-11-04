@@ -277,7 +277,13 @@ async def handle_monday_webhook(
         event_data = data.get('event', {}) or {}
 
         event_id_raw = event_data.get('id')
-        event_type = event_data.get('type')
+        event_type_raw = event_data.get('type')
+        EVENT_ALIASES = {
+            "update_column_value": "change_column_value",
+            "create_pulse": "create_item",
+            "delete_pulse": "delete_item",
+        }
+        event_type = EVENT_ALIASES.get(event_type_raw, event_type_raw)
         board_id_raw = event_data.get('boardId')
         board_id = str(board_id_raw) if board_id_raw is not None else None
         item_id_raw = event_data.get('pulseId') or event_data.get('itemId')
