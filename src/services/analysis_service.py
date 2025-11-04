@@ -149,7 +149,9 @@ class AnalysisService:
         rows = self.db.client.table('projects').select('*').gte('date_created', recency_cutoff).limit(10000).execute().data or []
         return pd.DataFrame(rows)
 
-    def analyze_and_store(self, monday_id: str, with_llm: bool = False) -> Dict[str, Any]:
+    def analyze_and_store(self, monday_id: str, with_llm: Optional[bool] = None) -> Dict[str, Any]:
+        if with_llm is None:
+            with_llm = self.llm_enabled
         proj = self.db.client.table('projects').select('*').eq('monday_id', monday_id).single().execute().data
         if not proj:
             return {'success': False, 'error': 'project not found'}
