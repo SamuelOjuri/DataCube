@@ -235,39 +235,29 @@ async def handle_monday_webhook(
     background_tasks: BackgroundTasks
 ):
     """Enhanced webhook handler with rate limiting, deduplication, and monitoring"""
-    
+
     start_time = time.time()
     client_ip = _extract_client_ip(request)
     logger.info("Incoming Monday webhook from %s", client_ip)
-    
-    # Rate limiting
+
     if not rate_limiter.is_allowed(client_ip):
-        logger.warning(f"Rate limit exceeded for IP: {client_ip}")
+        logger.warning("Rate limit exceeded for IP: %s", client_ip)
         processing_metrics['rate_limited_requests'] += 1
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-    
-    # Update metrics
+
     processing_metrics['total_webhooks'] += 1
-    
+
     try:
         body = await request.body()
         logger.debug("Raw webhook payload: %s", body.decode("utf-8", errors="ignore"))
-        
-        # Verify HMAC signature
-        signature = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not verify_webhook_signature(body, signature):
-            processing_metrics['failed_webhooks'] += 1
-            raise HTTPException(status_code=401, detail="Invalid signature")
-        
-        # Parse payload
+
         try:
             data = json.loads(body) if body else {}
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON payload: {e}")
+        except json.JSONDecodeError as exc:
+            logger.error("Invalid JSON payload: %s", exc)
             processing_metrics['failed_webhooks'] += 1
             raise HTTPException(status_code=400, detail="Invalid JSON")
-        
-        # Monday challenge handshake (Render deployment readiness)
+
         challenge_value = data.get('challenge')
         if challenge_value:
             processing_metrics['challenge_requests'] += 1
@@ -277,15 +267,19 @@ async def handle_monday_webhook(
                 client_ip,
                 challenge_value
             )
-            return PlainTextResponse(challenge_value, status_code=200)
-        
-        # Extract event details
+            return JSONResponse({'challenge': challenge_value}, status_code=200)
+
+        signature = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not verify_webhook_signature(body, signature):
+            processing_metrics['failed_webhooks'] += 1
+            raise HTTPException(status_code=401, detail="Invalid signature")
+
         event_data = data.get('event', {})
         event_id = event_data.get('id')
         event_type = event_data.get('type')
         board_id = event_data.get('boardId')
         item_id = event_data.get('pulseId')
-        
+
         logger.info(
             "Webhook event=%s board=%s pulse=%s event_id=%s",
             event_type,
@@ -293,20 +287,17 @@ async def handle_monday_webhook(
             item_id,
             event_id,
         )
-        
-        # Validate required fields
+
         if not all([event_type, board_id, item_id]):
-            logger.warning(f"Missing required fields in webhook: {data}")
+            logger.warning("Missing required fields in webhook: %s", data)
             processing_metrics['failed_webhooks'] += 1
             raise HTTPException(status_code=400, detail="Missing required fields")
-        
-        # Check for duplicate events
+
         if is_duplicate_event(event_id, event_type, item_id):
-            logger.info(f"Ignoring duplicate event: {event_id}")
+            logger.info("Ignoring duplicate event: %s", event_id)
             return JSONResponse({"status": "duplicate", "ignored": True}, status_code=200)
-        
-        # Log webhook event to Supabase (fast insert)
-        webhook_log_id = None
+
+        webhook_log_id: Optional[str] = None
         try:
             result = supabase_client.client.table('webhook_events').insert({
                 'event_id': event_id,
@@ -319,15 +310,11 @@ async def handle_monday_webhook(
                 'client_ip': client_ip,
                 'processing_time_ms': None
             }).execute()
-            
             if result.data:
                 webhook_log_id = result.data[0]['id']
-                
-        except Exception as e:
-            logger.error(f"Failed to log webhook event: {e}")
-            # Continue processing even if logging fails
-        
-        # Process in background task with retry capability
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to log webhook event: %s", exc)
+
         background_tasks.add_task(
             process_webhook_event_with_retry,
             event_type,
@@ -337,20 +324,19 @@ async def handle_monday_webhook(
             webhook_log_id,
             start_time
         )
-        
+
         processing_metrics['successful_webhooks'] += 1
-        
-        # CRITICAL: Return 202 immediately - Monday expects fast response
+
         return JSONResponse({
             "status": "accepted",
             "event_id": event_id,
             "processing_time_ms": round((time.time() - start_time) * 1000, 2)
         }, status_code=202)
-        
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Unexpected error in webhook handler: {e}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Unexpected error in webhook handler: %s", exc)
         processing_metrics['failed_webhooks'] += 1
         raise HTTPException(status_code=500, detail="Internal server error")
 
