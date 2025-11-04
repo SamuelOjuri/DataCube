@@ -222,7 +222,10 @@ CREATE TABLE webhook_events (
     received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     processed_at TIMESTAMP WITH TIME ZONE,
     status TEXT DEFAULT 'pending',
-    error_message TEXT
+    error_message TEXT,
+    client_ip TEXT,
+    processing_time_ms NUMERIC,
+    retry_count INTEGER
 );
 
 -- Create all indexes separately

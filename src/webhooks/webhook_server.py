@@ -274,11 +274,15 @@ async def handle_monday_webhook(
             processing_metrics['failed_webhooks'] += 1
             raise HTTPException(status_code=401, detail="Invalid signature")
 
-        event_data = data.get('event', {})
-        event_id = event_data.get('id')
+        event_data = data.get('event', {}) or {}
+
+        event_id_raw = event_data.get('id')
         event_type = event_data.get('type')
-        board_id = event_data.get('boardId')
-        item_id = event_data.get('pulseId')
+        board_id_raw = event_data.get('boardId')
+        board_id = str(board_id_raw) if board_id_raw is not None else None
+        item_id_raw = event_data.get('pulseId') or event_data.get('itemId')
+        item_id = str(item_id_raw) if item_id_raw is not None else None
+        event_id = str(event_id_raw) if event_id_raw is not None else None
 
         logger.info(
             "Webhook event=%s board=%s pulse=%s event_id=%s",
@@ -418,10 +422,11 @@ async def process_webhook_event_optimized(
 ):
     """Optimized webhook processing with board-specific handling"""
 
-    # Validate board ID
+    # Coerce board_id to string
+    board_id = str(board_id) if board_id is not None else None
     valid_boards = {PARENT_BOARD_ID, SUBITEM_BOARD_ID, HIDDEN_ITEMS_BOARD_ID}
     if board_id not in valid_boards:
-        logger.warning(f"Received webhook for unknown board: {board_id}")
+        logger.warning("Received webhook for unknown board: %s", board_id)
         return
 
     try:
