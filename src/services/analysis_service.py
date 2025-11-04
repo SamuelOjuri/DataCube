@@ -14,10 +14,16 @@ logger = logging.getLogger(__name__)
 class AnalysisService:
     def __init__(self, db_client: Optional[SupabaseClient] = None, lookback_days: Optional[int] = None):
         self.db = db_client or SupabaseClient()
-        self.llm_analyzer = LLMAnalyzer()
         self.numeric_baseline = NumericBaseline()
         self.lookback_days = lookback_days or ANALYSIS_LOOKBACK_DAYS
-        logger.info(f"AnalysisService initialized with {self.lookback_days} days ({self.lookback_days/365:.1f} years) lookback")
+        self.llm_enabled = bool(GEMINI_API_KEY)
+        self.llm_analyzer: Optional[LLMAnalyzer] = None
+        logger.info(
+            "AnalysisService initialized with %s days (%.1f years) lookback; LLM enabled=%s",
+            self.lookback_days,
+            self.lookback_days / 365,
+            self.llm_enabled,
+        )
 
     def _cluster_key(self, p: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -148,16 +154,11 @@ class AnalysisService:
         if not proj:
             return {'success': False, 'error': 'project not found'}
 
-        # 1) Baseline numeric analysis (existing)
         base = self.analyze_project(proj)
-
-        # Prepare normalized features for consistent value/value_band serialization
         pf = self._to_project_features(proj)
 
-        # 2) Store baseline if LLM disabled or no key
-        if not with_llm or not GEMINI_API_KEY:
+        def _persist_numeric_only() -> Dict[str, Any]:
             self.db.store_analysis_result(monday_id, base)
-            # Enrich returned result (do not store these extra fields)
             returned = {
                 'name': pf.name,
                 'account': pf.account,
@@ -166,20 +167,31 @@ class AnalysisService:
                 'product_type': pf.product_type,
                 'value': pf.new_enquiry_value,
                 'value_band': pf.value_band,
-                **base
+                **base,
             }
             return {'success': True, 'result': returned}
 
-        # 3) Build inputs for LLM reasoning
+        if not with_llm or not self.llm_enabled:
+            return _persist_numeric_only()
+
+        if self.llm_analyzer is None:
+            try:
+                self.llm_analyzer = LLMAnalyzer()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Gemini analyzer unavailable (%s). Falling back to numeric baseline.", exc)
+                self.llm_enabled = False
+                return _persist_numeric_only()
+
         seg = self._build_segment_stats(proj)
         np = self._to_numeric_predictions(base, seg)
+        llm = self.llm_analyzer
 
-        # 4) LLM reasoning + optional ±1 rating adjustment
-        llm = LLMAnalyzer()  # uses GEMINI
+        if llm is None:
+            return _persist_numeric_only()
+
         llm_out, meta = llm.analyze_project(pf, np, seg)
         final = llm.create_final_analysis(pf, np, llm_out, meta)
 
-        # 5) Flatten to analysis_results schema (stored payload only includes DB columns)
         stored = {
             'expected_gestation_days': final.predictions.expected_gestation_days,
             'gestation_confidence': final.predictions.gestation_confidence,
@@ -192,12 +204,10 @@ class AnalysisService:
             'special_factors': final.analysis_metadata.get('special_factors'),
             'llm_model': meta.get('llm_model', GEMINI_MODEL),
             'analysis_version': 'v1.0-llm',
-            'processing_time_ms': int(float(meta.get('response_time', 0)) * 1000)
+            'processing_time_ms': int(float(meta.get('response_time', 0)) * 1000),
         }
 
         self.db.store_analysis_result(monday_id, stored)
-
-        # Enrich returned result with project value info after product_type
         returned = {
             'name': pf.name,
             'account': pf.account,
@@ -206,6 +216,6 @@ class AnalysisService:
             'product_type': pf.product_type,
             'value': pf.new_enquiry_value,
             'value_band': pf.value_band,
-            **stored
+            **stored,
         }
         return {'success': True, 'result': returned}

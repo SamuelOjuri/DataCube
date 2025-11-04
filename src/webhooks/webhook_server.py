@@ -187,11 +187,11 @@ def verify_webhook_signature(payload: bytes, signature: str) -> bool:
         logger.error(f"Signature verification failed: {e}")
         return False
 
-def is_duplicate_event(event_id: str, event_type: str, item_id: str) -> bool:
+def is_duplicate_event(dedupe_key: Optional[str], event_type: str, item_id: str) -> bool:
     """Check if this webhook event is a duplicate"""
-    if not event_id:
+    if not dedupe_key:
         return False
-    
+
     # Clean expired events
     now = datetime.now()
     expired_keys = [
@@ -200,15 +200,14 @@ def is_duplicate_event(event_id: str, event_type: str, item_id: str) -> bool:
     ]
     for key in expired_keys:
         del recent_events[key]
-    
-    # Create unique key for this event
-    event_key = f"{event_id}:{event_type}:{item_id}"
-    
+
+    event_key = f"{dedupe_key}:{event_type}:{item_id}"
+
     if event_key in recent_events:
         logger.info(f"Duplicate event detected: {event_key}")
         processing_metrics['duplicate_webhooks'] += 1
         return True
-    
+
     recent_events[event_key] = now
     return False
 
@@ -303,8 +302,18 @@ async def handle_monday_webhook(
             processing_metrics['failed_webhooks'] += 1
             raise HTTPException(status_code=400, detail="Missing required fields")
 
-        if is_duplicate_event(event_id, event_type, item_id):
-            logger.info("Ignoring duplicate event: %s", event_id)
+        # New dedupe/uniqueness logic
+        dedupe_token = event_id or event_data.get('triggerUuid') or event_data.get('originalTriggerUuid')
+        if not dedupe_token and event_data:
+            changed_at = event_data.get('changedAt')
+            column_id = event_data.get('columnId')
+            if changed_at:
+                dedupe_token = f"{event_type}:{changed_at}:{column_id or ''}"
+        if dedupe_token is not None:
+            dedupe_token = str(dedupe_token)
+
+        if is_duplicate_event(dedupe_token, event_type, item_id):
+            logger.info("Ignoring duplicate event: %s", dedupe_token)
             return JSONResponse({"status": "duplicate", "ignored": True}, status_code=200)
 
         webhook_log_id: Optional[str] = None
@@ -691,34 +700,77 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
     """Enhanced column mapping with transformation functions and validation"""
 
     # Transform functions for different data types
-    def parse_status_value(value_str):
+
+    def parse_status_value(raw_value):
         """Parse Monday status column value"""
-        if not value_str:
+        if not raw_value:
             return None
-        try:
-            value_data = json.loads(value_str)
-            return value_data.get('index')
-        except (json.JSONDecodeError, TypeError):
-            return None
+        if isinstance(raw_value, dict):
+            if raw_value.get('index') is not None:
+                return raw_value.get('index')
+            label = raw_value.get('label')
+            if isinstance(label, dict) and label.get('index') is not None:
+                return label.get('index')
+            raw_value = raw_value.get('value') or raw_value.get('text')
+            if raw_value is None:
+                return None
+        if isinstance(raw_value, str):
+            try:
+                value_data = json.loads(raw_value)
+            except (json.JSONDecodeError, TypeError):
+                return None
+            if isinstance(value_data, dict):
+                return value_data.get('index')
+        return None
 
-    def parse_dropdown_value(value_str):
+    def parse_dropdown_value(raw_value):
         """Parse Monday dropdown column value"""
-        if not value_str:
+        if not raw_value:
             return None
-        try:
-            value_data = json.loads(value_str)
-            ids = value_data.get('ids', [])
-            return ids[0] if ids else None
-        except (json.JSONDecodeError, TypeError):
-            return None
+        if isinstance(raw_value, dict):
+            chosen = raw_value.get('chosenValues')
+            if isinstance(chosen, list) and chosen:
+                first = chosen[0]
+                if isinstance(first, dict):
+                    return first.get('id') or first.get('name')
+                return first
+            ids = raw_value.get('ids')
+            if isinstance(ids, list) and ids:
+                return ids[0]
+            raw_value = raw_value.get('value') or raw_value.get('text')
+            if raw_value is None:
+                return None
+        if isinstance(raw_value, str):
+            try:
+                value_data = json.loads(raw_value)
+            except (json.JSONDecodeError, TypeError):
+                value_data = None
+            if isinstance(value_data, dict):
+                ids = value_data.get('ids') or value_data.get('chosenValues')
+                if isinstance(ids, list) and ids:
+                    first = ids[0]
+                    if isinstance(first, dict):
+                        return first.get('id') or first.get('name')
+                    return first
+        return None
 
-    def parse_numeric_value(text_value):
+    def parse_numeric_value(raw_value):
         """Parse numeric values from text"""
-        if not text_value:
+        if raw_value is None or raw_value == '':
             return None
+        if isinstance(raw_value, (int, float)):
+            return float(raw_value)
+        if isinstance(raw_value, dict):
+            candidate = raw_value.get('value')
+            if isinstance(candidate, dict):
+                candidate = candidate.get('value') or candidate.get('amount') or candidate.get('text')
+            if candidate is None:
+                candidate = raw_value.get('text')
+            raw_value = candidate
+            if raw_value is None:
+                return None
         try:
-            # Remove currency symbols and parse
-            clean_value = str(text_value).replace('£', '').replace(',', '').strip()
+            clean_value = str(raw_value).replace('£', '').replace(',', '').strip()
             return float(clean_value) if clean_value else None
         except (ValueError, TypeError):
             return None
