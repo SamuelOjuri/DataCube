@@ -555,7 +555,6 @@ async def handle_column_changed_minimal(
         logger.warning(f"No column ID in payload for item {item_id}")
         return
 
-    # Get enhanced column mappings
     field_mapping = get_enhanced_column_field_mapping(board_id, column_id)
 
     if not field_mapping:
@@ -566,7 +565,6 @@ async def handle_column_changed_minimal(
     field_name = field_mapping['field']
     transform_func = field_mapping.get('transform')
 
-    # Transform value if needed
     if transform_func:
         try:
             new_value = transform_func(new_value)
@@ -576,6 +574,7 @@ async def handle_column_changed_minimal(
 
     analysis_targets: Set[str] = set()
     trigger_columns = ANALYSIS_TRIGGER_COLUMNS.get(board_id, set())
+
     if column_id in trigger_columns:
         if board_id == PARENT_BOARD_ID:
             analysis_targets.add(str(item_id))
@@ -583,7 +582,7 @@ async def handle_column_changed_minimal(
             parent_id = _lookup_parent_project_id(item_id)
             if parent_id:
                 analysis_targets.add(parent_id)
-    # CRITICAL: Single field update - very fast
+
     try:
         result = supabase_client.client.table(table_name)\
             .update({
@@ -598,7 +597,7 @@ async def handle_column_changed_minimal(
         else:
             logger.warning(f"No rows updated for item {item_id} in table {table_name}")
 
-        if analysis_targets:
+        if analysis_targets and board_id == PARENT_BOARD_ID:
             from ..services.analysis_service import AnalysisService
 
             svc = AnalysisService()
