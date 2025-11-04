@@ -108,8 +108,6 @@ SUBITEM_COLUMNS = {
     'new_enquiry_value': 'formula_mkqa31kh', # New Enquiry Value (source for parent mirror)
     'date_design_completed': 'formula_mkpp1x74',  # DDC
     'first_date_invoiced': 'formula_mkppwkkq',    # FDI
-
-    # Additional fields needed by app and DB
     'reason_for_change': 'mirror03__1',             # Reason For Change
     'quote_amount': 'mirror77__1',                  # Quote Amount
     'area': 'mirror79__1',                          # Area
@@ -121,8 +119,6 @@ SUBITEM_COLUMNS = {
     'date_received': 'mirror95__1',                 # Date Received
     'date_design_completed_mirror': 'mirror98__1',  # Date Design Completed
     'invoice_date': 'mirror082__1',                 # Invoice Date
-
-    # Newly added to populate missing DB columns
     'time_taken': 'mirror16__1',                # Time Taken
     'min_thickness': 'mirror62__1',             # Min Thickness
     'max_thickness': 'mirror74__1',             # Max Thickness
@@ -146,37 +142,42 @@ SUBITEM_COLUMNS = {
 }
 # Complete HIDDEN_ITEMS_COLUMNS mapping
 HIDDEN_ITEMS_COLUMNS = {
-    'name': 'name',                          # Item name
-    'quote_amount': 'formula63__1',          # Quote Amount
-    'reason_for_change': 'dropdown2__1',     # Reason For Change
-    'date_design_completed': 'date__1',      # Date Design Completed
-    'invoice_date': 'date42__1',             # Invoice Date
-    'date_received': 'date4__1',             # Date Received
-    
-    # Add these missing columns from BoardSchema
-    'status': 'status__1',                   # Status
-    'project_attachments': 'files__1',       # Project Attachments
-    'prefix': 'text__1',                     # Prefix
-    'revision': 'text6__1',                  # Revision
-    'project_name': 'dup__of_revision__1',   # Project Name
-    'designer': 'people__1',                 # Designer
-    'surveyor': 'people3__1',                # Surveyor
-    'account': 'connect_boards__1',          # Accounts
-    'contact': 'connect_boards2__1',         # Contacts
-    'product_type': 'dropdown9__1',          # Product Type
-    'u_value': 'numbers__1',                 # U-Value
-    'area': 'numbers5__1',                   # Area
-    'fall': 'text2__1',                      # Fall
-    'deck_type': 'deck_type__1',            # Deck Type
-    'material_value': 'numbers22__1',        # Material value
-    'transport_cost': 'numbers9__1',         # Transport Cost
-    'target_gpm': 'formula__1',              # Target Gpm
-    'tp_margin': 'numbers4__1',              # TP Margin
-    'commission': 'numbers55__1',            # Commission
-    'distributor_margin': 'numbers79__1',    # Distributor Margin
-    'date_quoted': 'date8__1',               # Date Quoted
-    'date_project_won': 'date64__1',         # Date Project Won
-    'date_project_closed': 'date6__1',       # Date Project Closed
+    'name': 'name',
+    'quote_amount': 'formula63__1',
+    'reason_for_change': 'dropdown2__1',
+    'date_design_completed': 'date__1',
+    'invoice_date': 'date42__1',
+    'date_received': 'date4__1',
+    'status': 'status__1',
+    'project_attachments': 'files__1',
+    'prefix': 'text__1',
+    'revision': 'text6__1',
+    'project_name': 'dup__of_revision__1',
+    'designer': 'people__1',
+    'surveyor': 'people3__1',
+    'account': 'connect_boards__1',
+    'contact': 'connect_boards2__1',
+    'product_type': 'dropdown9__1',
+    'u_value': 'numbers__1',
+    'min_u_value': 'numbers67__1',
+    'area': 'numbers5__1',
+    'approx_bonding': 'text_mknfmd9',
+    'fall': 'text2__1',
+    'min_thickness': 'numbers72__1',
+    'max_thickness': 'numbers2__1',
+    'gutter_sump': 'text62__1',
+    'deck_type': 'deck_type__1',
+    'volume_m3': 'numbers21__1',
+    'wastage_percent': 'numbers70__1',
+    'material_value': 'numbers22__1',
+    'transport_cost': 'numbers9__1',
+    'target_gpm': 'formula__1',
+    'tp_margin': 'numbers4__1',
+    'commission': 'numbers55__1',
+    'distributor_margin': 'numbers79__1',
+    'time_taken': 'numbers6__1',
+    'account_id': 'dup__of_accounts_mkkd7bew',
+    'contact_id': 'order_contact_email_mkktmg6g',
 }
 
 # Mirror resolution mappings

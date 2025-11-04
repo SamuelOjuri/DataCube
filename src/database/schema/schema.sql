@@ -126,27 +126,20 @@ CREATE TABLE hidden_items (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     monday_id TEXT UNIQUE NOT NULL,
     item_name TEXT,
-    
-    -- Status and files
     status TEXT,
-    project_attachments JSONB,  -- Store file references as JSON
-    
-    -- Project details
+    project_attachments JSONB,
     prefix TEXT,
     revision TEXT,
     project_name TEXT,
     urgency TEXT,
     reason_for_change TEXT,
-    
-    -- Dates
+    approx_bonding TEXT,
     date_received DATE,
     date_design_completed DATE,
     date_quoted DATE,
     date_project_won DATE,
     date_project_closed DATE,
     invoice_date DATE,
-    
-    -- Financial calculations
     quote_amount NUMERIC(12, 2),
     material_value NUMERIC(12, 2),
     transport_cost NUMERIC(10, 2),
@@ -154,12 +147,13 @@ CREATE TABLE hidden_items (
     tp_margin NUMERIC(6, 2),
     commission NUMERIC(6, 2),
     distributor_margin NUMERIC(6, 2),
-    
-    -- Connected accounts and contacts
+    time_taken NUMERIC(6, 2),
+    min_thickness NUMERIC(8, 2),
+    max_thickness NUMERIC(8, 2),
+    volume_m3 NUMERIC(12, 3),
+    wastage_percent NUMERIC(6, 2),
     account_id TEXT,
     contact_id TEXT,
-    
-    -- Metadata
     last_synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

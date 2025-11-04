@@ -1112,53 +1112,31 @@ class DataSyncService:
                     'monday_id': normalized_item.get('id'),
                     'item_name': normalized_item.get('name', ''),
                     'status': normalized_item.get('status', ''),
-                    'project_attachments': self._parse_json_field(
-                        normalized_item.get('project_attachments')
-                    ),
+                    'project_attachments': self._parse_json_field(normalized_item.get('project_attachments')),
                     'prefix': normalized_item.get('prefix', ''),
                     'revision': normalized_item.get('revision', ''),
                     'project_name': normalized_item.get('project_name', ''),
                     'reason_for_change': normalized_item.get('reason_for_change', ''),
                     'urgency': normalized_item.get('urgency', ''),
-                    'date_received': self._parse_date_value(
-                        normalized_item.get('date_received')
-                    ),
-                    'date_design_completed': self._parse_date_value(
-                        normalized_item.get('date_design_completed')
-                    ),
-                    'invoice_date': self._parse_date_value(
-                        normalized_item.get('invoice_date')
-                    ),
-                    'date_quoted': self._parse_date_value(
-                        normalized_item.get('date_quoted')
-                    ),
-                    'date_project_won': self._parse_date_value(
-                        normalized_item.get('date_project_won')
-                    ),
-                    'date_project_closed': self._parse_date_value(
-                        normalized_item.get('date_project_closed')
-                    ),
-                    'quote_amount': self._parse_numeric_value(
-                        normalized_item.get('quote_amount', 0)
-                    ),
-                    'material_value': self._parse_numeric_value(
-                        normalized_item.get('material_value')
-                    ),
-                    'transport_cost': self._parse_numeric_value(
-                        normalized_item.get('transport_cost')
-                    ),
-                    'target_gpm': self._parse_numeric_value(
-                        normalized_item.get('target_gpm')
-                    ),
-                    'tp_margin': self._parse_numeric_value(
-                        normalized_item.get('tp_margin')
-                    ),
-                    'commission': self._parse_numeric_value(
-                        normalized_item.get('commission')
-                    ),
-                    'distributor_margin': self._parse_numeric_value(
-                        normalized_item.get('distributor_margin')
-                    ),
+                    'approx_bonding': normalized_item.get('approx_bonding', ''),
+                    'volume_m3': self._parse_numeric_value(normalized_item.get('volume_m3')),
+                    'wastage_percent': self._parse_numeric_value(normalized_item.get('wastage_percent')),
+                    'min_thickness': self._parse_numeric_value(normalized_item.get('min_thickness')),
+                    'max_thickness': self._parse_numeric_value(normalized_item.get('max_thickness')),
+                    'time_taken': self._parse_numeric_value(normalized_item.get('time_taken')),
+                    'date_received': self._parse_date_value(normalized_item.get('date_received')),
+                    'date_design_completed': self._parse_date_value(normalized_item.get('date_design_completed')),
+                    'invoice_date': self._parse_date_value(normalized_item.get('invoice_date')),
+                    'date_quoted': self._parse_date_value(normalized_item.get('date_quoted')),
+                    'date_project_won': self._parse_date_value(normalized_item.get('date_project_won')),
+                    'date_project_closed': self._parse_date_value(normalized_item.get('date_project_closed')),
+                    'quote_amount': self._parse_numeric_value(normalized_item.get('quote_amount', 0)),
+                    'material_value': self._parse_numeric_value(normalized_item.get('material_value')),
+                    'transport_cost': self._parse_numeric_value(normalized_item.get('transport_cost')),
+                    'target_gpm': self._parse_numeric_value(normalized_item.get('target_gpm')),
+                    'tp_margin': self._parse_numeric_value(normalized_item.get('tp_margin')),
+                    'commission': self._parse_numeric_value(normalized_item.get('commission')),
+                    'distributor_margin': self._parse_numeric_value(normalized_item.get('distributor_margin')),
                     'account_id': normalized_item.get('account_id', ''),
                     'contact_id': normalized_item.get('contact_id', ''),
                     'last_synced_at': datetime.now().isoformat()
