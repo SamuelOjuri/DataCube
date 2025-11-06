@@ -69,7 +69,6 @@ pygments==2.19.2
 rich==14.2.0
 psycopg==3.2.12 
 psycopg-binary==3.2.12 
-APScheduler==3.10.4 
 iniconfig==2.3.0 
 pluggy==1.6.0 
 pytest==8.4.2
