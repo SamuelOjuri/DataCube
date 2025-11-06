@@ -193,6 +193,7 @@ class MondayUpdateService:
 
         for update in updates:
             text = (update.get("text_body") or update.get("body") or "").strip()
-            if text.startswith("**Datacube Analysis Update**"):
+            normalized = text.lower()
+            if "datacube analysis update" in normalized:
                 return update.get("id")
         return None
