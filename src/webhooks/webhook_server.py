@@ -24,6 +24,9 @@ from ..config import (
     WEBHOOK_RATE_LIMIT_MAX_REQUESTS,
     WEBHOOK_RATE_LIMIT_WINDOW_SECONDS,
     WEBHOOK_DUPLICATE_TTL_SECONDS,
+    PIPELINE_STAGE_LABELS,
+    TYPE_LABELS,
+    CATEGORY_LABELS,
 )
 
 app = FastAPI(
@@ -339,6 +342,7 @@ async def handle_monday_webhook(
             "update_column_value": "change_column_value",
             "create_pulse": "create_item",
             "delete_pulse": "delete_item",
+            "change_name": "update_name",
         }
         event_type = EVENT_ALIASES.get(event_type_raw, event_type_raw)
         board_id_raw = event_data.get('boardId')
@@ -749,20 +753,32 @@ async def handle_item_deleted(board_id: str, item_id: str):
         for parent in parent_to_refresh:
             _queue_rehydrate_job(parent, "child_delete")
 
-async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict):
+async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict) -> None:
     """Handle item name updates"""
-    new_name = payload.get('event', {}).get('value', {}).get('name', '')
+    event = payload.get("event") or {}
+    raw_value = event.get("value")
+    new_name: Optional[str] = None
+
+    if isinstance(raw_value, str):
+        new_name = raw_value.strip()
+    elif isinstance(raw_value, dict):
+        new_name = (
+            raw_value.get("name")
+            or raw_value.get("text")
+            or raw_value.get("value")
+        )
+        if isinstance(new_name, str):
+            new_name = new_name.strip()
 
     if not new_name:
-        logger.warning(f"No new name provided for item {item_id}")
+        logger.warning(f"No new name provided for item {item_id} (value={raw_value!r})")
         return
 
     try:
-        # Update name in appropriate table
         table_map = {
-            PARENT_BOARD_ID: 'projects',
-            SUBITEM_BOARD_ID: 'subitems',
-            HIDDEN_ITEMS_BOARD_ID: 'hidden_items'
+            PARENT_BOARD_ID: "projects",
+            SUBITEM_BOARD_ID: "subitems",
+            HIDDEN_ITEMS_BOARD_ID: "hidden_items",
         }
 
         table_name = table_map.get(board_id)
@@ -770,200 +786,238 @@ async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict):
             logger.warning(f"Unknown board ID for name update: {board_id}")
             return
 
-        result = supabase_client.client.table(table_name)\
-            .update({
-                'item_name': new_name,
-                'last_synced_at': datetime.now().isoformat()
-            })\
-            .eq('monday_id', item_id)\
+        result = (
+            supabase_client.client.table(table_name)
+            .update(
+                {
+                    "item_name": new_name,
+                    "last_synced_at": datetime.now().isoformat(),
+                }
+            )
+            .eq("monday_id", item_id)
             .execute()
+        )
 
         logger.info(f"Updated name for {item_id} in {table_name}: {new_name}")
 
-    except Exception as e:
-        logger.error(f"Failed to update name for item {item_id}: {e}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"Failed to update name for item {item_id}: {exc}")
         raise
 
 def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional[Dict]:
-    """Enhanced column mapping with transformation functions and validation"""
+    """Enhanced column mapping with transformation functions and validation."""
 
-    # Transform functions for different data types
-
-    def parse_status_value(raw_value):
-        """Parse Monday status column value"""
-        if not raw_value:
-            return None
+    def _coerce_monday_value(raw_value):
         if isinstance(raw_value, dict):
-            if raw_value.get('index') is not None:
-                return raw_value.get('index')
-            label = raw_value.get('label')
-            if isinstance(label, dict) and label.get('index') is not None:
-                return label.get('index')
-            raw_value = raw_value.get('value') or raw_value.get('text')
-            if raw_value is None:
-                return None
+            return dict(raw_value)
+        data = {"raw": raw_value}
         if isinstance(raw_value, str):
-            try:
-                value_data = json.loads(raw_value)
-            except (json.JSONDecodeError, TypeError):
-                return None
-            if isinstance(value_data, dict):
-                return value_data.get('index')
+            value = raw_value.strip()
+            if value.startswith("{") and value.endswith("}"):
+                try:
+                    parsed = json.loads(value)
+                except json.JSONDecodeError:
+                    data["text"] = raw_value
+                else:
+                    if isinstance(parsed, dict):
+                        return parsed
+                    data["text"] = raw_value
+            else:
+                data["text"] = raw_value
+        elif raw_value is not None:
+            data["text"] = str(raw_value)
+        return data
+
+    def parse_text_value(raw_value):
+        data = _coerce_monday_value(raw_value)
+        text = data.get("text") or data.get("value") or data.get("name") or data.get("label")
+        if isinstance(text, dict):
+            text = text.get("label") or text.get("text") or text.get("value")
+        if text is not None:
+            return str(text).strip()
+        raw = data.get("raw")
+        if raw is not None:
+            return str(raw).strip()
         return None
 
-    def parse_dropdown_value(raw_value):
-        """Parse Monday dropdown column value"""
-        if not raw_value:
-            return None
-        if isinstance(raw_value, dict):
-            chosen = raw_value.get('chosenValues')
-            if isinstance(chosen, list) and chosen:
-                first = chosen[0]
-                if isinstance(first, dict):
-                    return first.get('id') or first.get('name')
-                return first
-            ids = raw_value.get('ids')
-            if isinstance(ids, list) and ids:
-                return ids[0]
-            raw_value = raw_value.get('value') or raw_value.get('text')
-            if raw_value is None:
-                return None
-        if isinstance(raw_value, str):
-            try:
-                value_data = json.loads(raw_value)
-            except (json.JSONDecodeError, TypeError):
-                value_data = None
-            if isinstance(value_data, dict):
-                ids = value_data.get('ids') or value_data.get('chosenValues')
-                if isinstance(ids, list) and ids:
-                    first = ids[0]
-                    if isinstance(first, dict):
-                        return first.get('id') or first.get('name')
-                    return first
+    def parse_status_value(raw_value, label_map):
+        data = _coerce_monday_value(raw_value)
+        index = data.get("index")
+        label_entry = data.get("label")
+        label = None
+        if isinstance(label_entry, dict):
+            if index is None:
+                index = label_entry.get("index")
+            label = label_entry.get("label") or label_entry.get("text")
+        elif label_entry is not None:
+            label = str(label_entry)
+        if index is not None:
+            mapped = label_map.get(str(index))
+            if mapped:
+                return mapped
+        if label:
+            mapped = label_map.get(str(label))
+            return mapped or label.strip()
+        text = data.get("text") or data.get("value")
+        if text:
+            text_str = str(text).strip()
+            mapped = label_map.get(text_str)
+            return mapped or text_str
+        raw = data.get("raw")
+        if raw:
+            raw_str = str(raw).strip()
+            mapped = label_map.get(raw_str)
+            return mapped or raw_str
+        return None
+
+    def parse_dropdown_value(raw_value, label_map=None):
+        data = _coerce_monday_value(raw_value)
+        chosen = data.get("chosenValues") or data.get("labels")
+        candidate_id = None
+        candidate_label = None
+        if isinstance(chosen, list) and chosen:
+            first = chosen[0]
+            if isinstance(first, dict):
+                candidate_id = first.get("id") or first.get("value")
+                candidate_label = first.get("name") or first.get("label") or first.get("text")
+            else:
+                candidate_id = str(first)
+        ids = data.get("ids")
+        if candidate_id is None and isinstance(ids, list) and ids:
+            candidate_id = str(ids[0])
+        if candidate_label is None:
+            value = data.get("text") or data.get("value") or data.get("label")
+            if isinstance(value, dict):
+                candidate_label = value.get("label") or value.get("text")
+            elif value is not None:
+                candidate_label = str(value)
+        if label_map:
+            if candidate_id is not None:
+                mapped = label_map.get(str(candidate_id))
+                if mapped:
+                    return mapped
+            if candidate_label:
+                mapped = label_map.get(candidate_label)
+                if mapped:
+                    return mapped
+        if candidate_label:
+            return candidate_label.strip()
+        if candidate_id is not None:
+            return str(candidate_id).strip()
+        raw = data.get("raw")
+        if raw is not None:
+            return str(raw).strip()
         return None
 
     def parse_numeric_value(raw_value):
-        """Parse numeric values from text"""
-        if raw_value is None or raw_value == '':
+        if raw_value is None or raw_value == "":
             return None
         if isinstance(raw_value, (int, float)):
             return float(raw_value)
-        if isinstance(raw_value, dict):
-            candidate = raw_value.get('value')
-            if isinstance(candidate, dict):
-                candidate = candidate.get('value') or candidate.get('amount') or candidate.get('text')
-            if candidate is None:
-                candidate = raw_value.get('text')
-            raw_value = candidate
-            if raw_value is None:
-                return None
+        data = _coerce_monday_value(raw_value)
+        candidate = data.get("value") or data.get("text")
+        if isinstance(candidate, dict):
+            candidate = candidate.get("value") or candidate.get("amount") or candidate.get("text")
+        if candidate is None:
+            candidate = data.get("raw")
+        if candidate is None:
+            return None
         try:
-            clean_value = str(raw_value).replace('£', '').replace(',', '').strip()
+            clean_value = str(candidate).replace("£", "").replace(",", "").strip()
             return float(clean_value) if clean_value else None
         except (ValueError, TypeError):
             return None
 
     def parse_date_value(raw_value):
-        """Parse Monday date values from plain text or JSON objects."""
-        if not raw_value:
-            return None
-
-        date_text = None
-
-        if isinstance(raw_value, dict):
-            date_text = raw_value.get("date") or raw_value.get("text")
-        else:
-            value_str = str(raw_value).strip()
-            if value_str.startswith("{") and value_str.endswith("}"):
-                try:
-                    value_data = json.loads(value_str)
-                    date_text = value_data.get("date") or value_data.get("text")
-                except json.JSONDecodeError:
-                    date_text = value_str
-            else:
-                date_text = value_str
-
+        data = _coerce_monday_value(raw_value)
+        date_text = data.get("date") or data.get("text") or data.get("value")
+        if isinstance(date_text, dict):
+            date_text = date_text.get("date") or date_text.get("text")
+        if not date_text:
+            date_text = data.get("raw")
         if not date_text:
             return None
-
         for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
             try:
-                return datetime.strptime(date_text, fmt).date().isoformat()
+                return datetime.strptime(str(date_text), fmt).date().isoformat()
             except ValueError:
                 continue
+        return str(date_text)
 
-        return date_text
-
-    # Enhanced mappings with transformations
     mappings = {
-        PARENT_BOARD_ID: {  # Parent board
-            'text3__1': {
-                'table': 'projects',
-                'field': 'project_name'
+        PARENT_BOARD_ID: {
+            PARENT_COLUMNS["project_name"]: {
+                "table": "projects",
+                "field": "project_name",
+                "transform": parse_text_value,
             },
-            'status4__1': {
-                'table': 'projects',
-                'field': 'pipeline_stage',
-                'transform': parse_status_value
+            PARENT_COLUMNS["pipeline_stage"]: {
+                "table": "projects",
+                "field": "pipeline_stage",
+                "transform": lambda raw: parse_status_value(raw, PIPELINE_STAGE_LABELS),
             },
-            'dropdown7__1': {
-                'table': 'projects',
-                'field': 'type',
-                'transform': parse_dropdown_value
+            PARENT_COLUMNS["type"]: {
+                "table": "projects",
+                "field": "type",
+                "transform": lambda raw: parse_dropdown_value(raw, TYPE_LABELS),
             },
-            'dropdown__1': {
-                'table': 'projects',
-                'field': 'category',
-                'transform': parse_dropdown_value
+            PARENT_COLUMNS["category"]: {
+                "table": "projects",
+                "field": "category",
+                "transform": lambda raw: parse_dropdown_value(raw, CATEGORY_LABELS),
             },
-            'formula_mkpp85yw': {
-                'table': 'projects',
-                'field': 'gestation_period',
-                'transform': parse_numeric_value
+            PARENT_COLUMNS["gestation_period"]: {
+                "table": "projects",
+                "field": "gestation_period",
+                "transform": parse_numeric_value,
             },
-            'date9__1': {
-                'table': 'projects',
-                'field': 'date_created',
-                'transform': parse_date_value
+            PARENT_COLUMNS["date_created"]: {
+                "table": "projects",
+                "field": "date_created",
+                "transform": parse_date_value,
             },
-            'date_mkpx4163': {
-                'table': 'projects',
-                'field': 'follow_up_date',
-                'transform': parse_date_value
-            }
+            PARENT_COLUMNS["follow_up_date"]: {
+                "table": "projects",
+                "field": "follow_up_date",
+                "transform": parse_date_value,
+            },
         },
-        SUBITEM_BOARD_ID: {  # Subitems board
-            'mirror_12__1': {
-                'table': 'subitems',
-                'field': 'account'
+        SUBITEM_BOARD_ID: {
+            SUBITEM_COLUMNS["account"]: {
+                "table": "subitems",
+                "field": "account",
+                "transform": parse_text_value,
             },
-            'mirror875__1': {
-                'table': 'subitems',
-                'field': 'product_type'
+            SUBITEM_COLUMNS["product_type"]: {
+                "table": "subitems",
+                "field": "product_type",
+                "transform": parse_text_value,
             },
-            'formula_mkqa31kh': {
-                'table': 'subitems',
-                'field': 'new_enquiry_value',
-                'transform': parse_numeric_value
-            }
+            SUBITEM_COLUMNS["new_enquiry_value"]: {
+                "table": "subitems",
+                "field": "new_enquiry_value",
+                "transform": parse_numeric_value,
+            },
         },
-        HIDDEN_ITEMS_BOARD_ID: {  # Hidden items board
-            'formula63__1': {
-                'table': 'hidden_items',
-                'field': 'quote_amount',
-                'transform': parse_numeric_value
+        HIDDEN_ITEMS_BOARD_ID: {
+            # These constant names must exist in your config:
+            # e.g. HIDDEN_ITEMS_COLUMNS["quote_amount"]
+            "formula63__1": {
+                "table": "hidden_items",
+                "field": "quote_amount",
+                "transform": parse_numeric_value,
             },
-            'date__1': {
-                'table': 'hidden_items',
-                'field': 'date_design_completed',
-                'transform': parse_date_value
+            "date__1": {
+                "table": "hidden_items",
+                "field": "date_design_completed",
+                "transform": parse_date_value,
             },
-            'date42__1': {
-                'table': 'hidden_items',
-                'field': 'invoice_date',
-                'transform': parse_date_value
-            }
-        }
+            "date42__1": {
+                "table": "hidden_items",
+                "field": "invoice_date",
+                "transform": parse_date_value,
+            },
+        },
     }
 
     return mappings.get(board_id, {}).get(column_id)
