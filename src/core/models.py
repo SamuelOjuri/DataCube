@@ -4,9 +4,10 @@ Pydantic models for data validation and type safety.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
 from enum import Enum
-
+from pydantic import BaseModel, Field
+from pydantic import ConfigDict
+from pydantic import field_validator, model_serializer
 
 class PipelineStage(str, Enum):
     """Pipeline stage categories"""
@@ -19,19 +20,16 @@ class PipelineStage(str, Enum):
     CUSTOMER_PREFERRED = "Customer Has Order - TP Preferred Supplier"
     OPEN_ENQUIRY = "Open Enquiry"
 
-
 class StatusCategory(str, Enum):
     """Simplified status categories for analysis"""
     WON = "Won"
     LOST = "Lost"
     OPEN = "Open"
 
-
 class ProjectType(str, Enum):
     """Project type categories"""
     REFURBISHMENT = "Refurbishment"
     NEW_BUILD = "New Build"
-
 
 class ProjectFeatures(BaseModel):
     """Features of a project for analysis"""
@@ -45,19 +43,18 @@ class ProjectFeatures(BaseModel):
     gestation_period: Optional[int] = Field(default=None, ge=0)
     pipeline_stage: Optional[str] = None
     status_category: Optional[StatusCategory] = None
-    value_band: Optional[str] = None  # Will be computed during processing
+    value_band: Optional[str] = None
     date_created: Optional[datetime] = None
-    
-    @validator('new_enquiry_value', pre=True)
-    def parse_value(cls, v):
-        if v is None or v == '':
-            return 0.0
-        if isinstance(v, str):
-            # Remove currency symbols and parse
-            v = v.replace('£', '').replace(',', '').strip()
-            return float(v) if v else 0.0
-        return float(v)
 
+    @field_validator("new_enquiry_value", mode="before")
+    @classmethod
+    def parse_value(cls, value: Any) -> float:
+        if value is None or value == "":
+            return 0.0
+        if isinstance(value, str):
+            clean = value.replace("£", "").replace(",", "").strip()
+            return float(clean) if clean else 0.0
+        return float(value)
 
 class SegmentStatistics(BaseModel):
     """Statistics for a data segment"""
@@ -87,7 +84,6 @@ class SegmentStatistics(BaseModel):
     account_win_rate: Optional[float] = None
     product_win_rate: Optional[float] = None
 
-
 class NumericPredictions(BaseModel):
     """Numeric predictions for a project"""
     expected_gestation_days: Optional[int] = None
@@ -103,14 +99,12 @@ class NumericPredictions(BaseModel):
     
     segment_statistics: Optional[SegmentStatistics] = None
 
-
 class ProjectAnalysisInput(BaseModel):
     """Input structure for LLM analysis"""
     project_id: str
     features: Dict[str, Any] = Field(..., description="Project characteristics")
     historical: Dict[str, Any] = Field(..., description="Historical segment data")
     numeric_predictions: Dict[str, Any] = Field(..., description="Pre-computed baselines")
-
 
 class ProjectAnalysisOutput(BaseModel):
     """Expected output structure from LLM"""
@@ -134,7 +128,6 @@ class ProjectAnalysisOutput(BaseModel):
     # Optional field that models may include; used downstream in metadata
     special_factors: Optional[str] = None
 
-
 class AnalysisResult(BaseModel):
     """Final analysis result combining numeric and LLM outputs"""
     project_id: str
@@ -143,8 +136,11 @@ class AnalysisResult(BaseModel):
     predictions: NumericPredictions
     reasoning: Dict[str, str] = Field(default_factory=dict)
     analysis_metadata: Dict[str, Any] = Field(default_factory=dict)
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+
+    model_config = ConfigDict(json_encoders={datetime: datetime.isoformat})
+
+    @model_serializer
+    def serialize_model(self) -> Dict[str, Any]:
+        data = self.model_dump()
+        # datetime.isoformat already applied via json_encoders / ConfigDict
+        return data

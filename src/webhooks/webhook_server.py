@@ -13,6 +13,7 @@ from collections import defaultdict
 
 from ..database.supabase_client import SupabaseClient
 from ..database.sync_service import DataSyncService
+from ..services.queue_worker import get_task_queue
 from ..config import (
     WEBHOOK_SECRET,
     PARENT_BOARD_ID,
@@ -45,6 +46,63 @@ logger = logging.getLogger(__name__)
 # Global instances
 supabase_client = SupabaseClient()
 sync_service = DataSyncService()
+
+
+def _queue_rehydrate_job(project_id: str, reason: str) -> None:
+    try:
+        get_task_queue().enqueue_rehydrate(project_id, source=reason)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to enqueue rehydrate job for %s: %s", project_id, exc)
+
+
+def _queue_push_job(project_id: str, reason: str) -> None:
+    try:
+        get_task_queue().enqueue_push_to_monday(project_id, reason=reason)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to enqueue Monday sync for %s: %s", project_id, exc)
+
+
+def _lookup_parents_for_hidden(hidden_item_id: str) -> Set[str]:
+    try:
+        rows = (
+            supabase_client.client.table('subitems')
+            .select('parent_monday_id')
+            .eq('hidden_item_id', hidden_item_id)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to map hidden item %s to parents: %s", hidden_item_id, exc)
+        return set()
+
+    return {
+        str(row.get('parent_monday_id'))
+        for row in rows
+        if row.get('parent_monday_id')
+    }
+
+
+def _lookup_parent_for_subitem(subitem_id: str) -> Optional[str]:
+    try:
+        rows = (
+            supabase_client.client.table('subitems')
+            .select('parent_monday_id')
+            .eq('monday_id', subitem_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to map subitem %s to parent: %s", subitem_id, exc)
+        return None
+
+    if not rows:
+        return None
+
+    parent_id = rows[0].get('parent_monday_id')
+    return str(parent_id) if parent_id else None
 
 # Rate limiting and monitoring
 request_counts = defaultdict(list)
@@ -483,6 +541,9 @@ async def handle_item_created(
             items(ids: [{item_id}]) {{
                 id
                 name
+                parent_item {{
+                    id
+                }}
                 column_values {{
                     id
                     text
@@ -520,6 +581,7 @@ async def handle_item_created(
                     item_id,
                     (time.time() - analysis_started) * 1000,
                 )
+                _queue_push_job(item_id, "parent_create")
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "Analysis failed for newly created item %s on board %s",
@@ -533,6 +595,10 @@ async def handle_item_created(
             if transformed:
                 supabase_client.upsert_subitems(transformed)
                 logger.info("Upserted subitem: %s", transformed[0].get("monday_id"))
+            parent_ref = item_data.get("parent_item") or {}
+            parent_id = str(parent_ref.get("id") or "")
+            if parent_id:
+                _queue_rehydrate_job(parent_id, "subitem_create")
 
         elif board_id == HIDDEN_ITEMS_BOARD_ID:
             transformed = sync_service._transform_for_hidden_table([item_data])
@@ -541,6 +607,8 @@ async def handle_item_created(
                 logger.info("Upserted hidden item: %s", transformed[0].get("monday_id"))
             else:
                 logger.debug("Hidden item %s produced no rows after transform", item_id)
+            for parent in _lookup_parents_for_hidden(str(item_id)):
+                _queue_rehydrate_job(parent, "hidden_create")
             return  # skip AnalysisService for hidden items
 
     except Exception as e:
@@ -626,6 +694,7 @@ async def handle_column_changed_minimal(
                         column_id,
                         (time.time() - analysis_started) * 1000,
                     )
+                    _queue_push_job(target_id, "parent_change")
                 except Exception as exc:  # noqa: BLE001
                     logger.exception(
                         "Analysis failed for project %s after %s change", target_id, column_id
@@ -635,6 +704,14 @@ async def handle_column_changed_minimal(
                         f"analysis failed for {target_id} after {column_id} update: {exc}",
                     )
 
+        elif analysis_targets and board_id == SUBITEM_BOARD_ID:
+            for target_id in analysis_targets:
+                _queue_rehydrate_job(target_id, "subitem_change")
+
+        elif board_id == HIDDEN_ITEMS_BOARD_ID:
+            for parent in _lookup_parents_for_hidden(item_id):
+                _queue_rehydrate_job(parent, "hidden_change")
+
     except Exception as e:
         logger.error(f"Failed to update {field_name} for item {item_id}: {e}")
         raise
@@ -642,6 +719,14 @@ async def handle_column_changed_minimal(
 async def handle_item_deleted(board_id: str, item_id: str):
     """Handle item deletion with proper table mapping"""
     logger.info(f"Processing deleted item: {item_id} in board: {board_id}")
+
+    parent_to_refresh: Set[str] = set()
+    if board_id == SUBITEM_BOARD_ID:
+        parent = _lookup_parent_for_subitem(str(item_id))
+        if parent:
+            parent_to_refresh.add(parent)
+    elif board_id == HIDDEN_ITEMS_BOARD_ID:
+        parent_to_refresh |= _lookup_parents_for_hidden(str(item_id))
 
     try:
         # Delete from appropriate table based on board_id
@@ -660,6 +745,9 @@ async def handle_item_deleted(board_id: str, item_id: str):
     except Exception as e:
         logger.error(f"Failed to delete item {item_id} from board {board_id}: {e}")
         raise
+    finally:
+        for parent in parent_to_refresh:
+            _queue_rehydrate_job(parent, "child_delete")
 
 async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict):
     """Handle item name updates"""

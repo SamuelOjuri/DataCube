@@ -394,3 +394,24 @@ UPDATE analysis_results
 SET rating_score = 1 + ((rating_score - 1) * 11)
 WHERE rating_score BETWEEN 1 AND 10;
 
+-- Queue job tracking
+CREATE TABLE IF NOT EXISTS job_queue (
+    id UUID PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    project_id TEXT,
+    status TEXT NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    payload JSONB,
+    detail TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue (status);
+CREATE INDEX IF NOT EXISTS idx_job_queue_project ON job_queue (project_id);
+
+CREATE TRIGGER update_job_queue_timestamp
+    BEFORE UPDATE ON job_queue
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+

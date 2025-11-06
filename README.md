@@ -20,3 +20,9 @@
 
 Run `python scripts/data_quality_checks.py` to see mirroring coverage and numeric null counts before relying on webhook-triggered analysis. The script requires Supabase service credentials in your environment.
 
+## Automation & Background Jobs
+
+- Webhook processing now enqueues long-running work (rehydrate, reanalyse, Monday sync) via the in-process queue at `src/services/queue_worker.py`.
+- Periodic catch-ups (hourly delta hydrate, nightly LLM backfill, ten-minute Monday sync) are scheduled through APScheduler in `src/api/app.py`.
+- Job history is stored in the `job_queue` table; see `docs/automation.md` for operational details.
+
