@@ -11,6 +11,7 @@ from ..config import PARENT_BOARD_ID
 from ..database.supabase_client import SupabaseClient
 from ..services.queue_worker import get_task_queue
 from ..tasks.pipeline import backfill_llm, rehydrate_delta, rehydrate_recent, sync_projects_to_monday
+from ..tasks.postgres_maintenance import refresh_conversion_views
 
 app = FastAPI()
 app.include_router(analysis_router)  # exposes /analysis/{monday_id}/run
@@ -47,7 +48,7 @@ async def _scheduled_llm_backfill() -> None:
                 throttle=0.35,
                 lookback_days=None,
                 skip_existing_after=None,
-                force=False,
+                force=True,
                 logger=log,
             ),
         )
@@ -159,6 +160,17 @@ async def _scheduled_monday_sync() -> None:
         )
         log.exception("Monday sync job failed")
 
+async def _scheduled_refresh_conversion_views() -> None:
+    log = logging.getLogger("scheduler.refresh_conversion_views")
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: refresh_conversion_views(logger=log, concurrently=True),
+        )
+    except Exception:
+        log.exception("Materialized view refresh job failed")
+
 
 @app.on_event("startup")
 async def _startup() -> None:
@@ -171,6 +183,7 @@ async def _startup() -> None:
         _scheduler.add_job(_scheduled_llm_backfill, "cron", hour=2, minute=15, id="llm_backfill")
         _scheduler.add_job(_scheduled_monday_sync, "interval", minutes=10, id="monday_sync")
         _scheduler.add_job(_scheduled_recent_rehydrate, "interval", hours=6, id="recent_rehydrate")
+        _scheduler.add_job(_scheduled_refresh_conversion_views, "interval", minutes=30, id="refresh_conversion_views")
 
         _scheduler.start()
 
