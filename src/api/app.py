@@ -10,7 +10,7 @@ from .routes.analysis import router as analysis_router
 from ..config import PARENT_BOARD_ID
 from ..database.supabase_client import SupabaseClient
 from ..services.queue_worker import get_task_queue
-from ..tasks.pipeline import backfill_llm, rehydrate_delta, sync_projects_to_monday
+from ..tasks.pipeline import backfill_llm, rehydrate_delta, rehydrate_recent, sync_projects_to_monday
 
 app = FastAPI()
 app.include_router(analysis_router)  # exposes /analysis/{monday_id}/run
@@ -24,6 +24,14 @@ async def _scheduled_delta_rehydrate() -> None:
         await rehydrate_delta(days_back=1, chunk_size=200, logger=log)
     except Exception:  # noqa: BLE001
         log.exception("Delta rehydrate job failed")
+
+
+async def _scheduled_recent_rehydrate() -> None:
+    log = logging.getLogger("scheduler.recent_rehydrate")
+    try:
+        await rehydrate_recent(days_back=2, chunk_size=200, logger=log)
+    except Exception:
+        log.exception("Recent rehydrate job failed")
 
 
 async def _scheduled_llm_backfill() -> None:
@@ -158,9 +166,12 @@ async def _startup() -> None:
     get_task_queue().start()
 
     if not _scheduler.running:
+
         _scheduler.add_job(_scheduled_delta_rehydrate, "interval", hours=1, id="delta_rehydrate")
         _scheduler.add_job(_scheduled_llm_backfill, "cron", hour=2, minute=15, id="llm_backfill")
         _scheduler.add_job(_scheduled_monday_sync, "interval", minutes=10, id="monday_sync")
+        _scheduler.add_job(_scheduled_recent_rehydrate, "interval", hours=6, id="recent_rehydrate")
+
         _scheduler.start()
 
 
