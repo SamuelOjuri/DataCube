@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import os
 from datetime import datetime, timedelta
 
@@ -163,11 +164,13 @@ async def _scheduled_monday_sync() -> None:
 async def _scheduled_refresh_conversion_views() -> None:
     log = logging.getLogger("scheduler.refresh_conversion_views")
     loop = asyncio.get_running_loop()
+    started = time.perf_counter()
     try:
         await loop.run_in_executor(
             None,
             lambda: refresh_conversion_views(logger=log, concurrently=True),
         )
+        log.info("Materialized view refresh job finished (elapsed=%.2fs)", time.perf_counter() - started)
     except Exception:
         log.exception("Materialized view refresh job failed")
 
@@ -183,7 +186,14 @@ async def _startup() -> None:
         _scheduler.add_job(_scheduled_llm_backfill, "cron", hour=2, minute=15, id="llm_backfill")
         _scheduler.add_job(_scheduled_monday_sync, "interval", minutes=10, id="monday_sync")
         _scheduler.add_job(_scheduled_recent_rehydrate, "interval", hours=6, id="recent_rehydrate")
-        _scheduler.add_job(_scheduled_refresh_conversion_views, "interval", minutes=30, id="refresh_conversion_views")
+        _scheduler.add_job(
+            _scheduled_refresh_conversion_views,
+            "interval",
+            minutes=30,
+            id="refresh_conversion_views",
+            misfire_grace_time=180,
+            max_instances=1,
+        )
 
         _scheduler.start()
 
