@@ -184,7 +184,7 @@ async def _startup() -> None:
 
         _scheduler.add_job(_scheduled_delta_rehydrate, "interval", hours=1, id="delta_rehydrate")
         _scheduler.add_job(_scheduled_llm_backfill, "cron", hour=2, minute=15, id="llm_backfill")
-        _scheduler.add_job(_scheduled_monday_sync, "interval", minutes=10, id="monday_sync")
+        _scheduler.add_job(_scheduled_monday_sync, "interval", minutes=25, id="monday_sync")
         _scheduler.add_job(_scheduled_recent_rehydrate, "interval", hours=6, id="recent_rehydrate")
         _scheduler.add_job(
             _scheduled_refresh_conversion_views,
