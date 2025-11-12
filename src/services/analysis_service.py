@@ -11,6 +11,9 @@ from ..core.numeric_analyzer import NumericBaseline
 
 logger = logging.getLogger(__name__)
 
+# Backoff tiers at or beyond this value indicate coarse/global segments.
+GLOBAL_BACKOFF_THRESHOLD = 4
+
 class AnalysisService:
     def __init__(self, db_client: Optional[SupabaseClient] = None, lookback_days: Optional[int] = None):
         self.db = db_client or SupabaseClient()
@@ -49,22 +52,30 @@ class AnalysisService:
 
     def analyze_project(self, project: Dict[str, Any]) -> Dict[str, Any]:
         key = self._cluster_key(project)
-        # Unified backoff to get segment rows
         seg_df, seg_keys, backoff_tier = self._fetch_segment_df(key)
         pf = self._to_project_features(project)
-        nb = NumericBaseline()
+        nb = self.numeric_baseline
+
+        global_df: Optional[pd.DataFrame] = None
+        if seg_df.empty or len(seg_df) < 3 or backoff_tier >= GLOBAL_BACKOFF_THRESHOLD:
+            # Supply broader context so NumericBaseline can apply priors/backoff logic.
+            global_df = self._fetch_global_df()
+
         preds = nb.analyze_project(
             pf,
             historical_data=seg_df,
             segment_data=seg_df,
             segment_keys=seg_keys,
-            backoff_tier=backoff_tier
+            backoff_tier=backoff_tier,
+            global_data=global_df,
         )
+
+        expected_conversion_rate = preds.expected_conversion_rate or 0.0
 
         return {
             'expected_gestation_days': preds.expected_gestation_days,
             'gestation_confidence': preds.gestation_confidence,
-            'expected_conversion_rate': round(preds.expected_conversion_rate or 0.0, 3),
+            'expected_conversion_rate': expected_conversion_rate,
             'conversion_confidence': preds.conversion_confidence,
             'rating_score': preds.rating_score,
             'reasoning': {
@@ -111,7 +122,7 @@ class AnalysisService:
     def _build_segment_stats(self, project: Dict[str, Any]) -> SegmentStatistics:
         key = self._cluster_key(project)
         seg_df, seg_keys, backoff_tier = self._fetch_segment_df(key)
-        nb = NumericBaseline()
+        nb = self.numeric_baseline
         stats = nb.create_segment_statistics(
             seg_df,
             segment_keys=seg_keys,
