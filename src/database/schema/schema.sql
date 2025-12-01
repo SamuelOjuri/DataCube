@@ -415,3 +415,41 @@ CREATE TRIGGER update_job_queue_timestamp
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
+
+
+
+-- ML Analysis Results Table (Shadow Mode)
+-- Stores probabilistic predictions for comparison with deterministic baseline
+
+CREATE TABLE IF NOT EXISTS ml_analysis_results (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    project_id TEXT REFERENCES projects(monday_id) ON DELETE CASCADE,
+    analysis_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Survival Model Outputs (Time-to-Event probabilities)
+    win_prob_30d NUMERIC(4, 3),  -- Probability of winning within 30 days from now
+    win_prob_90d NUMERIC(4, 3),  -- Probability of winning within 90 days from now
+    eventual_win_prob NUMERIC(4, 3), -- Probability of ever winning (from split-population/cure models or hierarchy)
+
+    -- Quantile Regression Outputs (Gestation estimates)
+    gestation_p25 INTEGER,       -- Optimistic timeline
+    gestation_p50 INTEGER,       -- Median timeline
+    gestation_p75 INTEGER,       -- Conservative timeline
+    
+    -- Aggregated Score (ML-derived)
+    rating_score INTEGER CHECK (rating_score >= 1 AND rating_score <= 100),
+    
+    -- Metadata for Model Management
+    model_version TEXT,          -- e.g., "v1.0-survival-cox"
+    features_used JSONB,         -- Snapshot of features at inference time
+    processing_time_ms INTEGER,
+    
+    CONSTRAINT ml_results_project_unique UNIQUE (project_id, analysis_timestamp)
+);
+
+-- Indexes for analysis comparisons
+CREATE INDEX IF NOT EXISTS idx_ml_results_project_id ON ml_analysis_results (project_id);
+CREATE INDEX IF NOT EXISTS idx_ml_results_timestamp ON ml_analysis_results (analysis_timestamp DESC);
+
+
+

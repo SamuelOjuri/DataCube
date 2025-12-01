@@ -48,6 +48,7 @@ TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay
 # Project directories
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
+SURVIVAL_MODEL_PATH = DATA_DIR / "models" 
 RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 CACHE_DIR = DATA_DIR / "cache"

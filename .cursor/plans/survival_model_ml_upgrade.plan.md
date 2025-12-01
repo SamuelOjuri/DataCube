@@ -18,8 +18,6 @@ Abstract: Construction firms face increasing pressure to generate timely, calibr
 
 Keywords: time-to-event modelling; hierarchical partial pooling; explainable forecasting; quantile regression; construction analytics; AI for built environment
 
-
-
 Here’s a plain-English walkthrough of what that abstract is saying, with the jargon translated and the moving parts connected.
 
 # What problem is this solving?

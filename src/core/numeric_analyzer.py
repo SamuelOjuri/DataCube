@@ -8,6 +8,9 @@ from typing import Dict, Tuple, Optional, List, Any
 from scipy import stats
 import logging
 
+from .ml.hierarchical_bayes import HierarchicalBayes
+
+
 # Handle both relative and absolute imports
 try:
     from .models import (
@@ -237,25 +240,29 @@ class NumericBaseline:
     def calculate_conversion_rate(
         self,
         segment_data: pd.DataFrame,
-        method: str = 'inclusive',
+        method: str = "inclusive",
         prior_rate: Optional[float] = None,
         prior_strength: Optional[int] = None,
         apply_time_weighting: Optional[bool] = None,
-        half_life_days: Optional[float] = None
-    ) -> Tuple[float, Dict[str, Any]]:
+        half_life_days: Optional[float] = None,
+        partial_pooler: Optional[HierarchicalBayes] = None,
+    ) -> Tuple[Optional[float], Dict[str, Any]]:
         if segment_data.empty:
-            return 0.5, {'confidence': 0}
+            return 0.5, {"confidence": 0}
 
         total = len(segment_data)
-        use_pipeline = 'pipeline_stage' in segment_data.columns
+        use_pipeline = "pipeline_stage" in segment_data.columns
 
         if use_pipeline:
-            stages = segment_data['pipeline_stage'].fillna('')
+            stages = segment_data["pipeline_stage"].fillna("")
             won_mask = stages == PipelineStage.WON_CLOSED.value
             lost_mask = stages == PipelineStage.LOST.value
         else:
-            # Fallback: treat 'Won' as closed-won if pipeline_stage missing
-            sc = segment_data['status_category'] if 'status_category' in segment_data.columns else pd.Series(index=segment_data.index, dtype=object)
+            sc = (
+                segment_data["status_category"]
+                if "status_category" in segment_data.columns
+                else pd.Series(index=segment_data.index, dtype=object)
+            )
             won_mask = sc == StatusCategory.WON.value
             lost_mask = sc == StatusCategory.LOST.value
 
@@ -265,15 +272,21 @@ class NumericBaseline:
         lost = int(lost_mask.sum())
         open_count = int(open_mask.sum())
 
-        use_weighting = self.time_weighting_enabled if apply_time_weighting is None else bool(apply_time_weighting)
-        weight_half_life = half_life_days if half_life_days is not None else self.time_weighting_half_life_days
+        use_weighting = (
+            self.time_weighting_enabled
+            if apply_time_weighting is None
+            else bool(apply_time_weighting)
+        )
+
+        weight_half_life = (
+            half_life_days if half_life_days is not None else self.time_weighting_half_life_days
+        )
 
         weights = None
         weighting_note = "unweighted"
-        if use_weighting and 'date_created' in segment_data.columns:
+        if use_weighting and "date_created" in segment_data.columns:
             weights = self._calculate_time_weights(
-                segment_data['date_created'],
-                half_life_days=weight_half_life
+                segment_data["date_created"], half_life_days=weight_half_life
             )
             weights = weights.reindex(segment_data.index).fillna(0.0)
             if weights.empty or float(weights.sum()) <= 0:
@@ -292,58 +305,104 @@ class NumericBaseline:
             open_weighted = float(open_count)
             total_weighted = float(total)
 
-        if method == 'closed_only':
+        if method == "closed_only":
             total_closed = won_closed + lost
             if total_closed == 0:
-                return None, {
-                    'confidence': 0,
-                    'wins': won_closed,
-                    'losses': lost,
-                    'open': open_count,
-                    'note': 'No closed projects in segment',
-                    'method': 'closed_only',
-                    'weighting': weighting_note
+                stats_payload: Dict[str, Any] = {
+                    "confidence": 0,
+                    "wins": won_closed,
+                    "losses": lost,
+                    "open": open_count,
+                    "note": "No closed projects in segment",
+                    "method": "closed_only",
+                    "weighting": weighting_note,
+                    "posterior_mean": None,
                 }
+                if partial_pooler is not None:
+                    posterior = partial_pooler.posterior_from_counts(0.0, 0.0)
+                    stats_payload.update(
+                        {
+                            "posterior_mean": posterior["mean"],
+                            "posterior_lower": posterior["lower"],
+                            "posterior_upper": posterior["upper"],
+                            "shrinkage_weight": posterior["shrinkage_weight"],
+                            "global_prior_mean": posterior["global_prior_mean"],
+                            "global_prior_strength": posterior["global_prior_strength"],
+                            "method": "hierarchical_closed",
+                            "confidence": round(posterior["shrinkage_weight"], 2),
+                        }
+                    )
+                    return posterior["mean"], stats_payload
+                return None, stats_payload
+
             total_closed_weighted = won_closed_weighted + lost_weighted
             if total_closed_weighted <= 0:
                 total_closed_weighted = float(total_closed)
-            rate = self._beta_smoothed_rate(won_closed_weighted, lost_weighted, prior_rate, prior_strength)
+            rate = self._beta_smoothed_rate(
+                won_closed_weighted, lost_weighted, prior_rate, prior_strength
+            )
             confidence = min(total_closed_weighted / 100, 1.0)
+
+            posterior = None
+            if partial_pooler is not None:
+                try:
+                    posterior = partial_pooler.posterior_from_counts(won_closed, lost)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Hierarchical pooling failed: %s", exc)
+
+            if posterior:
+                rate = posterior["mean"]
+                confidence = max(confidence, posterior["shrinkage_weight"])
+
             statistics = {
-                'wins': won_closed,
-                'losses': lost,
-                'open': open_count,
-                'total': int(total_closed),
-                'raw_rate': (won_closed_weighted / total_closed_weighted) if total_closed_weighted > 0 else 0.0,
-                'smoothed_rate': rate,
-                'confidence': round(confidence, 2),
-                'method': 'closed_only',
-                'wins_weighted': round(won_closed_weighted, 2),
-                'losses_weighted': round(lost_weighted, 2),
-                'total_weighted': round(total_closed_weighted, 2),
-                'weighting': weighting_note
+                "wins": won_closed,
+                "losses": lost,
+                "open": open_count,
+                "total": int(total_closed),
+                "raw_rate": (won_closed_weighted / total_closed_weighted)
+                if total_closed_weighted > 0
+                else 0.0,
+                "smoothed_rate": rate,
+                "confidence": round(confidence, 2),
+                "method": "hierarchical_closed" if posterior else "closed_only",
+                "wins_weighted": round(won_closed_weighted, 2),
+                "losses_weighted": round(lost_weighted, 2),
+                "total_weighted": round(total_closed_weighted, 2),
+                "weighting": weighting_note,
             }
+            if posterior:
+                statistics.update(
+                    {
+                        "posterior_mean": posterior["mean"],
+                        "posterior_lower": posterior["lower"],
+                        "posterior_upper": posterior["upper"],
+                        "shrinkage_weight": posterior["shrinkage_weight"],
+                        "global_prior_mean": posterior["global_prior_mean"],
+                        "global_prior_strength": posterior["global_prior_strength"],
+                    }
+                )
+
             return rate, statistics
+
         else:
-            # Inclusive: won_closed / (won_closed + lost + open)
             k = self.smoothing_k
             denominator = total_weighted + 2 * k
             rate = float(won_closed_weighted + k) / float(denominator) if denominator > 0 else 0.5
             confidence = min(total_weighted / 100, 1.0)
             statistics = {
-                'wins': won_closed,
-                'losses': lost,
-                'open': open_count,
-                'total': int(total),
-                'raw_rate': (won_closed_weighted / total_weighted) if total_weighted > 0 else 0.0,
-                'smoothed_rate': rate,
-                'confidence': round(confidence, 2),
-                'method': 'inclusive_closed_wins',
-                'wins_weighted': round(won_closed_weighted, 2),
-                'losses_weighted': round(lost_weighted, 2),
-                'open_weighted': round(open_weighted, 2),
-                'total_weighted': round(total_weighted, 2),
-                'weighting': weighting_note
+                "wins": won_closed,
+                "losses": lost,
+                "open": open_count,
+                "total": int(total),
+                "raw_rate": (won_closed_weighted / total_weighted) if total_weighted > 0 else 0.0,
+                "smoothed_rate": rate,
+                "confidence": round(confidence, 2),
+                "method": "inclusive_closed_wins",
+                "wins_weighted": round(won_closed_weighted, 2),
+                "losses_weighted": round(lost_weighted, 2),
+                "open_weighted": round(open_weighted, 2),
+                "total_weighted": round(total_weighted, 2),
+                "weighting": weighting_note,
             }
             return rate, statistics
     
@@ -602,47 +661,53 @@ class NumericBaseline:
         return (won + self.smoothing_k) / (total + 2 * self.smoothing_k)
     
     def create_segment_statistics(
-        self, 
+        self,
         segment_data: pd.DataFrame,
         segment_keys: List[str],
         backoff_tier: int,
         prior_rate: Optional[float] = None,
-        prior_strength: Optional[int] = None
+        prior_strength: Optional[int] = None,
+        partial_pooler: Optional[HierarchicalBayes] = None,
     ) -> SegmentStatistics:
         stats = SegmentStatistics(
             segment_keys=segment_keys,
             sample_size=len(segment_data),
-            backoff_tier=backoff_tier
+            backoff_tier=backoff_tier,
         )
-        
         if not segment_data.empty:
             gestation_days, gest_stats = self.calculate_gestation_baseline(segment_data)
             if gestation_days:
-                stats.gestation_median = gest_stats['median']
-                stats.gestation_p25 = gest_stats['p25']
-                stats.gestation_p75 = gest_stats['p75']
-                stats.gestation_count = gest_stats['count']
-            
-            # Conversion statistics
-            conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(segment_data, method='inclusive')
-            conv_rate_closed, conv_stats_closed = self.calculate_conversion_rate(
-                segment_data, method='closed_only',
-                prior_rate=prior_rate, prior_strength=prior_strength
+                stats.gestation_median = gest_stats["median"]
+                stats.gestation_p25 = gest_stats["p25"]
+                stats.gestation_p75 = gest_stats["p75"]
+                stats.gestation_count = gest_stats["count"]
+
+            conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(
+                segment_data, method="inclusive"
             )
-            # Inclusive (closed-won / all) is the primary metric
+            conv_rate_closed, conv_stats_closed = self.calculate_conversion_rate(
+                segment_data,
+                method="closed_only",
+                prior_rate=prior_rate,
+                prior_strength=prior_strength,
+                partial_pooler=partial_pooler,
+            )
             stats.conversion_rate = conv_rate_incl
-            stats.conversion_confidence = conv_stats_incl['confidence']
+            stats.conversion_confidence = conv_stats_incl["confidence"]
             stats.inclusive_conversion_rate = conv_rate_incl
             stats.closed_conversion_rate = conv_rate_closed
-            stats.wins = conv_stats_incl['wins']
-            stats.losses = conv_stats_incl['losses']
-            stats.open = conv_stats_incl['open']
-            
-            if 'new_enquiry_value' in segment_data.columns:
-                stats.average_value = float(segment_data['new_enquiry_value'].mean())
-        
+            stats.conversion_posterior_mean = conv_stats_closed.get("posterior_mean")
+            stats.conversion_posterior_lower = conv_stats_closed.get("posterior_lower")
+            stats.conversion_posterior_upper = conv_stats_closed.get("posterior_upper")
+            stats.conversion_shrinkage_weight = conv_stats_closed.get("shrinkage_weight")
+            stats.wins = conv_stats_incl["wins"]
+            stats.losses = conv_stats_incl["losses"]
+            stats.open = conv_stats_incl["open"]
+
+            if "new_enquiry_value" in segment_data.columns:
+                stats.average_value = float(segment_data["new_enquiry_value"].mean())
         return stats
-    
+
     def analyze_project(
         self,
         project: ProjectFeatures,
@@ -651,44 +716,64 @@ class NumericBaseline:
         segment_keys: List[str],
         backoff_tier: int,
         global_data: Optional[pd.DataFrame] = None,
-        prior_strength: int = 20
+        prior_strength: int = 20,
     ) -> NumericPredictions:
         predictions = NumericPredictions()
 
-        prior_rate, global_closed_n = self._compute_global_closed_prior(global_data) if global_data is not None else (None, 0)
+        prior_rate, global_closed_n = (
+            self._compute_global_closed_prior(global_data)
+            if global_data is not None
+            else (None, 0)
+        )
         use_prior_rate = prior_rate if (prior_rate is not None and global_closed_n > 0) else None
         use_prior_strength = prior_strength if use_prior_rate is not None else None
+
+        pooler = HierarchicalBayes()
+        pooler.fit_from_frame(
+            global_data if global_data is not None and not global_data.empty else segment_data
+        )
 
         gestation_days, gest_stats = self.calculate_gestation_baseline(segment_data)
         if not gestation_days and global_data is not None and not global_data.empty:
             g2, gs2 = self.calculate_gestation_baseline(global_data)
-            gestation_days, gest_stats = (g2, gs2) if g2 else (None, {'confidence': 0})
+            gestation_days, gest_stats = (g2, gs2) if g2 else (None, {"confidence": 0})
         if gestation_days:
             predictions.expected_gestation_days = gestation_days
-            predictions.gestation_confidence = gest_stats['confidence']
+            predictions.gestation_confidence = gest_stats["confidence"]
             predictions.gestation_range = {
-                'p25': gest_stats.get('p25'),
-                'p75': gest_stats.get('p75')
+                "p25": gest_stats.get("p25"),
+                "p75": gest_stats.get("p75"),
             }
 
-        # Conversion: inclusive (closed-won / all) is the main signal; closed-only retained as reference
-        conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(segment_data, method='inclusive')
-        conv_rate_closed, conv_stats_closed = self.calculate_conversion_rate(
-            segment_data, method='closed_only',
-            prior_rate=use_prior_rate, prior_strength=use_prior_strength
+        conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(
+            segment_data, method="inclusive"
         )
-        predictions.expected_conversion_rate = conv_rate_incl
-        predictions.conversion_confidence = conv_stats_incl['confidence']
-        predictions.conversion_method = 'inclusive'
+        conv_rate_closed, conv_stats_closed = self.calculate_conversion_rate(
+            segment_data,
+            method="closed_only",
+            prior_rate=use_prior_rate,
+            prior_strength=use_prior_strength,
+            partial_pooler=pooler,
+        )
+        posterior_mean = conv_stats_closed.get("posterior_mean")
+        if posterior_mean is not None:
+            predictions.expected_conversion_rate = posterior_mean
+            predictions.conversion_confidence = conv_stats_closed.get(
+                "confidence", conv_stats_incl["confidence"]
+            )
+            predictions.conversion_method = "hierarchical_closed"
+        else:
+            predictions.expected_conversion_rate = conv_rate_incl
+            predictions.conversion_confidence = conv_stats_incl["confidence"]
+            predictions.conversion_method = "inclusive"
 
-        # Rating
         project_metrics = {
-            'conversion_rate': predictions.expected_conversion_rate,
-            'expected_gestation_days': predictions.expected_gestation_days,
-            'new_enquiry_value': project.new_enquiry_value,
-            'account': project.account,
-            'product_type': project.product_type,
-            'value_band': project.value_band
+            "conversion_rate": predictions.expected_conversion_rate,
+            "expected_gestation_days": predictions.expected_gestation_days,
+            "new_enquiry_value": project.new_enquiry_value,
+            "account": project.account,
+            "product_type": project.product_type,
+            "value_band": project.value_band,
         }
         rating, rating_components = self.calculate_rating_score(project_metrics, segment_data)
         predictions.rating_score = rating
@@ -699,6 +784,8 @@ class NumericBaseline:
             segment_keys,
             backoff_tier,
             prior_rate=use_prior_rate,
-            prior_strength=use_prior_strength
+            prior_strength=use_prior_strength,
+            partial_pooler=pooler,
         )
+
         return predictions

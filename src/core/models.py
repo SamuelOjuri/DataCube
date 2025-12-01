@@ -56,18 +56,20 @@ class ProjectFeatures(BaseModel):
             return float(clean) if clean else 0.0
         return float(value)
 
+# SegmentStatistics definition
+
 class SegmentStatistics(BaseModel):
     """Statistics for a data segment"""
     segment_keys: List[str] = Field(default_factory=list)
     sample_size: int = Field(ge=0)
     backoff_tier: int = Field(ge=0, le=5)
-    
+
     # Gestation statistics
     gestation_median: Optional[float] = None
     gestation_p25: Optional[float] = None
     gestation_p75: Optional[float] = None
     gestation_count: int = 0
-    
+
     # Conversion statistics
     wins: int = 0
     losses: int = 0
@@ -75,10 +77,17 @@ class SegmentStatistics(BaseModel):
     # Use closed-only as primary conversion_rate
     conversion_rate: Optional[float] = Field(default=None, ge=0, le=1)
     conversion_confidence: float = Field(default=0.0, ge=0, le=1)
+
     # Report both rates
     inclusive_conversion_rate: Optional[float] = Field(default=None, ge=0, le=1)
     closed_conversion_rate: Optional[float] = Field(default=None, ge=0, le=1)
-    
+
+    # Posterior statistics
+    conversion_posterior_mean: Optional[float] = Field(default=None, ge=0, le=1)
+    conversion_posterior_lower: Optional[float] = Field(default=None, ge=0, le=1)
+    conversion_posterior_upper: Optional[float] = Field(default=None, ge=0, le=1)
+    conversion_shrinkage_weight: Optional[float] = Field(default=None, ge=0, le=1)
+
     # Additional metrics
     average_value: Optional[float] = None
     account_win_rate: Optional[float] = None

@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from ..database.supabase_client import SupabaseClient
 from ..services.analysis_service import AnalysisService
+from ..services.ml_analysis_service import MLAnalysisService
 from ..services.monday_update_service import MondayUpdateService
 from ..tasks.pipeline import rehydrate_projects_by_ids
 
@@ -108,6 +109,14 @@ class TaskQueue:
             raise RuntimeError(f"Analysis failed for project {project_id}: {result.get('error')}")
 
         self.logger.info("Analysis stored | project=%s", project_id)
+
+        # Shadow Mode: Run ML Analysis
+        try:
+            ml_service = MLAnalysisService()
+            ml_service.analyze_and_store(project_id)
+        except Exception as e:
+            self.logger.warning("Shadow ML analysis failed for %s: %s", project_id, e)
+
         self.enqueue_push_to_monday(project_id, reason="analysis_update")
 
     async def _handle_push(self, task: QueueTask) -> None:
