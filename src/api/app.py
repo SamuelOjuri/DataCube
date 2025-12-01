@@ -23,7 +23,7 @@ _scheduler = AsyncIOScheduler()
 async def _scheduled_delta_rehydrate() -> None:
     log = logging.getLogger("scheduler.delta_rehydrate")
     try:
-        await rehydrate_delta(days_back=1, chunk_size=200, logger=log)
+        await rehydrate_delta(days_back=3, chunk_size=200, logger=log)
     except Exception:  # noqa: BLE001
         log.exception("Delta rehydrate job failed")
 
@@ -31,7 +31,7 @@ async def _scheduled_delta_rehydrate() -> None:
 async def _scheduled_recent_rehydrate() -> None:
     log = logging.getLogger("scheduler.recent_rehydrate")
     try:
-        await rehydrate_recent(days_back=2, chunk_size=200, logger=log)
+        await rehydrate_recent(days_back=3, chunk_size=200, logger=log)
     except Exception:
         log.exception("Recent rehydrate job failed")
 

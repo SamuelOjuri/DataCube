@@ -1369,7 +1369,7 @@ class RecentRehydrationManager:
 async def rehydrate_delta(
     *,
     since: Optional[datetime] = None,
-    days_back: int = 7,
+    days_back: int = 3,
     chunk_size: int = 100,
     logger: Optional[logging.Logger] = None,
 ) -> None:
@@ -1383,7 +1383,7 @@ async def rehydrate_delta(
 async def rehydrate_recent(
     *,
     since: Optional[datetime] = None,
-    days_back: int = 7,
+    days_back: int = 3,
     chunk_size: int = 100,
     logger: Optional[logging.Logger] = None,
 ) -> None:
