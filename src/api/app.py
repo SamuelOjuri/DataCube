@@ -203,6 +203,3 @@ async def _shutdown() -> None:
     if _scheduler.running:
         _scheduler.shutdown(wait=False)
     await get_task_queue().stop()
-
-
-
