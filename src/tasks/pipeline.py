@@ -69,6 +69,62 @@ class DeltaRehydrationManager:
         self.project_placeholders_seeded = 0
         self._hidden_rows_by_prefix: Dict[str, List[Dict]] = {}
 
+    async def _warm_hidden_cache_targeted(self, prefixes: Set[str]) -> None:
+        """
+        Targeted hidden warm-up for small prefix sets (create-only flow).
+        Uses contains_text query instead of crawling the entire hidden board.
+        """
+        if not prefixes:
+            self.logger.info("No prefixes supplied; skipping targeted hidden warm-up")
+            return
+
+        self.logger.info(
+            "Using targeted hidden lookup for %d prefixes: %s",
+            len(prefixes),
+            ", ".join(sorted(prefixes)),
+        )
+
+        column_ids = list(HIDDEN_ITEMS_COLUMNS.values())
+
+        try:
+            hidden_rows = self.monday.get_hidden_items_by_prefix(
+                board_id=HIDDEN_ITEMS_BOARD_ID,
+                prefixes=list(prefixes),
+                column_ids=column_ids,
+                limit=50,
+            )
+
+            if not hidden_rows:
+                self.logger.warning("No hidden items found for prefixes: %s", prefixes)
+                return
+
+            # Build prefix buckets for later use in _rehydrate_batches
+            prefix_buckets: Dict[str, List[Dict]] = {}
+            for row in hidden_rows:
+                name = (row.get("name") or "").strip()
+                prefix = self._leading_digits(name)
+                if prefix:
+                    prefix_buckets.setdefault(prefix, []).append(row)
+            self._hidden_rows_by_prefix = prefix_buckets
+
+            # Transform + upsert so Supabase stays in sync
+            hidden_data = self.sync_service._transform_for_hidden_table(hidden_rows)
+            if not hidden_data:
+                self.logger.warning("Hidden transform yielded no rows for prefixes: %s", prefixes)
+                return
+
+            updated = await self.sync_service._batch_upsert_hidden_items(hidden_data)
+            self.logger.info(
+                "Targeted hidden warm-up complete | prefixes=%d fetched=%d upserted=%d",
+                len(prefixes),
+                len(hidden_rows),
+                updated,
+            )
+        except Exception as exc:
+            self.logger.error("Targeted hidden warm-up failed: %s", exc)
+            # Fall back to the full crawl so the run can still proceed
+            await self._warm_hidden_cache(prefixes)
+
     async def run(self) -> None:
         self.logger.info("Starting delta rehydrate (since=%s)", self.since.date())
 
@@ -81,13 +137,19 @@ class DeltaRehydrationManager:
             return
 
         prefixes = {c.prefix for c in candidates if c.prefix}
+
         self.logger.info(
             "Discovered %d new Monday projects (%d unique prefixes)",
             len(candidates),
             len(prefixes),
         )
 
-        await self._warm_hidden_cache(prefixes)
+        if prefixes:
+            if len(prefixes) <= 50:
+                await self._warm_hidden_cache_targeted(prefixes)
+            else:
+                await self._warm_hidden_cache(prefixes)
+
         await self._rehydrate_batches(candidates)
 
         self.logger.info(
@@ -732,7 +794,16 @@ class RecentRehydrationManager:
             len(prefixes),
         )
 
-        await self._warm_hidden_cache(prefixes)
+        # await self._warm_hidden_cache(prefixes)
+        # await self._rehydrate_batches(candidates)
+
+        # Use targeted lookup for small batches; fall back to full crawl otherwise
+        if prefixes:
+            if len(prefixes) <= 50:
+                await self._warm_hidden_cache_targeted(prefixes)
+            else:
+                await self._warm_hidden_cache(prefixes)
+
         await self._rehydrate_batches(candidates)
 
         self.logger.info(
@@ -819,6 +890,55 @@ class RecentRehydrationManager:
             if log_id:
                 self.supabase.update_sync_log(log_id, "failed", error=str(exc))
             raise
+
+    async def _warm_hidden_cache_targeted(self, prefixes: Set[str]) -> None:
+        """
+        Targeted hidden cache warm-up for small prefix sets (webhook triggers).
+        Uses filtered GraphQL query instead of full board scan.
+        """
+        if not prefixes:
+            self.logger.info("No prefixes supplied; skipping targeted hidden warm-up")
+            return
+
+        self.logger.info("Using targeted hidden lookup for %d prefixes: %s", len(prefixes), prefixes)
+
+        column_ids = list(HIDDEN_ITEMS_COLUMNS.values())
+
+        try:
+            # Query hidden items directly by prefix using contains_text
+            hidden_rows = self.monday.get_hidden_items_by_prefix(
+                board_id=HIDDEN_ITEMS_BOARD_ID,
+                prefixes=list(prefixes),
+                column_ids=column_ids,
+                limit=50,
+            )
+
+            if not hidden_rows:
+                self.logger.warning("No hidden items found for prefixes: %s", prefixes)
+                return
+
+            self.hidden_rows_fetched = len(hidden_rows)
+            self.logger.info("Fetched %d hidden items for prefixes", len(hidden_rows))
+
+            # Transform and populate caches
+            hidden_data = self.sync_service._transform_for_hidden_table(hidden_rows)
+            if hidden_data:
+                updated = await self.sync_service._batch_upsert_hidden_items(hidden_data)
+                self.hidden_rows_upserted = updated
+                self.logger.info(
+                    "Targeted hidden warm-up complete | prefixes=%d fetched=%d upserted=%d",
+                    len(prefixes),
+                    self.hidden_rows_fetched,
+                    updated,
+                )
+            else:
+                self.logger.warning("Hidden transform yielded no rows for prefixes: %s", prefixes)
+
+        except Exception as exc:
+            self.logger.error("Targeted hidden warm-up failed: %s", exc)
+            # Fall back to full scan on error
+            self.logger.info("Falling back to full hidden board scan")
+            await self._warm_hidden_cache(prefixes)
 
     async def _collect_hidden_ids(self, prefixes: Set[str], log_id: Optional[str]) -> Dict[str, Any]:
         from collections import deque
@@ -1328,8 +1448,17 @@ async def rehydrate_projects_by_ids(
     )
     prefixes = {c.prefix for c in candidates if c.prefix}
     if prefixes:
-        await manager._warm_hidden_cache(prefixes)
+        # Use targeted lookup for small sets (typical webhook triggers)
+        if len(prefixes) <= 50:
+            await manager._warm_hidden_cache_targeted(prefixes)
+        else:
+            await manager._warm_hidden_cache(prefixes)
     await manager._rehydrate_batches(candidates)
+    # prefixes = {c.prefix for c in candidates if c.prefix}
+    # if prefixes:
+    #     await manager._warm_hidden_cache(prefixes)
+    # await manager._rehydrate_batches(candidates)
+
 
 
 def backfill_llm(
@@ -1716,6 +1845,3 @@ __all__ = [
     "backfill_llm",
     "sync_projects_to_monday",
 ]
-
-
-

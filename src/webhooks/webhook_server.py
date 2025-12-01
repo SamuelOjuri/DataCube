@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -566,7 +567,9 @@ async def handle_item_created(
         item_data = result['data']['items'][0]
 
         if board_id == PARENT_BOARD_ID:
-            transformed = sync_service._transform_for_projects_table([item_data])
+            # Normalize the item before transformation
+            normalized_item = sync_service._normalize_monday_item(item_data)
+            transformed = sync_service._transform_for_projects_table([normalized_item])
             if transformed:
                 supabase_client.upsert_projects(transformed)
                 logger.info("Upserted project: %s", transformed[0].get("monday_id"))
