@@ -363,6 +363,91 @@ class MondayClient:
                 subitems.append(s)
         return subitems
 
+    def get_hidden_items_by_prefix(
+        self,
+        board_id: str,
+        prefixes: List[str],
+        column_ids: List[str],
+        limit: int = 100,
+    ) -> List[Dict]:
+        """
+        Query hidden items board by name prefix using items_page with contains_text.
+        
+        Args:
+            board_id: Hidden items board ID
+            prefixes: List of prefixes to search for (e.g., ["17701", "17702"])
+            column_ids: Column IDs to fetch in the response
+            limit: Max items per prefix query
+            
+        Returns:
+            List of matching items with column values
+        """
+        all_items = []
+        column_ids_str = json.dumps(column_ids)  # ["col1", "col2", ...]
+        
+        for prefix in prefixes:
+            query = f"""
+            query GetHiddenByPrefix(
+                $board_id: ID!
+                $columnIds: [String!]
+                $compare_value: CompareValue!
+                $limit: Int!
+            ) {{
+                boards(ids: [$board_id]) {{
+                    items_page(
+                        limit: $limit
+                        query_params: {{
+                            rules: [
+                                {{
+                                    column_id: "name"
+                                    operator: contains_text
+                                    compare_value: $compare_value
+                                }}
+                            ]
+                        }}
+                    ) {{
+                        cursor
+                        items {{
+                            id
+                            name
+                            column_values(ids: $columnIds) {{
+                                id
+                                text
+                                value
+                                type
+                                ... on FormulaValue {{
+                                    display_value
+                                }}
+                                ... on MirrorValue {{
+                                    display_value
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+            }}
+            """
+            
+            variables = {
+                "board_id": board_id,
+                "columnIds": column_ids,
+                "compare_value": [prefix],
+                "limit": limit,
+            }
+            
+            try:
+                result = self.execute_query(query, variables)
+                boards = result.get("data", {}).get("boards", [])
+                if boards:
+                    items = boards[0].get("items_page", {}).get("items", [])
+                    all_items.extend(items)
+                time.sleep(RATE_LIMIT_DELAY)
+            except Exception as e:
+                logger.warning(f"Failed to query hidden items for prefix {prefix}: {e}")
+                continue
+        
+        return all_items
+
     def get_items_by_ids(
         self,
         item_ids: List[str],
