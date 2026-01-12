@@ -1,4 +1,24 @@
-<!-- 3d1885f5-7a6b-4e40-984e-ec76275fc751 640aa294-60b1-4a14-a601-d5f89b54e52a -->
+---
+name: Webhook Analysis Automation Plan
+overview: ""
+todos:
+  - id: b9e38a9d-3d6a-489a-ba97-8a370d90e843
+    content: Confirm mirrors and numeric fields feeding AnalysisService are populated via sync + Supabase checks.
+    status: pending
+  - id: a2b8d285-ae42-463e-b2d8-d65023d6cb0b
+    content: Adjust webhook handler column triggers and logging for reliable AnalysisService execution.
+    status: pending
+  - id: 0afae6cb-2650-49a1-b428-f19fe95f05df
+    content: Configure env vars and deploy FastAPI webhook server with challenge/HMAC validation.
+    status: pending
+  - id: 53fb9095-0ecd-4a4d-af45-9c8a80d55025
+    content: Use integration token to create Monday webhooks and verify challenge + logging.
+    status: pending
+  - id: 770bf883-0802-4f17-a3e0-25be2b6909c4
+    content: Execute sample board events and confirm analysis writes to Supabase and Monday mirrors.
+    status: pending
+---
+
 # Webhook Analysis Automation Plan
 
 ## 1. Validate Data Foundations
@@ -37,11 +57,3 @@
 - deploy-secure-webhook: Configure environment + run FastAPI listener with proper challenge handling.
 - provision-board-webhooks: Register Monday webhooks using integration token and verify challenge handshake.
 - run-end-to-end-test: Simulate board updates and confirm analysis results propagate.
-
-### To-dos
-
-- [ ] Confirm mirrors and numeric fields feeding AnalysisService are populated via sync + Supabase checks.
-- [ ] Adjust webhook handler column triggers and logging for reliable AnalysisService execution.
-- [ ] Configure env vars and deploy FastAPI webhook server with challenge/HMAC validation.
-- [ ] Use integration token to create Monday webhooks and verify challenge + logging.
-- [ ] Execute sample board events and confirm analysis writes to Supabase and Monday mirrors.

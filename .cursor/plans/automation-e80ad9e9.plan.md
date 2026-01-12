@@ -1,4 +1,24 @@
-<!-- e80ad9e9-8d70-48cf-afc5-eb49215f4709 6c968dd9-82ca-4053-8b0e-5c5fb8af343c -->
+---
+name: Post Webhook Automation Rollout Plan
+overview: ""
+todos:
+  - id: 4d07cf7e-c122-4785-911f-55261dffa8a6
+    content: Move shared logic from manual scripts into reusable helpers under src/tasks/.
+    status: pending
+  - id: 9d5c657c-1c41-43ec-a736-0c5ffd3514db
+    content: Implement queue worker that consumes tasks and runs rehydrate, analysis, and Monday sync helpers.
+    status: pending
+  - id: bd0dd8ef-2b35-419d-9f6b-df6004d8e336
+    content: Update webhook handlers to enqueue rehydrate/analyze jobs for subitem and hidden updates.
+    status: pending
+  - id: b836450c-1e62-4973-bb44-60669f8c4454
+    content: Configure APScheduler (or equivalent) to run periodic catch-up jobs invoking the new helpers.
+    status: pending
+  - id: 90f751eb-8d88-4d86-9125-1b3a73ce6195
+    content: Add Supabase job state table/migrations and document automation & operations in docs.
+    status: pending
+---
+
 # Post Webhook Automation Rollout Plan
 
 1. **Refactor Scripts into Library Tasks**  
@@ -30,11 +50,3 @@
 
 - Document queue setup, scheduler configuration, and operational runbooks in `docs/automation.md`.  
 - Update README to point operators to the new automated flow and remove manual script instructions.
-
-### To-dos
-
-- [ ] Move shared logic from manual scripts into reusable helpers under src/tasks/.
-- [ ] Implement queue worker that consumes tasks and runs rehydrate, analysis, and Monday sync helpers.
-- [ ] Update webhook handlers to enqueue rehydrate/analyze jobs for subitem and hidden updates.
-- [ ] Configure APScheduler (or equivalent) to run periodic catch-up jobs invoking the new helpers.
-- [ ] Add Supabase job state table/migrations and document automation & operations in docs.

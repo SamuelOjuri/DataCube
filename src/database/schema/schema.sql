@@ -429,16 +429,25 @@ CREATE TABLE IF NOT EXISTS ml_analysis_results (
     -- Survival Model Outputs (Time-to-Event probabilities)
     win_prob_30d NUMERIC(4, 3),  -- Probability of winning within 30 days from now
     win_prob_90d NUMERIC(4, 3),  -- Probability of winning within 90 days from now
+    win_prob_270d NUMERIC(4, 3),  -- Probability of winning within 270 days (validated)
     eventual_win_prob NUMERIC(4, 3), -- Probability of ever winning (from split-population/cure models or hierarchy)
 
     -- Quantile Regression Outputs (Gestation estimates)
     gestation_p25 INTEGER,       -- Optimistic timeline
     gestation_p50 INTEGER,       -- Median timeline
     gestation_p75 INTEGER,       -- Conservative timeline
-    
+
+    -- Actual Gestation Days (Observed)
+    actual_gestation_days INTEGER,   --Observed gestation (days) for won projects; NULL for censored/open/lost
+    event_observed INTEGER,         -- 1 if the project won; 0 if it was censored/open/lost
+
     -- Aggregated Score (ML-derived)
     rating_score INTEGER CHECK (rating_score >= 1 AND rating_score <= 100),
     
+    -- Prediction Confidence
+    cycle_category TEXT,  -- 'short', 'medium', 'long'
+    confidence_note TEXT,  -- Human-readable note about prediction confidence
+
     -- Metadata for Model Management
     model_version TEXT,          -- e.g., "v1.0-survival-cox"
     features_used JSONB,         -- Snapshot of features at inference time

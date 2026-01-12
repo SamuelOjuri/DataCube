@@ -3,6 +3,26 @@ CLI script to train the censor-aware survival model in shadow mode.
 
 Usage:
     python -m scripts.train_survival --lookback-days 1095 --val-size 0.2
+
+#######
+
+### Survival Model Usage Examples:
+
+# Train with default settings (includes new temporal features)
+python -m scripts.train_survival
+
+# Train with feature interactions enabled
+python -m scripts.train_survival --enable-interactions
+
+# Tune hyperparameters first
+python -m scripts.tune_survival --n-folds 5
+
+# Train with tuned parameters
+python -m scripts.train_survival --params-file data/tuning/best_survival_params.json
+
+# Evaluate with backtest mode (default)
+python -m scripts.evaluate_survival --snapshot data/processed/survival_training_*.csv --model data/models/survival_*.pkl
+
 """
 
 
@@ -16,7 +36,6 @@ from pathlib import Path
 from typing import Tuple
 
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
 from src.core.ml.dataset import FeatureLoader
 from src.core.ml.survival import SurvivalModel
@@ -42,17 +61,36 @@ def _prepare_dataset(df: pd.DataFrame, min_duration: int) -> pd.DataFrame:
     return cleaned
 
 
-def _train_val_split(df: pd.DataFrame, val_size: float, seed: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def _temporal_split(df: pd.DataFrame, val_size: float) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split by date_created: older projects for training, recent for validation.
+    
+    This simulates production where we predict on future projects, providing
+    a more realistic estimate of model performance than random splitting.
+    
+    Args:
+        df: DataFrame with date_created column.
+        val_size: Fraction of data to use for validation (most recent projects).
+    
+    Returns:
+        Tuple of (train_df, val_df).
+    """
     if val_size <= 0 or val_size >= 1:
         return df, pd.DataFrame()
-    stratify_col = df["event_observed"].astype(int) if df["event_observed"].nunique() > 1 else None
-    train_df, val_df = train_test_split(
-        df,
-        test_size=val_size,
-        random_state=seed,
-        stratify=stratify_col,
-    )
-    return train_df.reset_index(drop=True), val_df.reset_index(drop=True)
+    
+    # Ensure date_created is datetime
+    df = df.copy()
+    df["date_created"] = pd.to_datetime(df["date_created"], errors="coerce")
+    
+    # Sort by date_created (oldest first)
+    df_sorted = df.sort_values("date_created").reset_index(drop=True)
+    
+    # Split: older projects for training, recent for validation
+    split_idx = int(len(df_sorted) * (1 - val_size))
+    train_df = df_sorted.iloc[:split_idx].reset_index(drop=True)
+    val_df = df_sorted.iloc[split_idx:].reset_index(drop=True)
+    
+    return train_df, val_df
 
 
 def main() -> None:
@@ -79,7 +117,39 @@ def main() -> None:
         default="scripts.evaluate_survival",
         help="Module path for the evaluation CLI.",
     )
+    parser.add_argument(
+        "--params-file",
+        type=str,
+        default=None,
+        help="JSON file with tuned hyperparameters (overrides CLI args for penalizer, l1_ratio, category_min_frequency).",
+    )
+    parser.add_argument(
+        "--enable-interactions",
+        action="store_true",
+        default=False,
+        help="Enable feature interactions (e.g., value_band x type) to capture non-linear relationships.",
+    )
     args = parser.parse_args()
+
+    # Load tuned hyperparameters from file if provided
+    if args.params_file:
+        params_path = Path(args.params_file)
+        if params_path.exists():
+            with params_path.open("r", encoding="utf-8") as fh:
+                tuned_params = json.load(fh)
+            logger.info("Loaded tuned parameters from %s", params_path)
+            # Override CLI args with tuned values
+            if "penalizer" in tuned_params:
+                args.penalizer = tuned_params["penalizer"]
+                logger.info("  penalizer: %.4f", args.penalizer)
+            if "l1_ratio" in tuned_params:
+                args.l1_ratio = tuned_params["l1_ratio"]
+                logger.info("  l1_ratio: %.2f", args.l1_ratio)
+            if "category_min_frequency" in tuned_params:
+                args.category_min_frequency = tuned_params["category_min_frequency"]
+                logger.info("  category_min_frequency: %d", args.category_min_frequency)
+        else:
+            logger.warning("Params file not found: %s (using CLI defaults)", params_path)
 
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     snapshot_dir = Path(args.snapshot_dir)
@@ -95,7 +165,7 @@ def main() -> None:
         raise SystemExit("No historical data returned; aborting.")
 
     dataset = _prepare_dataset(raw_df, min_duration=args.min_duration)
-    train_df, val_df = _train_val_split(dataset, val_size=args.val_size, seed=args.random_state)
+    train_df, val_df = _temporal_split(dataset, val_size=args.val_size)
 
     logger.info("Training rows: %s | Validation rows: %s", len(train_df), len(val_df))
 
@@ -104,6 +174,7 @@ def main() -> None:
         l1_ratio=args.l1_ratio,
         max_steps=args.max_steps,
         category_min_frequency=args.category_min_frequency,
+        enable_interactions=args.enable_interactions,
     )
 
     train_metrics = model.fit(
@@ -131,11 +202,14 @@ def main() -> None:
         "snapshot_path": str(snapshot_path),
         "lookback_days": args.lookback_days,
         "val_size": args.val_size,
+        "split_method": "temporal",  # Uses date_created ordering instead of random split
         "min_duration": args.min_duration,
         "penalizer": args.penalizer,
         "l1_ratio": args.l1_ratio,
         "max_steps": args.max_steps,
         "category_min_frequency": args.category_min_frequency,
+        "enable_interactions": args.enable_interactions,
+        "params_file": args.params_file,  # Track if tuned params were used
         "timestamp_utc": timestamp,
         "train_concordance": train_metrics.get("c_index_train"),
         "val_concordance": val_c_index,
@@ -158,6 +232,7 @@ def main() -> None:
             str(args.val_size),
             "--output-dir",
             str(OUTPUTS_DIR / "analysis"),
+            "--multi-horizon",  # Evaluate multiple horizons for comprehensive analysis
         ]
         logger.info("Running evaluator: %s", " ".join(eval_cmd))
         completed = subprocess.run(eval_cmd, check=True, capture_output=True, text=True)
@@ -165,7 +240,7 @@ def main() -> None:
         metadata["evaluation_report"] = evaluation_output.get("report_path")
         metadata["evaluation_metrics"] = {
             k: evaluation_output.get(k)
-            for k in ["train_c_index", "val_c_index", "roc_auc", "pr_auc", "dataset_hash"]
+            for k in ["train_c_index", "val_c_index", "roc_auc", "pr_auc", "dataset_hash", "multi_horizon_results"]
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("Evaluation script failed: %s", exc)

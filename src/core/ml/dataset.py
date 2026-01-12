@@ -193,6 +193,110 @@ class FeatureLoader:
 
         return dataset
 
+    def build_aft_frame(
+        self,
+        *,
+        lookback_days: int = 1825,
+        min_gestation_days: int = 0,
+        max_gestation_days: Optional[int] = None,
+        snapshot_path: Optional[Path] = None,
+    ) -> pd.DataFrame:
+        """
+        Produce a dataset for CatBoost AFT survival training.
+        
+        Unlike build_gestation_frame which filters to events only,
+        this includes both events (won) and censored (open/lost) rows,
+        which is required for survival analysis.
+        
+        Args:
+            lookback_days: Historical window for training data.
+            min_gestation_days: Minimum gestation for events (default 0).
+            max_gestation_days: Optional upper cap on gestation.
+            snapshot_path: Optional path to save CSV snapshot.
+            
+        Returns:
+            DataFrame with all required survival columns for AFT training.
+        """
+        df = self.fetch_historical_data(lookback_days=lookback_days)
+        if df.empty:
+            logger.warning("AFT frame: no historical data available.")
+            return df
+        
+        # Keep both events and censored rows for survival analysis
+        dataset = df.copy()
+        
+        # Ensure survival columns exist
+        required_cols = [
+            "event_observed",
+            "is_censored",
+            "time_open_days",
+            "duration_days",
+            "gestation_target",
+            "date_created",
+            "status_category",
+        ]
+        
+        for col in required_cols:
+            if col not in dataset.columns:
+                logger.warning("AFT frame: missing required column '%s'", col)
+                if col in ["event_observed", "is_censored"]:
+                    dataset[col] = 0
+                elif col in ["time_open_days", "duration_days", "gestation_target"]:
+                    dataset[col] = 0.0
+                else:
+                    dataset[col] = None
+        
+        # Coerce numeric survival columns
+        dataset["gestation_target"] = pd.to_numeric(
+            dataset["gestation_target"], errors="coerce"
+        ).fillna(0.0)
+        dataset["time_open_days"] = pd.to_numeric(
+            dataset["time_open_days"], errors="coerce"
+        ).fillna(0.0)
+        dataset["duration_days"] = pd.to_numeric(
+            dataset["duration_days"], errors="coerce"
+        ).fillna(0.0)
+        dataset["event_observed"] = pd.to_numeric(
+            dataset["event_observed"], errors="coerce"
+        ).fillna(0).astype(int)
+        
+        # Apply gestation constraints to events only
+        if min_gestation_days > 0:
+            event_mask = dataset["event_observed"] == 1
+            invalid_events = event_mask & (dataset["gestation_target"] < min_gestation_days)
+            dataset = dataset[~invalid_events]
+        
+        if max_gestation_days:
+            event_mask = dataset["event_observed"] == 1
+            dataset.loc[event_mask, "gestation_target"] = dataset.loc[
+                event_mask, "gestation_target"
+            ].clip(upper=max_gestation_days)
+        
+        # Ensure categorical columns exist
+        for col in GESTATION_CATEGORY_COLUMNS:
+            if col not in dataset.columns:
+                dataset[col] = "Unknown"
+        
+        # Ensure numeric columns exist
+        for col in GESTATION_NUMERIC_COLUMNS:
+            if col not in dataset.columns:
+                dataset[col] = 0.0
+        
+        dataset = dataset.reset_index(drop=True)
+        
+        if snapshot_path:
+            snapshot_path = Path(snapshot_path)
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            dataset.to_csv(snapshot_path, index=False)
+            logger.info(
+                "Wrote AFT training snapshot → %s (rows=%s, events=%s)",
+                snapshot_path,
+                len(dataset),
+                dataset["event_observed"].sum(),
+            )
+        
+        return dataset
+
     def prepare_features(self, project_dict: Dict[str, Any]) -> pd.DataFrame:
         """
         Prepare a single project for inference.
@@ -309,6 +413,10 @@ class FeatureLoader:
         df["gestation_target"] = pd.to_numeric(
             df.get("gestation_period"), errors="coerce"
         )
+        
+        # Treat 0 as missing (invalid data - gestation cannot be 0 days)
+        df.loc[df["gestation_target"] == 0, "gestation_target"] = np.nan
+        
         won_mask = df["event_observed"] == 1
         missing_gestation = won_mask & df["gestation_target"].isna()
         # Use observed duration as gestation if it's missing, but only for "won"

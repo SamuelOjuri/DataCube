@@ -2,7 +2,7 @@ import logging
 
 import pickle
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -23,8 +23,37 @@ class SurvivalModel:
     and aligned feature transformation for inference-time probability estimates.
     """
 
-    DEFAULT_CATEGORICAL_FEATURES = ["account", "type", "category", "product_type", "value_band"]
-    DEFAULT_NUMERIC_FEATURES = ["log_value", "new_enquiry_value", "time_open_days"]
+    DEFAULT_CATEGORICAL_FEATURES = [
+        "account",
+        "type",
+        "category",
+        "product_type",
+        "value_band",
+        "season",  # Derived from date_created month - safe, no leakage
+    ]
+    # Note: time_open_days is intentionally excluded from features to prevent data leakage.
+    # It is computed using the current timestamp which leaks future information during training.
+    # time_open_days IS used at inference time as current_age_col to condition predictions.
+    #
+    # Safe temporal features (derived from date_created only):
+    # - created_year: captures year-over-year trends
+    # - created_quarter: captures quarterly seasonality
+    # - created_month: captures monthly seasonality
+    DEFAULT_NUMERIC_FEATURES = [
+        "log_value",
+        "new_enquiry_value",
+        "created_year",      # Safe: derived from date_created
+        "created_quarter",   # Safe: derived from date_created
+        "created_month",     # Safe: derived from date_created
+    ]
+
+    # Default interaction pairs: (column_a, column_b)
+    # These capture value x category interactions that may be predictive
+    DEFAULT_INTERACTION_PAIRS: List[Tuple[str, str]] = [
+        ("value_band_XLarge (>100k)", "type_New Build"),
+        ("value_band_Large (40-100k)", "type_New Build"),
+        ("value_band_XLarge (>100k)", "type_Refurbishment"),
+    ]
 
     def __init__(
         self,
@@ -35,6 +64,8 @@ class SurvivalModel:
         l1_ratio: float = 0.0,
         max_steps: int = 512,
         category_min_frequency: int = 10,
+        enable_interactions: bool = False,
+        interaction_pairs: Optional[Sequence[Tuple[str, str]]] = None,
     ) -> None:
         self.categorical_features: List[str] = list(categorical_features or self.DEFAULT_CATEGORICAL_FEATURES)
         self.numeric_features: List[str] = list(numeric_features or self.DEFAULT_NUMERIC_FEATURES)
@@ -42,6 +73,10 @@ class SurvivalModel:
         self.l1_ratio = l1_ratio
         self.max_steps = max(1, int(max_steps))
         self.category_min_frequency = max(1, int(category_min_frequency))
+        self.enable_interactions = enable_interactions
+        self.interaction_pairs: List[Tuple[str, str]] = list(
+            interaction_pairs or self.DEFAULT_INTERACTION_PAIRS
+        )
         self.duration_col = "duration_days"
         self.event_col = "event_observed"
         self.training_columns: List[str] = []
@@ -123,8 +158,13 @@ class SurvivalModel:
 
         if fit_aft and WeibullAFTFitter is not None:
             try:
-                self.aft_model = WeibullAFTFitter()
-                self.aft_model.fit(model_df, duration_col=self.duration_col, event_col=self.event_col)
+                self.aft_model = WeibullAFTFitter(penalizer=0.05)  # try 0.01–0.1
+                self.aft_model.fit(
+                    model_df,
+                    duration_col=self.duration_col,
+                    event_col=self.event_col,
+                    robust=True,
+                )
             except Exception as exc:  # pragma: no cover
                 logger.warning("Failed to fit Weibull AFT model: %s", exc)
 
@@ -263,6 +303,8 @@ class SurvivalModel:
             "training_columns": self.training_columns,
             "metadata": self.metadata,
             "category_vocab": self.category_vocab,
+            "enable_interactions": self.enable_interactions,
+            "interaction_pairs": self.interaction_pairs,
         }
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,6 +329,8 @@ class SurvivalModel:
         self.training_columns = payload.get("training_columns", [])
         self.metadata = payload.get("metadata", {})
         self.category_vocab = payload.get("category_vocab", {})
+        self.enable_interactions = payload.get("enable_interactions", False)
+        self.interaction_pairs = payload.get("interaction_pairs", self.DEFAULT_INTERACTION_PAIRS)
         self.is_fitted = self.cph_model is not None
         logger.info("Loaded survival model artifact from %s", path)
 
@@ -327,8 +371,32 @@ class SurvivalModel:
             drop_first=False,
             dtype=float,
         )
+        
+        # Add interaction features if enabled
+        if self.enable_interactions:
+            encoded = self._add_interaction_features(encoded)
+        
         if record_training_columns or not self.training_columns:
             self.training_columns = list(encoded.columns)
         encoded = encoded.reindex(columns=self.training_columns, fill_value=0.0)
+        return encoded
+
+    def _add_interaction_features(self, encoded: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add interaction features between categorical/numeric columns.
+        
+        Interactions capture non-linear relationships, e.g., large projects
+        behave differently for New Build vs Refurbishment.
+        
+        Args:
+            encoded: One-hot encoded feature DataFrame.
+        
+        Returns:
+            DataFrame with additional interaction columns.
+        """
+        for col_a, col_b in self.interaction_pairs:
+            if col_a in encoded.columns and col_b in encoded.columns:
+                interaction_name = f"interaction_{col_a}_x_{col_b}"
+                encoded[interaction_name] = encoded[col_a] * encoded[col_b]
         return encoded
 

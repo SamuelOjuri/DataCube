@@ -49,11 +49,15 @@ TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 SURVIVAL_MODEL_PATH = DATA_DIR / "models" 
+AFT_MODEL_PATH = DATA_DIR / "models"  # CatBoost AFT model artifacts
 RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 CACHE_DIR = DATA_DIR / "cache"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 ANALYSIS_DIR = OUTPUTS_DIR / "analysis"
+
+# AFT is recommended for better accuracy (lower MAE, maintained C-index)
+GESTATION_MODEL_TYPE = os.getenv("GESTATION_MODEL_TYPE", "aft")
 
 # Webhook Configuration
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
