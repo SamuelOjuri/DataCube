@@ -28,15 +28,21 @@ PARENT BOARD SCHEMA:
                     },
                     {
                         "id": "dropdown_mknfpjbt",
-                        "title": "Zip Code",
+                        "title": "Postcode",
                         "type": "dropdown",
-                        "settings_str": "{\"limit_select\":false,\"hide_footer\":false,\"labels\":[{\"id\":1,\"name\":\"AB\"},{\"id\":2,\"name\":\"AL\"},{\"id\":3,\"name\":\"B\"},{\"id\":4,\"name\":\"BA\"},{\"id\":5,\"name\":\"BB\"},{\"id\":6,\"name\":\"BD\"},{\"id\":7,\"name\":\"BF\"},{\"id\":8,\"name\":\"BH\"},{\"id\":9,\"name\":\"BL\"},{\"id\":10,\"name\":\"BN\"},{\"id\":11,\"name\":\"BR\"},{\"id\":12,\"name\":\"BS\"},{\"id\":13,\"name\":\"BT\"},{\"id\":14,\"name\":\"CA\"},{\"id\":15,\"name\":\"CB\"},{\"id\":16,\"name\":\"CF\"},{\"id\":17,\"name\":\"CH\"},{\"id\":18,\"name\":\"CM\"},{\"id\":20,\"name\":\"CO\"},{\"id\":21,\"name\":\"CR\"},{\"id\":22,\"name\":\"CT\"},{\"id\":23,\"name\":\"CV\"},{\"id\":24,\"name\":\"CW\"},{\"id\":25,\"name\":\"DA\"},{\"id\":26,\"name\":\"DD\"},{\"id\":27,\"name\":\"DE\"},{\"id\":28,\"name\":\"DG\"},{\"id\":29,\"name\":\"DH\"},{\"id\":30,\"name\":\"DL\"},{\"id\":31,\"name\":\"DN\"},{\"id\":32,\"name\":\"DT\"},{\"id\":33,\"name\":\"DY\"},{\"id\":34,\"name\":\"E\"},{\"id\":35,\"name\":\"EC\"},{\"id\":36,\"name\":\"EH\"},{\"id\":37,\"name\":\"EN\"},{\"id\":38,\"name\":\"EX\"},{\"id\":39,\"name\":\"FK\"},{\"id\":40,\"name\":\"FY\"},{\"id\":41,\"name\":\"G\"},{\"id\":42,\"name\":\"GL\"},{\"id\":43,\"name\":\"GU\"},{\"id\":44,\"name\":\"GY\"},{\"id\":45,\"name\":\"HA\"},{\"id\":46,\"name\":\"HD\"},{\"id\":47,\"name\":\"HG\"},{\"id\":48,\"name\":\"HP\"},{\"id\":49,\"name\":\"HR\"},{\"id\":50,\"name\":\"HS\"},{\"id\":51,\"name\":\"HU\"},{\"id\":52,\"name\":\"HX\"},{\"id\":53,\"name\":\"IG\"},{\"id\":54,\"name\":\"IP\"},{\"id\":55,\"name\":\"IV\"},{\"id\":56,\"name\":\"KA\"},{\"id\":57,\"name\":\"KT\"},{\"id\":58,\"name\":\"KW\"},{\"id\":59,\"name\":\"KY\"},{\"id\":60,\"name\":\"L\"},{\"id\":61,\"name\":\"LA\"},{\"id\":62,\"name\":\"LD\"},{\"id\":63,\"name\":\"LE\"},{\"id\":64,\"name\":\"LL\"},{\"id\":65,\"name\":\"LN\"},{\"id\":66,\"name\":\"LS\"},{\"id\":67,\"name\":\"LU\"},{\"id\":68,\"name\":\"M\"},{\"id\":69,\"name\":\"ME\"},{\"id\":70,\"name\":\"MK\"},{\"id\":71,\"name\":\"ML\"},{\"id\":72,\"name\":\"N\"},{\"id\":73,\"name\":\"NE\"},{\"id\":74,\"name\":\"NG\"},{\"id\":75,\"name\":\"NN\"},{\"id\":76,\"name\":\"NP\"},{\"id\":77,\"name\":\"NR\"},{\"id\":78,\"name\":\"NW\"},{\"id\":79,\"name\":\"OL\"},{\"id\":80,\"name\":\"OX\"},{\"id\":81,\"name\":\"PA\"},{\"id\":82,\"name\":\"PE\"},{\"id\":83,\"name\":\"PH\"},{\"id\":84,\"name\":\"PL\"},{\"id\":85,\"name\":\"PO\"},{\"id\":86,\"name\":\"PR\"},{\"id\":87,\"name\":\"RG\"},{\"id\":88,\"name\":\"RH\"},{\"id\":89,\"name\":\"RM\"},{\"id\":90,\"name\":\"S\"},{\"id\":91,\"name\":\"SA\"},{\"id\":92,\"name\":\"SE\"},{\"id\":93,\"name\":\"SG\"},{\"id\":94,\"name\":\"SK\"},{\"id\":95,\"name\":\"SL\"},{\"id\":96,\"name\":\"SM\"},{\"id\":97,\"name\":\"SN\"},{\"id\":98,\"name\":\"SO\"},{\"id\":99,\"name\":\"SP\"},{\"id\":100,\"name\":\"SR\"},{\"id\":101,\"name\":\"SS\"},{\"id\":102,\"name\":\"ST\"},{\"id\":103,\"name\":\"SW\"},{\"id\":104,\"name\":\"SY\"},{\"id\":105,\"name\":\"TA\"},{\"id\":106,\"name\":\"TD\"},{\"id\":107,\"name\":\"TF\"},{\"id\":108,\"name\":\"TN\"},{\"id\":109,\"name\":\"TQ\"},{\"id\":110,\"name\":\"TR\"},{\"id\":111,\"name\":\"TS\"},{\"id\":112,\"name\":\"TW\"},{\"id\":113,\"name\":\"UB\"},{\"id\":114,\"name\":\"W\"},{\"id\":115,\"name\":\"WA\"},{\"id\":116,\"name\":\"WC\"},{\"id\":117,\"name\":\"WD\"},{\"id\":119,\"name\":\"WF\"},{\"id\":120,\"name\":\"WN\"},{\"id\":121,\"name\":\"WR\"},{\"id\":122,\"name\":\"WS\"},{\"id\":123,\"name\":\"WV\"},{\"id\":124,\"name\":\"YO\"},{\"id\":125,\"name\":\"ZE\"},{\"id\":126,\"name\":\"G2 5SH\"},{\"id\":127,\"name\":\"Outside UK\"},{\"id\":128,\"name\":\"JE\"},{\"id\":129,\"name\":\"IM\"},{\"id\":130,\"name\":\"td\"},{\"id\":131,\"name\":\"Y\"},{\"id\":132,\"name\":\"ZZ\"}],\"deactivated_labels\":[]}"
+                        "settings_str": "{\"limit_select\":false,\"hide_footer\":false,\"labels\":[{\"id\":1,\"name\":\"AB\"},{\"id\":2,\"name\":\"AL\"},{\"id\":3,\"name\":\"B\"},{\"id\":4,\"name\":\"BA\"},{\"id\":5,\"name\":\"BB\"},{\"id\":6,\"name\":\"BD\"},{\"id\":7,\"name\":\"BF\"},{\"id\":8,\"name\":\"B\"},{\"id\":9,\"name\":\"BL\"},{\"id\":10,\"name\":\"BN\"},{\"id\":11,\"name\":\"BR\"},{\"id\":12,\"name\":\"BS\"},{\"id\":13,\"name\":\"BT\"},{\"id\":14,\"name\":\"CA\"},{\"id\":15,\"name\":\"CB\"},{\"id\":16,\"name\":\"CF\"},{\"id\":17,\"name\":\"CH\"},{\"id\":18,\"name\":\"CM\"},{\"id\":20,\"name\":\"CO\"},{\"id\":21,\"name\":\"CR\"},{\"id\":22,\"name\":\"CT\"},{\"id\":23,\"name\":\"CV\"},{\"id\":24,\"name\":\"CW\"},{\"id\":25,\"name\":\"DA\"},{\"id\":26,\"name\":\"DD\"},{\"id\":27,\"name\":\"DE\"},{\"id\":28,\"name\":\"DG\"},{\"id\":29,\"name\":\"DH\"},{\"id\":30,\"name\":\"DL\"},{\"id\":31,\"name\":\"DN\"},{\"id\":32,\"name\":\"DT\"},{\"id\":33,\"name\":\"DY\"},{\"id\":34,\"name\":\"E\"},{\"id\":35,\"name\":\"EC\"},{\"id\":36,\"name\":\"EH\"},{\"id\":37,\"name\":\"EN\"},{\"id\":38,\"name\":\"EX\"},{\"id\":39,\"name\":\"FK\"},{\"id\":40,\"name\":\"FY\"},{\"id\":41,\"name\":\"G\"},{\"id\":42,\"name\":\"GL\"},{\"id\":43,\"name\":\"GU\"},{\"id\":44,\"name\":\"GY\"},{\"id\":45,\"name\":\"HA\"},{\"id\":46,\"name\":\"HD\"},{\"id\":47,\"name\":\"HG\"},{\"id\":48,\"name\":\"HP\"},{\"id\":49,\"name\":\"HR\"},{\"id\":50,\"name\":\"HS\"},{\"id\":51,\"name\":\"HU\"},{\"id\":52,\"name\":\"HX\"},{\"id\":53,\"name\":\"IG\"},{\"id\":54,\"name\":\"IP\"},{\"id\":55,\"name\":\"IV\"},{\"id\":56,\"name\":\"KA\"},{\"id\":57,\"name\":\"KT\"},{\"id\":58,\"name\":\"KW\"},{\"id\":59,\"name\":\"KY\"},{\"id\":60,\"name\":\"L\"},{\"id\":61,\"name\":\"LA\"},{\"id\":62,\"name\":\"LD\"},{\"id\":63,\"name\":\"LE\"},{\"id\":64,\"name\":\"LL\"},{\"id\":65,\"name\":\"LN\"},{\"id\":66,\"name\":\"LS\"},{\"id\":67,\"name\":\"LU\"},{\"id\":68,\"name\":\"M\"},{\"id\":69,\"name\":\"ME\"},{\"id\":70,\"name\":\"MK\"},{\"id\":71,\"name\":\"ML\"},{\"id\":72,\"name\":\"N\"},{\"id\":73,\"name\":\"NE\"},{\"id\":74,\"name\":\"NG\"},{\"id\":75,\"name\":\"NN\"},{\"id\":76,\"name\":\"NP\"},{\"id\":77,\"name\":\"NR\"},{\"id\":78,\"name\":\"NW\"},{\"id\":79,\"name\":\"OL\"},{\"id\":80,\"name\":\"OX\"},{\"id\":81,\"name\":\"PA\"},{\"id\":82,\"name\":\"PE\"},{\"id\":83,\"name\":\"PH\"},{\"id\":84,\"name\":\"PL\"},{\"id\":85,\"name\":\"PO\"},{\"id\":86,\"name\":\"PR\"},{\"id\":87,\"name\":\"RG\"},{\"id\":88,\"name\":\"RH\"},{\"id\":89,\"name\":\"RM\"},{\"id\":90,\"name\":\"S\"},{\"id\":91,\"name\":\"SA\"},{\"id\":92,\"name\":\"SE\"},{\"id\":93,\"name\":\"SG\"},{\"id\":94,\"name\":\"SK\"},{\"id\":95,\"name\":\"SL\"},{\"id\":96,\"name\":\"SM\"},{\"id\":97,\"name\":\"SN\"},{\"id\":98,\"name\":\"SO\"},{\"id\":99,\"name\":\"SP\"},{\"id\":100,\"name\":\"SR\"},{\"id\":101,\"name\":\"SS\"},{\"id\":102,\"name\":\"ST\"},{\"id\":103,\"name\":\"SW\"},{\"id\":104,\"name\":\"SY\"},{\"id\":105,\"name\":\"TA\"},{\"id\":106,\"name\":\"TD\"},{\"id\":107,\"name\":\"TF\"},{\"id\":108,\"name\":\"TN\"},{\"id\":109,\"name\":\"TQ\"},{\"id\":110,\"name\":\"TR\"},{\"id\":111,\"name\":\"TS\"},{\"id\":112,\"name\":\"TW\"},{\"id\":113,\"name\":\"UB\"},{\"id\":114,\"name\":\"W\"},{\"id\":115,\"name\":\"WA\"},{\"id\":116,\"name\":\"WC\"},{\"id\":117,\"name\":\"WD\"},{\"id\":119,\"name\":\"WF\"},{\"id\":120,\"name\":\"WN\"},{\"id\":121,\"name\":\"WR\"},{\"id\":122,\"name\":\"WS\"},{\"id\":123,\"name\":\"WV\"},{\"id\":124,\"name\":\"YO\"},{\"id\":125,\"name\":\"ZE\"},{\"id\":126,\"name\":\"G2 5SH\"},{\"id\":127,\"name\":\"Outside UK\"},{\"id\":128,\"name\":\"JE\"},{\"id\":129,\"name\":\"IM\"},{\"id\":130,\"name\":\"td\"},{\"id\":131,\"name\":\"Y\"},{\"id\":132,\"name\":\"ZZ\"},{\"id\":133,\"name\":\"D\"},{\"id\":134,\"name\":\"d\"}],\"deactivated_labels\":[]}"
                     },
                     {
                         "id": "person",
-                        "title": "Sales Representative",
+                        "title": "Sales Representative (Postcode)",
                         "type": "people",
                         "settings_str": "{}"
+                    },
+                    {
+                        "id": "lookup_mkx5yen0",
+                        "title": "Contact Rep No",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{\"lookup_mkx58fat\":true},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkx5jam2\"]},\"function\":\"max\"}"
                     },
                     {
                         "id": "dropdown__1",
@@ -72,7 +78,7 @@ PARENT BOARD SCHEMA:
                         "id": "dropdown_mkp0tjks",
                         "title": "Feedback",
                         "type": "dropdown",
-                        "settings_str": "{\"limit_select\":false,\"hide_footer\":false,\"labels\":[{\"id\":1,\"name\":\"No Feedback At Present\"},{\"id\":2,\"name\":\"Project Pushed Back\"},{\"id\":3,\"name\":\"Customer To Follow Up With Their Client\"},{\"id\":4,\"name\":\"Project On Hold\"},{\"id\":5,\"name\":\"Related To Other TP Reference\"},{\"id\":6,\"name\":\"Awaiting Funding\"},{\"id\":7,\"name\":\"Customer Down To Final 2/3\"},{\"id\":8,\"name\":\"Being Compared Against Competitor\"},{\"id\":9,\"name\":\"TP Advised To Look At Order Splits\"},{\"id\":10,\"name\":\"Customer Indicates That We Are Preferred Supplier\"},{\"id\":11,\"name\":\"Looks Positive\"},{\"id\":12,\"name\":\"Lost To Competitor\"},{\"id\":13,\"name\":\"Lost Due To Spec Change\"},{\"id\":14,\"name\":\"Won Via Other Ref\"},{\"id\":15,\"name\":\"Lost to non customer\"},{\"id\":16,\"name\":\"Was going to bauder and not now. unlikely to happen due to funding. Meeting to be happening before April with CP \\u0026 Fatra.\"},{\"id\":17,\"name\":\"awarded to another contractor\"},{\"id\":18,\"name\":\"Won Through Bauder\"},{\"id\":19,\"name\":\"Out to tender\"},{\"id\":20,\"name\":\"Q3 2025, Flatboard option issued as could go this route\"},{\"id\":21,\"name\":\"Secured for Nov 25 - will reprice later in year when goes back out to tender\"},{\"id\":22,\"name\":\"Change of spec/material\"},{\"id\":23,\"name\":\"Customer chasing their customer\"},{\"id\":24,\"name\":\"GB to follow up\"},{\"id\":25,\"name\":\"BDM to chase\"},{\"id\":26,\"name\":\"Permaroof PIR - Eddie to update\"},{\"id\":27,\"name\":\"RV to follow up with Kelly. issue JL drawing\"},{\"id\":28,\"name\":\"Dean to chase\"},{\"id\":29,\"name\":\"JL chasing Bauder\"},{\"id\":30,\"name\":\"Still to tender, JL to chase\"},{\"id\":31,\"name\":\"LM chasing\"},{\"id\":32,\"name\":\"JL chasing up\"},{\"id\":33,\"name\":\"Related to TP12436\"},{\"id\":34,\"name\":\"TP/JL speaking to Kelly\"},{\"id\":35,\"name\":\"Stuart to chase\"},{\"id\":36,\"name\":\"RV to send drawing. BD team to follow\"},{\"id\":37,\"name\":\"RV to send drawing\"},{\"id\":38,\"name\":\"RV to send drawing. Linked to other TP - 12462\"},{\"id\":39,\"name\":\"RV to issue drawing. Linked to other TP - 12417\"},{\"id\":40,\"name\":\"Dev to chase up. RV to issue drawing\"},{\"id\":41,\"name\":\"RV to issue drawing\"},{\"id\":42,\"name\":\"BDM to follow up. RV to issue drawing\"},{\"id\":43,\"name\":\"JL to review\"},{\"id\":44,\"name\":\"RV to issue drawing to JL\"},{\"id\":45,\"name\":\"RV to chase up with Moy\"},{\"id\":46,\"name\":\"JL to chase. RK sending drawing\"},{\"id\":47,\"name\":\"JL chasing Luke\"},{\"id\":48,\"name\":\"JL chasing Nick\"},{\"id\":49,\"name\":\"JL to follow up\"},{\"id\":50,\"name\":\"Luke to chase\"},{\"id\":51,\"name\":\"RV to issue drawing and quote\"},{\"id\":52,\"name\":\"Cancelled as a build\"},{\"id\":53,\"name\":\"No additional info\"},{\"id\":54,\"name\":\"RV to send design\"},{\"id\":55,\"name\":\"RV to send design to Allan at CCM\"},{\"id\":56,\"name\":\"RV sent design to Justin\"},{\"id\":57,\"name\":\"JL to chase his end (Stewart)\"},{\"id\":58,\"name\":\"JL to get Luke to chase this\"},{\"id\":59,\"name\":\"May 2024 latest, Axter have asked for a PIR version in May 2024\"},{\"id\":60,\"name\":\"Customer no longer works here-and said we will not recieve the order directly from this company\"},{\"id\":61,\"name\":\"August 2024 latest update out for tender\"},{\"id\":62,\"name\":\"Project on hold. For Dean to chase. RV sent to him\"},{\"id\":63,\"name\":\"Waiting for funding. Luke to chase\"},{\"id\":64,\"name\":\"GB to chase and copy sent to JL\"},{\"id\":65,\"name\":\"Lost Q1 2025\"},{\"id\":66,\"name\":\"JL to chase this one\"},{\"id\":67,\"name\":\"For EB to chase this one, RV has emailed him\"},{\"id\":68,\"name\":\"Copy sent to JL, JL has last communication with Bauder June 2025\"},{\"id\":69,\"name\":\"RV sent design to JL\"},{\"id\":70,\"name\":\"RV sending design to JL\"},{\"id\":71,\"name\":\"Won't win if it goes PIR as too expensive\"},{\"id\":72,\"name\":\"Customer Confident\"},{\"id\":73,\"name\":\"Not at Tender Yet\"},{\"id\":74,\"name\":\"Tender Stage\"},{\"id\":75,\"name\":\"Quote rec'd\"},{\"id\":76,\"name\":\"Doesn't look good, customer chasing for feedback\"},{\"id\":77,\"name\":\"Lost to Bauder\"},{\"id\":78,\"name\":\"Project complete\"},{\"id\":79,\"name\":\"Still in design stage\"},{\"id\":80,\"name\":\"went inverted\"},{\"id\":81,\"name\":\"limited feedback\"},{\"id\":82,\"name\":\"Went PIR\"},{\"id\":83,\"name\":\"Marked s lost on Redsky - updated CRM\"},{\"id\":84,\"name\":\"used flatboard and fillets - Taperedplus FB\"},{\"id\":85,\"name\":\"looking positive\"},{\"id\":86,\"name\":\"Project never went ahead\"},{\"id\":87,\"name\":\"customer gone bust\"},{\"id\":88,\"name\":\"Planning Stage\"},{\"id\":89,\"name\":\"CIF- still awaiting result\"},{\"id\":90,\"name\":\"See comments\"},{\"id\":91,\"name\":\"ongoing\"},{\"id\":92,\"name\":\"CIF Not awarded\"},{\"id\":93,\"name\":\"Lost Funding\"},{\"id\":94,\"name\":\"Awaiting PO - Flat board scheme\"},{\"id\":95,\"name\":\"unknown\"},{\"id\":96,\"name\":\"project is ongoing\"},{\"id\":97,\"name\":\"Project delayed\"},{\"id\":98,\"name\":\"Project at design stage\"},{\"id\":99,\"name\":\"pending\"},{\"id\":100,\"name\":\"Needs revised design\"},{\"id\":101,\"name\":\"No BroofT4 Testing\"},{\"id\":102,\"name\":\"waiting on order\"}],\"deactivated_labels\":[]}"
+                        "settings_str": "{\"limit_select\":false,\"hide_footer\":false,\"labels\":[{\"id\":1,\"name\":\"No Feedback At Present\"},{\"id\":2,\"name\":\"Project Pushed Back\"},{\"id\":3,\"name\":\"Customer To Follow Up With Their Client\"},{\"id\":4,\"name\":\"Project On Hold\"},{\"id\":5,\"name\":\"Related To Other TP Reference\"},{\"id\":6,\"name\":\"Awaiting Funding\"},{\"id\":7,\"name\":\"Customer Down To Final 2/3\"},{\"id\":8,\"name\":\"Being Compared Against Competitor\"},{\"id\":9,\"name\":\"TP Advised To Look At Order Splits\"},{\"id\":10,\"name\":\"Customer Indicates That We Are Preferred Supplier\"},{\"id\":11,\"name\":\"Looks Positive\"},{\"id\":12,\"name\":\"Lost To Competitor\"},{\"id\":13,\"name\":\"Lost Due To Spec Change\"},{\"id\":14,\"name\":\"Won Via Other Ref\"},{\"id\":15,\"name\":\"Lost to non customer\"},{\"id\":16,\"name\":\"Was going to bauder and not now. unlikely to happen due to funding. Meeting to be happening before April with CP & Fatra.\"},{\"id\":17,\"name\":\"awarded to another contractor\"},{\"id\":18,\"name\":\"Won Through Bauder\"},{\"id\":19,\"name\":\"Out to tender\"},{\"id\":20,\"name\":\"Q3 2025, Flatboard option issued as could go this route\"},{\"id\":21,\"name\":\"Secured for Nov 25 - will reprice later in year when goes back out to tender\"},{\"id\":22,\"name\":\"Change of spec/material\"},{\"id\":23,\"name\":\"Customer chasing their customer\"},{\"id\":24,\"name\":\"GB to follow up\"},{\"id\":25,\"name\":\"BDM to chase\"},{\"id\":26,\"name\":\"Permaroof PIR - Eddie to update\"},{\"id\":27,\"name\":\"RV to follow up with Kelly. issue JL drawing\"},{\"id\":28,\"name\":\"Dean to chase\"},{\"id\":29,\"name\":\"JL chasing Bauder\"},{\"id\":30,\"name\":\"Still to tender, JL to chase\"},{\"id\":31,\"name\":\"LM chasing\"},{\"id\":32,\"name\":\"JL chasing up\"},{\"id\":33,\"name\":\"Related to TP12436\"},{\"id\":34,\"name\":\"TP/JL speaking to Kelly\"},{\"id\":35,\"name\":\"Stuart to chase\"},{\"id\":36,\"name\":\"RV to send drawing. BD team to follow\"},{\"id\":37,\"name\":\"RV to send drawing\"},{\"id\":38,\"name\":\"RV to send drawing. Linked to other TP - 12462\"},{\"id\":39,\"name\":\"RV to issue drawing. Linked to other TP - 12417\"},{\"id\":40,\"name\":\"Dev to chase up. RV to issue drawing\"},{\"id\":41,\"name\":\"RV to issue drawing\"},{\"id\":42,\"name\":\"BDM to follow up. RV to issue drawing\"},{\"id\":43,\"name\":\"JL to review\"},{\"id\":44,\"name\":\"RV to issue drawing to JL\"},{\"id\":45,\"name\":\"RV to chase up with Moy\"},{\"id\":46,\"name\":\"JL to chase. RK sending drawing\"},{\"id\":47,\"name\":\"JL chasing Luke\"},{\"id\":48,\"name\":\"JL chasing Nick\"},{\"id\":49,\"name\":\"JL to follow up\"},{\"id\":50,\"name\":\"Luke to chase\"},{\"id\":51,\"name\":\"RV to issue drawing and quote\"},{\"id\":52,\"name\":\"Cancelled as a build\"},{\"id\":53,\"name\":\"No additional info\"},{\"id\":54,\"name\":\"RV to send design\"},{\"id\":55,\"name\":\"RV to send design to Allan at CCM\"},{\"id\":56,\"name\":\"RV sent design to Justin\"},{\"id\":57,\"name\":\"JL to chase his end (Stewart)\"},{\"id\":58,\"name\":\"JL to get Luke to chase this\"},{\"id\":59,\"name\":\"May 2024 latest, Axter have asked for a PIR version in May 2024\"},{\"id\":60,\"name\":\"Customer no longer works here-and said we will not recieve the order directly from this company\"},{\"id\":61,\"name\":\"August 2024 latest update out for tender\"},{\"id\":62,\"name\":\"Project on hold. For Dean to chase. RV sent to him\"},{\"id\":63,\"name\":\"Waiting for funding. Luke to chase\"},{\"id\":64,\"name\":\"GB to chase and copy sent to JL\"},{\"id\":65,\"name\":\"Lost Q1 2025\"},{\"id\":66,\"name\":\"JL to chase this one\"},{\"id\":67,\"name\":\"For EB to chase this one, RV has emailed him\"},{\"id\":68,\"name\":\"Copy sent to JL, JL has last communication with Bauder June 2025\"},{\"id\":69,\"name\":\"RV sent design to JL\"},{\"id\":70,\"name\":\"RV sending design to JL\"},{\"id\":71,\"name\":\"Won't win if it goes PIR as too expensive\"},{\"id\":72,\"name\":\"Customer Confident\"},{\"id\":73,\"name\":\"Not at Tender Yet\"},{\"id\":74,\"name\":\"Tender Stage\"},{\"id\":75,\"name\":\"Quote rec'd\"},{\"id\":76,\"name\":\"Doesn't look good, customer chasing for feedback\"},{\"id\":77,\"name\":\"Lost to Bauder\"},{\"id\":78,\"name\":\"Project complete\"},{\"id\":79,\"name\":\"Still in design stage\"},{\"id\":80,\"name\":\"went inverted\"},{\"id\":81,\"name\":\"limited feedback\"},{\"id\":82,\"name\":\"Went PIR\"},{\"id\":83,\"name\":\"Marked s lost on Redsky - updated CRM\"},{\"id\":84,\"name\":\"used flatboard and fillets - Taperedplus FB\"},{\"id\":85,\"name\":\"looking positive\"},{\"id\":86,\"name\":\"Project never went ahead\"},{\"id\":87,\"name\":\"customer gone bust\"},{\"id\":88,\"name\":\"Planning Stage\"},{\"id\":89,\"name\":\"CIF- still awaiting result\"},{\"id\":90,\"name\":\"See comments\"},{\"id\":91,\"name\":\"ongoing\"},{\"id\":92,\"name\":\"CIF Not awarded\"},{\"id\":93,\"name\":\"Lost Funding\"},{\"id\":94,\"name\":\"Awaiting PO - Flat board scheme\"},{\"id\":95,\"name\":\"unknown\"},{\"id\":96,\"name\":\"project is ongoing\"},{\"id\":97,\"name\":\"Project delayed\"},{\"id\":98,\"name\":\"Project at design stage\"},{\"id\":99,\"name\":\"pending\"},{\"id\":100,\"name\":\"Needs revised design\"},{\"id\":101,\"name\":\"No BroofT4 Testing\"},{\"id\":102,\"name\":\"waiting on order\"},{\"id\":103,\"name\":\"thank you for very quick response tender due in next Thursday will keep you\"},{\"id\":104,\"name\":\"updated, its got a proposed start date end January 2026\"},{\"id\":105,\"name\":\"updated, its got a proposed start date end January 2026\"},{\"id\":106,\"name\":\"updated, its got a proposed start date end January 2026\"},{\"id\":107,\"name\":\"Not a specific project. Design type only\"}],\"deactivated_labels\":[]}"
                     },
                     {
                         "id": "dropdown_mkp1rgp9",
@@ -105,10 +111,22 @@ PARENT BOARD SCHEMA:
                         "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"mirror17__1\"]},\"function\":\"sum\"}"
                     },
                     {
+                        "id": "lookup_mkx5904v",
+                        "title": "FY 26 P - R",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkx5swxw\"]},\"function\":\"sum\"}"
+                    },
+                    {
                         "id": "formula_mknkwpb5",
                         "title": "% Probabilty",
                         "type": "formula",
                         "settings_str": "{\"formula\":\"SWITCH({color_mkvmjryt}, '10%', 10, '20%', 20, '30%', 30, '40%', 40, '50%', 50, '60%', 60, '70%', 70, '80%', 80, '90%', 90, 0)\"}"
+                    },
+                    {
+                        "id": "lookup_mkxtpcy4",
+                        "title": "Ordered FY26 P - R",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{\"formula_mkxtk3ck\":true},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkxtk3ck\"]}}"
                     },
                     {
                         "id": "date9__1",
@@ -168,7 +186,7 @@ PARENT BOARD SCHEMA:
                         "id": "formula_mkpp85yw",
                         "title": "Gestation Period (DAYS)",
                         "type": "formula",
-                        "settings_str": "{\"formula\":\"IF(ROUNDUP(DAYS({formula_mkppyqzg}, {formula_mkppmyke}),0)\\u003e500000,0,ROUNDUP(DAYS({formula_mkppyqzg}, {formula_mkppmyke}),0))\\r\\n\"}"
+                        "settings_str": "{\"formula\":\"IF(ROUNDUP(DAYS({formula_mkppyqzg}, {formula_mkppmyke}),0)>500000,0,ROUNDUP(DAYS({formula_mkppyqzg}, {formula_mkppmyke}),0))\\r\\n\"}"
                     },
                     {
                         "id": "formula_mknh98ka",
@@ -201,12 +219,6 @@ PARENT BOARD SCHEMA:
                         "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkqa31kh\"]}}"
                     },
                     {
-                        "id": "lookup_mkv0hnn9",
-                        "title": "Project Size",
-                        "type": "mirror",
-                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"lookup_mkv0g10c\"]}}"
-                    },
-                    {
                         "id": "lookup_mkv9fp7n",
                         "title": "C Mirror",
                         "type": "mirror",
@@ -235,13 +247,121 @@ PARENT BOARD SCHEMA:
                         "title": "Datacube Project Rating (x / 100)",
                         "type": "numbers",
                         "settings_str": "{}"
+                    },
+                    {
+                        "id": "formula_mkx527yy",
+                        "title": "Postcode Rep P-R",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF({formula_mkx5q6hz}=0, {lookup_mkx5904v}, IF(EXACT({formula_mkx5q6hz}, {person}), {lookup_mkx5904v}, {lookup_mkx5904v} * 0.75))\"}"
+                    },
+                    {
+                        "id": "formula_mkxtvc2r",
+                        "title": "Postcode Rep Ordered P-R",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF({formula_mkx5q6hz}=0, {lookup_mkxtpcy4}, IF(EXACT({formula_mkx5q6hz}, {person}), {lookup_mkxtpcy4}, {lookup_mkxtpcy4} * 0.75))\"}"
+                    },
+                    {
+                        "id": "formula_mkx5pssz",
+                        "title": "Contact Rep P-R",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF({formula_mkx5q6hz}=0, 0, IF(EXACT({formula_mkx5q6hz}, {person}), 0, {lookup_mkx5904v} * 0.25))\"}"
+                    },
+                    {
+                        "id": "formula_mkxtgas5",
+                        "title": "Contact Rep Ordered P-R",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF({formula_mkx5q6hz}=0, 0, IF(EXACT({formula_mkx5q6hz}, {person}), 0, {lookup_mkxtpcy4} * 0.25))\"}"
+                    },
+                    {
+                        "id": "formula_mkx5q6hz",
+                        "title": "Contact Rep",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"SWITCH({lookup_mkx5yen0}, 1, \\\"Dean Millward\\\", 2, \\\"Eddie Bushe\\\", 3, \\\"Ian Sumner\\\", 4, \\\"Gary Bottomley\\\", 0)\"}"
+                    },
+                    {
+                        "id": "formula_mkx63ptd",
+                        "title": "CRN",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"{lookup_mkx5yen0}\"}"
+                    },
+                    {
+                        "id": "formula_mkxbjs4n",
+                        "title": "Total Rep P-R (Gary)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"\\r\\nIF(SEARCH(\\\"Gary Bottomley\\\", {person}, 1) > 0, {formula_mkx527yy}, IF(SEARCH(\\\"Gary Bottomley\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkx5pssz}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxtsq76",
+                        "title": "Total Rep Ordered P-R (Gary)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"\\r\\nIF(SEARCH(\\\"Gary Bottomley\\\", {person}, 1) > 0, {formula_mkxtvc2r}, IF(SEARCH(\\\"Gary Bottomley\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkxtgas5}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxnmhqr",
+                        "title": "Total Rep P-R (Dean)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF(SEARCH(\\\"Dean Millward\\\", {person}, 1) > 0, {formula_mkx527yy}, IF(SEARCH(\\\"Dean Millward\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkx5pssz}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxt2fe1",
+                        "title": "Total Rep Ordered P-R (Dean)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF(SEARCH(\\\"Dean Millward\\\", {person}, 1) > 0, {formula_mkxtvc2r}, IF(SEARCH(\\\"Dean Millward\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkxtgas5}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxng18k",
+                        "title": "Total Rep P-R (Eddie Bushe)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"\\r\\nIF(SEARCH(\\\"Eddie Bushe\\\", {person}, 1) > 0, {formula_mkx527yy}, IF(SEARCH(\\\"Eddie Bushe\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkx5pssz}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxtrm75",
+                        "title": "Total Rep Ordered P-R (Eddie Bushe)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"\\r\\nIF(SEARCH(\\\"Eddie Bushe\\\", {person}, 1) > 0, {formula_mkxtvc2r}, IF(SEARCH(\\\"Eddie Bushe\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkxtgas5}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxn5cc5",
+                        "title": "Total Rep P-R (Ian Sumner)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"\\r\\nIF(SEARCH(\\\"Ian Sumner\\\", {person}, 1) > 0, {formula_mkx527yy}, IF(SEARCH(\\\"Ian Sumner\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkx5pssz}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxt3qhg",
+                        "title": "Total Rep Ordered P-R (Ian Sumner)",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"\\r\\nIF(SEARCH(\\\"Ian Sumner\\\", {person}, 1) > 0, {formula_mkxtvc2r}, IF(SEARCH(\\\"Ian Sumner\\\", {formula_mkx5q6hz}, 1) > 0, {formula_mkxtgas5}, 0))\"}"
+                    },
+                    {
+                        "id": "formula_mkxbqd98",
+                        "title": "Counter",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"1\"}"
+                    },
+                    {
+                        "id": "formula_mkxb3hwx",
+                        "title": "Datacube: Expected Start Date",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"FORMAT_DATE(ADD_DAYS({lookup_mkpptgsn}, {numeric_mkw8t5cw}), \\\"MMMM YYYY\\\")\"}"
+                    },
+                    {
+                        "id": "formula_mkxftj35",
+                        "title": "Datacube: Expected Future Start Date",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"IF(ADD_DAYS({lookup_mkpptgsn}, {numeric_mkw8t5cw}) > TODAY(), CONCATENATE(TEXT((YEAR(ADD_DAYS({lookup_mkpptgsn}, {numeric_mkw8t5cw})) - YEAR(TODAY())) * 12 + MONTH(ADD_DAYS({lookup_mkpptgsn}, {numeric_mkw8t5cw})) - MONTH(TODAY()), \\\"000\\\"), \\\" - \\\", FORMAT_DATE(ADD_DAYS({lookup_mkpptgsn}, {numeric_mkw8t5cw}), \\\"MMMM YYYY\\\")), \\\"Past\\\")\"}"
+                    },
+                    {
+                        "id": "formula_mkxb6y9d",
+                        "title": "Datacube: Pipeline Value",
+                        "type": "formula",
+                        "settings_str": "{\"formula\":\"{lookup_mkqanpbe}*({numeric_mkw86evn}/100)\"}"
                     }
                 ]
             }
         ]
     },
     "extensions": {
-        "request_id": "0e95d6f7-ec34-9c22-a460-369a33dad263"
+        "request_id": "1571504c-6569-9551-bbc0-243fea6dee7e"
     }
 }
 
