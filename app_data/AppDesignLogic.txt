@@ -28,6 +28,9 @@ Category	                dropdown__1	           "Category"	               dropdo
 New Enquiry Value	        lookup_mkqanpbe	       "New Enq Value"	           mirror
 Gestation Period	        formula_mkpp85yw	   "Gestation Period (DAYS)"   formula
 Product Type	            lookup_mkt3xgz1	       "Product Mirror"	           mirror
+Total Order Value
+
+
 
 
 From the mirror column settings, note that:
@@ -164,6 +167,12 @@ Tapered Hidden Items Board Schema (1825138260)
                         "type": "mirror",
                         "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"formula_mkpp1x74\"]},\"function\":\"min\"}"
                     },
+            {
+                        "id": "mirror5__1",
+                        "title": "Total Order Value",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"subitems__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825117144\":[\"mirror17__1\"]},\"function\":\"sum\"}"
+                    },
 
          Sub_items board details (1825117144):
                    
@@ -197,6 +206,18 @@ Tapered Hidden Items Board Schema (1825138260)
                         "type": "mirror",
                         "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"date42__1\"]}}"
                     },
+            {
+                        "id": "mirror226__1",
+                        "title": "Date Order Received",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"date7__1\"]}}"
+                    },
+            {
+                        "id": "mirror17__1",
+                        "title": "Cust Order Value Material",
+                        "type": "mirror",
+                        "settings_str": "{\"relation_column\":{\"connect_boards8__1\":true},\"displayed_column\":{},\"displayed_linked_columns\":{\"1825138260\":[\"numbers98__1\"]}}"
+                    },
 
 	Tapered Hidden Items Board Schema (1825138260)
  		    {
@@ -210,6 +231,18 @@ Tapered Hidden Items Board Schema (1825138260)
                         "title": "Invoice Date",
                         "type": "date",
                         "settings_str": "{\"hide_footer\":false,\"date_format\":\"WITH_YEAR\"}"
+                    },
+            {
+                        "id": "date7__1",
+                        "title": "Date Order Received",
+                        "type": "date",
+                        "settings_str": "{\"hide_footer\":false,\"date_format\":\"WITH_YEAR\"}"
+                    },
+            {
+                        "id": "numbers98__1",
+                        "title": "Cust Order Value Material",
+                        "type": "numbers",
+                        "settings_str": "{\"unit\":{\"symbol\":\"£\",\"custom_unit\":\"\",\"direction\":\"left\"}}"
                     },
 
 ##########################

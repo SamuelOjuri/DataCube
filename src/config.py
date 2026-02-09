@@ -136,6 +136,7 @@ SUBITEM_COLUMNS = {
     'delivery_address': 'mirror64__1',          # Delivery Address (text)
     'invoice_number': 'mirror682__1',           # Invoice Number (text)
     'amount_invoiced': 'mirror5__1',            # Amount Invoiced
+    'cust_order_value_material': 'mirror17__1', # Cust Order Value Material
 
     # Link to hidden items board (Note:board_relation is mostly broken 'name' matching is more reliable)
     'hidden_item_id': 'connect_boards8__1',
@@ -178,6 +179,8 @@ HIDDEN_ITEMS_COLUMNS = {
     'time_taken': 'numbers6__1',
     'account_id': 'dup__of_accounts_mkkd7bew',
     'contact_id': 'order_contact_email_mkktmg6g',
+    'date_order_received': 'date7__1',
+    'cust_order_value_material': 'numbers98__1',
 }
 
 # Mirror resolution mappings

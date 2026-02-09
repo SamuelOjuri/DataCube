@@ -45,6 +45,10 @@ CREATE TABLE projects (
     first_date_designed DATE,
     last_date_designed DATE,
     first_date_invoiced DATE,
+
+    -- Order fields
+    total_order_value NUMERIC(12, 2),
+    date_order_received DATE,
     
     -- Feedback fields
     feedback TEXT,
@@ -101,6 +105,7 @@ CREATE TABLE subitems (
     -- Order fields
     order_status TEXT,
     date_order_received DATE,
+    cust_order_value_material NUMERIC(12, 2),
     customer_po TEXT,
     supplier1 TEXT,
     supplier2 TEXT,
@@ -137,6 +142,8 @@ CREATE TABLE hidden_items (
     date_received DATE,
     date_design_completed DATE,
     date_quoted DATE,
+    date_order_received DATE,
+    cust_order_value_material NUMERIC(12, 2),
     date_project_won DATE,
     date_project_closed DATE,
     invoice_date DATE,
@@ -348,6 +355,21 @@ ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subitems ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hidden_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analysis_results ENABLE ROW LEVEL SECURITY;
+
+
+-- Migration: Track order values 
+ALTER TABLE hidden_items
+  ADD COLUMN IF NOT EXISTS date_order_received DATE;
+ALTER TABLE hidden_items
+  ADD COLUMN IF NOT EXISTS cust_order_value_material NUMERIC(12, 2);
+
+ALTER TABLE subitems
+  ADD COLUMN IF NOT EXISTS cust_order_value_material NUMERIC(12, 2);
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS total_order_value NUMERIC(12, 2);
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS date_order_received DATE;
 
 -- Create policies (adjust based on your auth strategy)
 CREATE POLICY "Enable read access for authenticated users" ON projects

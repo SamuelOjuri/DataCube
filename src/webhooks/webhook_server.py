@@ -144,6 +144,7 @@ ANALYSIS_TRIGGER_COLUMNS = {
         SUBITEM_COLUMNS['account'],
         SUBITEM_COLUMNS['product_type'],
         SUBITEM_COLUMNS['new_enquiry_value'],
+        SUBITEM_COLUMNS['cust_order_value_material'],
     },
 }
 
@@ -984,6 +985,11 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
                 "field": "follow_up_date",
                 "transform": parse_date_value,
             },
+            PARENT_COLUMNS["total_order_value"]: {
+                "table": "projects",
+                "field": "total_order_value",
+                "transform": parse_numeric_value,
+            },
         },
         SUBITEM_BOARD_ID: {
             SUBITEM_COLUMNS["account"]: {
@@ -999,6 +1005,16 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
             SUBITEM_COLUMNS["new_enquiry_value"]: {
                 "table": "subitems",
                 "field": "new_enquiry_value",
+                "transform": parse_numeric_value,
+            },
+            SUBITEM_COLUMNS["date_order_received"]: {
+                "table": "subitems",
+                "field": "date_order_received",
+                "transform": parse_date_value,
+            },
+            SUBITEM_COLUMNS["cust_order_value_material"]: {
+                "table": "subitems",
+                "field": "cust_order_value_material",
                 "transform": parse_numeric_value,
             },
         },
