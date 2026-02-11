@@ -18,7 +18,7 @@ from src.core.models import NumericPredictions, ProjectFeatures, SegmentStatisti
 from src.core.numeric_analyzer import NumericBaseline
 from src.database.supabase_client import SupabaseClient
 from src.services.analysis_service import AnalysisService
-from scripts.test_llm_analysis import (
+from tests.test_llm_analysis import (
     build_segment_stats,
     fetch_global_df,
     fetch_segment_df,

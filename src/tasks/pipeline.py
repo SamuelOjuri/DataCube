@@ -580,7 +580,6 @@ class DeltaRehydrationManager:
     async def _rehydrate_batches(self, candidates: List[ProjectCandidate]) -> None:
         column_parent = list(PARENT_COLUMNS.values())
         column_sub = list(SUBITEM_COLUMNS.values())
-
         resume_index = 0
         processed_in_batch = 0
 
@@ -600,6 +599,7 @@ class DeltaRehydrationManager:
                 chunk_ids,
                 column_parent,
             )
+
             parents = [
                 self.sync_service._normalize_monday_item(parent)
                 for parent in parent_items_raw
@@ -643,10 +643,16 @@ class DeltaRehydrationManager:
             subitems_data = self.sync_service._transform_for_subitems_table(processed["subitems"])
             rollup_map = self.sync_service._rollup_new_enquiry_from_subitems(subitems_data)
             gestation_map = self.sync_service._compute_gestation_fallback_from_subitems(subitems_data)
+            order_total_map, order_date_map = self.sync_service._rollup_order_values_from_subitems(
+                subitems_data
+            )
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
             self.sync_service._apply_project_new_enquiry_rollup(projects_data, rollup_map)
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
+            self.sync_service._apply_project_order_rollup(
+                projects_data, order_total_map, order_date_map
+            )
 
             self.subitem_batches += 1
             await self.sync_service._batch_upsert_subitems(subitems_data)
@@ -1254,10 +1260,16 @@ class RecentRehydrationManager:
             subitems_data = self.sync_service._transform_for_subitems_table(processed["subitems"])
             gestation_map = self.sync_service._compute_gestation_fallback_from_subitems(subitems_data)
             rollup_map = self.sync_service._rollup_new_enquiry_from_subitems(subitems_data)
+            order_total_map, order_date_map = self.sync_service._rollup_order_values_from_subitems(
+                subitems_data
+            )
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
             self.sync_service._apply_project_new_enquiry_rollup(projects_data, rollup_map)
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
+            self.sync_service._apply_project_order_rollup(
+                projects_data, order_total_map, order_date_map
+            )
 
             subitems_written = await self.sync_service._batch_upsert_subitems(subitems_data)
             self.subitem_batches += 1
