@@ -86,23 +86,34 @@ class DataSyncService:
             )
             
             # Step 4: Transform for Supabase with enhanced normalization (hidden → subitems → projects)
+
             hidden_data = self._transform_for_hidden_table(processed_data['hidden'])
+
             subitems_data = self._transform_for_subitems_table(processed_data['subitems'])
 
-            # Roll up "New Enquiry Value" per project from transformed subitems
+            # Roll up per-project values from transformed subitems
             rollup_map = self._rollup_new_enquiry_from_subitems(subitems_data)
+
+            gmap = self._compute_gestation_fallback_from_subitems(subitems_data)
+
+            order_total_map, order_date_map = self._rollup_order_values_from_subitems(subitems_data)
+
+            design_date_map, invoice_date_map = self._rollup_design_invoice_dates_from_subitems(
+                subitems_data
+            )
 
             projects_data = self._transform_for_projects_table(processed_data['projects'])
 
             # Apply rollup fallback to projects where missing/zero
             self._apply_project_new_enquiry_rollup(projects_data, rollup_map)
 
-            # NEW: compute and apply gestation fallback from subitems+hidden_items
-            gmap = self._compute_gestation_fallback_from_subitems(subitems_data)
             self._apply_project_gestation_fallback(projects_data, gmap)
-            # NEW: compute and apply order rollups from subitems
-            order_total_map, order_date_map = self._rollup_order_values_from_subitems(subitems_data)
+
             self._apply_project_order_rollup(projects_data, order_total_map, order_date_map)
+
+            self._apply_project_design_invoice_rollup(
+                projects_data, design_date_map, invoice_date_map
+            )
 
             # Step 5: Batch upload to Supabase
             stats = {
@@ -569,6 +580,7 @@ class DataSyncService:
                 )
 
                 # Transform and sync each type (hidden → subitems → projects so rollups can be computed)
+
                 hidden_data = []
                 subitems_data = []
                 projects_data = []
@@ -577,6 +589,8 @@ class DataSyncService:
                 gmap: Dict[str, int] = {}
                 order_total_map: Dict[str, float] = {}
                 order_date_map: Dict[str, str] = {}
+                design_date_map: Dict[str, str] = {}
+                invoice_date_map: Dict[str, str] = {}
 
                 if processed_data['hidden']:
                     hidden_data = self._transform_for_hidden_table(processed_data['hidden'])
@@ -587,11 +601,11 @@ class DataSyncService:
                     subitems_data = self._transform_for_subitems_table(processed_data['subitems'])
                     # Compute rollups from whatever subitems we have in this delta
                     rollup_map = self._rollup_new_enquiry_from_subitems(subitems_data)
-                    # Compute gestation fallback map
                     gmap = self._compute_gestation_fallback_from_subitems(subitems_data)
-                    # Compute order total + min date rollups
                     order_total_map, order_date_map = self._rollup_order_values_from_subitems(subitems_data)
-
+                    design_date_map, invoice_date_map = self._rollup_design_invoice_dates_from_subitems(
+                        subitems_data
+                    )
                     stats['updated'] += await self._batch_upsert_subitems(subitems_data)
                     stats['processed'] += len(subitems_data)
 
@@ -600,9 +614,12 @@ class DataSyncService:
                     self._apply_project_new_enquiry_rollup(projects_data, rollup_map)
                     self._apply_project_gestation_fallback(projects_data, gmap)
                     self._apply_project_order_rollup(projects_data, order_total_map, order_date_map)
+                    self._apply_project_design_invoice_rollup(
+                        projects_data, design_date_map, invoice_date_map
+                    )
                     stats['updated'] += await self._batch_upsert_projects(projects_data)
                     stats['processed'] += len(projects_data)
-                elif rollup_map or gmap or order_total_map or order_date_map:
+                elif rollup_map or gmap or order_total_map or order_date_map or design_date_map or invoice_date_map:
                     # Patch existing projects directly when only subitems changed (update-only mode)
                     patch = []
                     if rollup_map:
@@ -625,6 +642,16 @@ class DataSyncService:
                             {'monday_id': pid, 'date_order_received': val, 'last_synced_at': datetime.now().isoformat()}
                             for pid, val in order_date_map.items() if val
                         )
+                    if design_date_map:
+                        patch.extend(
+                            {'monday_id': pid, 'first_date_designed': val, 'last_synced_at': datetime.now().isoformat()}
+                            for pid, val in design_date_map.items() if val
+                        )
+                    if invoice_date_map:
+                        patch.extend(
+                            {'monday_id': pid, 'first_date_invoiced': val, 'last_synced_at': datetime.now().isoformat()}
+                            for pid, val in invoice_date_map.items() if val
+                        )
                     if patch:
                         existing_ids = self.supabase_client.get_existing_project_ids()
                         patch_in_db = [p for p in patch if str(p.get('monday_id') or '') in existing_ids]
@@ -634,9 +661,15 @@ class DataSyncService:
                             try:
                                 payload = {
                                     k: v for k, v in row.items()
-                                    if k in ('new_enquiry_value', 'gestation_period',
-                                             'total_order_value', 'date_order_received',
-                                             'last_synced_at')
+                                    if k in (
+                                        'new_enquiry_value',
+                                        'gestation_period',
+                                        'total_order_value',
+                                        'date_order_received',
+                                        'first_date_designed',
+                                        'first_date_invoiced',
+                                        'last_synced_at',
+                                    )
                                 }
                                 self.supabase_client.client.table('projects')\
                                     .update(payload)\
@@ -1057,6 +1090,30 @@ class DataSyncService:
                         r = self._hidden_lookup_by_id[hid].get('reason_for_change')
                         reason = (r or '').strip() if r is not None else reason
 
+                # Fallback for date_design_completed (mirror may be broken → use hidden items)
+                date_design_completed = self._parse_date_value(
+                    normalized.get('date_design_completed_mirror') or normalized.get('date_design_completed')
+                )
+                if not date_design_completed:
+                    if nm and nm in self._hidden_lookup_by_name:
+                        date_design_completed = self._hidden_lookup_by_name[nm].get('date_design_completed')
+                if not date_design_completed and hidden_id:
+                    hid = str(hidden_id)
+                    if hid in self._hidden_lookup_by_id:
+                        date_design_completed = self._hidden_lookup_by_id[hid].get('date_design_completed')
+                date_design_completed = self._parse_date_value(date_design_completed)
+
+                # Fallback for invoice_date (mirror may be broken → use hidden items)
+                invoice_date = self._parse_date_value(normalized.get('invoice_date'))
+                if not invoice_date:
+                    if nm and nm in self._hidden_lookup_by_name:
+                        invoice_date = self._hidden_lookup_by_name[nm].get('invoice_date')
+                if not invoice_date and hidden_id:
+                    hid = str(hidden_id)
+                    if hid in self._hidden_lookup_by_id:
+                        invoice_date = self._hidden_lookup_by_id[hid].get('invoice_date')
+                invoice_date = self._parse_date_value(invoice_date)
+
                 # Fallback for date_order_received (mirror may be broken → use hidden items)
                 date_order_received = self._parse_date_value(normalized.get('date_order_received'))
                 if not date_order_received:
@@ -1121,17 +1178,15 @@ class DataSyncService:
                     'delivery_address': normalized.get('delivery_address', ''),
 
                     'date_received': self._parse_date_value(normalized.get('date_received')),
-                    'date_design_completed': self._parse_date_value(
-                        normalized.get('date_design_completed_mirror') or normalized.get('date_design_completed')
-                    ),
+                    'date_design_completed': date_design_completed,
                     'invoice_number': normalized.get('invoice_number', ''),
-                    'invoice_date': self._parse_date_value(normalized.get('invoice_date')),
+                    'invoice_date': invoice_date,
 
                     # Fallback from mirror
                     'quote_amount': quote_val,
 
                     'amount_invoiced': self._parse_numeric_value(normalized.get('amount_invoiced')),
-                    
+
                     'last_synced_at': datetime.now().isoformat()
                 }
                 
@@ -1423,6 +1478,92 @@ class DataSyncService:
         # Convert min_dates back to ISO strings
         min_date_map = {pid: dt.date().isoformat() for pid, dt in min_dates.items()}
         return totals, min_date_map
+
+    def _rollup_design_invoice_dates_from_subitems(
+        self,
+        subitems_data: List[Dict]
+    ) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """
+        Roll up min(date_design_completed) and min(invoice_date) per parent project.
+        Returns:
+          - design_min_map[parent_id] = 'YYYY-MM-DD'
+          - invoice_min_map[parent_id] = 'YYYY-MM-DD'
+        """
+        design_min: Dict[str, datetime] = {}
+        invoice_min: Dict[str, datetime] = {}
+
+        def _to_dt(value: Any) -> Optional[datetime]:
+            parsed = self._parse_date_value(value)
+            if not parsed:
+                return None
+            try:
+                return datetime.strptime(parsed, '%Y-%m-%d')
+            except Exception:
+                return None
+
+        for s in subitems_data or []:
+            pid = s.get('parent_monday_id')
+            if not pid:
+                continue
+
+            d_dt = _to_dt(s.get('date_design_completed'))
+            if d_dt:
+                if pid not in design_min or d_dt < design_min[pid]:
+                    design_min[pid] = d_dt
+
+            i_dt = _to_dt(s.get('invoice_date'))
+            if i_dt:
+                if pid not in invoice_min or i_dt < invoice_min[pid]:
+                    invoice_min[pid] = i_dt
+
+        design_map = {pid: dt.date().isoformat() for pid, dt in design_min.items()}
+        invoice_map = {pid: dt.date().isoformat() for pid, dt in invoice_min.items()}
+        return design_map, invoice_map
+
+    def _apply_project_design_invoice_rollup(
+        self,
+        projects_data: List[Dict],
+        design_min_map: Dict[str, str],
+        invoice_min_map: Dict[str, str]
+    ) -> None:
+        """
+        Apply min first_date_designed / first_date_invoiced to projects.
+        """
+        if not projects_data or (not design_min_map and not invoice_min_map):
+            return
+
+        for p in projects_data:
+            pid = str(p.get('monday_id') or p.get('id') or '')
+            if not pid:
+                continue
+
+            rolled_design = design_min_map.get(pid)
+            if rolled_design:
+                current_design = self._parse_date_value(p.get('first_date_designed'))
+                if not current_design:
+                    p['first_date_designed'] = rolled_design
+                else:
+                    try:
+                        cur_dt = datetime.strptime(current_design, '%Y-%m-%d')
+                        new_dt = datetime.strptime(rolled_design, '%Y-%m-%d')
+                        if new_dt < cur_dt:
+                            p['first_date_designed'] = rolled_design
+                    except Exception:
+                        p['first_date_designed'] = rolled_design
+
+            rolled_invoice = invoice_min_map.get(pid)
+            if rolled_invoice:
+                current_invoice = self._parse_date_value(p.get('first_date_invoiced'))
+                if not current_invoice:
+                    p['first_date_invoiced'] = rolled_invoice
+                else:
+                    try:
+                        cur_dt = datetime.strptime(current_invoice, '%Y-%m-%d')
+                        new_dt = datetime.strptime(rolled_invoice, '%Y-%m-%d')
+                        if new_dt < cur_dt:
+                            p['first_date_invoiced'] = rolled_invoice
+                    except Exception:
+                        p['first_date_invoiced'] = rolled_invoice
 
     def _apply_project_order_rollup(
         self,

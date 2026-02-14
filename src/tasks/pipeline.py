@@ -646,12 +646,18 @@ class DeltaRehydrationManager:
             order_total_map, order_date_map = self.sync_service._rollup_order_values_from_subitems(
                 subitems_data
             )
+            design_date_map, invoice_date_map = self.sync_service._rollup_design_invoice_dates_from_subitems(
+                subitems_data
+            )
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
             self.sync_service._apply_project_new_enquiry_rollup(projects_data, rollup_map)
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
             self.sync_service._apply_project_order_rollup(
                 projects_data, order_total_map, order_date_map
+            )
+            self.sync_service._apply_project_design_invoice_rollup(
+                projects_data, design_date_map, invoice_date_map
             )
 
             self.subitem_batches += 1
@@ -1263,12 +1269,18 @@ class RecentRehydrationManager:
             order_total_map, order_date_map = self.sync_service._rollup_order_values_from_subitems(
                 subitems_data
             )
+            design_date_map, invoice_date_map = self.sync_service._rollup_design_invoice_dates_from_subitems(
+                subitems_data
+            )
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
             self.sync_service._apply_project_new_enquiry_rollup(projects_data, rollup_map)
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
             self.sync_service._apply_project_order_rollup(
                 projects_data, order_total_map, order_date_map
+            )
+            self.sync_service._apply_project_design_invoice_rollup(
+                projects_data, design_date_map, invoice_date_map
             )
 
             subitems_written = await self.sync_service._batch_upsert_subitems(subitems_data)
