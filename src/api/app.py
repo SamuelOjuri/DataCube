@@ -8,17 +8,64 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from .routes.analysis import router as analysis_router
+from .routes.forecast import router as forecast_router
 from ..config import PARENT_BOARD_ID
 from ..database.supabase_client import SupabaseClient
 from ..services.queue_worker import get_task_queue
 from ..tasks.pipeline import backfill_llm, rehydrate_delta, rehydrate_recent, sync_projects_to_monday
-from ..tasks.postgres_maintenance import refresh_conversion_views
+from ..tasks.postgres_maintenance import (
+    refresh_conversion_views,
+    run_daily_forecast_snapshot_maintenance,
+)
 
 app = FastAPI()
 app.include_router(analysis_router)  # exposes /analysis/{monday_id}/run
+app.include_router(forecast_router)  # exposes /forecast/pipeline and /forecast/snapshot
 
 _scheduler = AsyncIOScheduler()
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logging.getLogger("scheduler.config").warning(
+            "Invalid integer env var %s=%r; using default=%s",
+            name,
+            raw,
+            default,
+        )
+        return default
+
+
+FORECAST_SNAPSHOT_RETENTION_DAYS = _env_int(
+    "FORECAST_SNAPSHOT_RETENTION_DAYS",
+    _env_int("RETENTION_DAYS", 730),
+)
+FORECAST_SNAPSHOT_CRON_HOUR_UTC = _env_int("FORECAST_SNAPSHOT_CRON_HOUR_UTC", 3)
+FORECAST_SNAPSHOT_CRON_MINUTE_UTC = _env_int("FORECAST_SNAPSHOT_CRON_MINUTE_UTC", 10)
+
+async def _scheduled_forecast_snapshot_maintenance() -> None:
+    log = logging.getLogger("scheduler.forecast_snapshot_maintenance")
+    loop = asyncio.get_running_loop()
+    started = time.perf_counter()
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: run_daily_forecast_snapshot_maintenance(
+                logger=log,
+                retain_days=FORECAST_SNAPSHOT_RETENTION_DAYS,
+            ),
+        )
+        log.info(
+            "Forecast snapshot maintenance finished (elapsed=%.2fs, retain_days=%s)",
+            time.perf_counter() - started,
+            FORECAST_SNAPSHOT_RETENTION_DAYS,
+        )
+    except Exception:
+        log.exception("Forecast snapshot maintenance job failed")
 
 async def _scheduled_delta_rehydrate() -> None:
     log = logging.getLogger("scheduler.delta_rehydrate")
@@ -181,7 +228,6 @@ async def _startup() -> None:
     get_task_queue().start()
 
     if not _scheduler.running:
-
         _scheduler.add_job(_scheduled_delta_rehydrate, "interval", hours=1, id="delta_rehydrate")
         _scheduler.add_job(_scheduled_llm_backfill, "cron", hour=2, minute=15, id="llm_backfill")
         _scheduler.add_job(_scheduled_monday_sync, "interval", minutes=25, id="monday_sync")
@@ -190,7 +236,7 @@ async def _startup() -> None:
             "interval",
             hours=6,
             id="recent_rehydrate",
-            misfire_grace_time=300,  # allow small delays
+            misfire_grace_time=300,
             coalesce=True,
             max_instances=1,
         )
@@ -202,7 +248,16 @@ async def _startup() -> None:
             misfire_grace_time=180,
             max_instances=1,
         )
-
+        _scheduler.add_job(
+            _scheduled_forecast_snapshot_maintenance,
+            "cron",
+            hour=FORECAST_SNAPSHOT_CRON_HOUR_UTC,
+            minute=FORECAST_SNAPSHOT_CRON_MINUTE_UTC,
+            id="forecast_snapshot_maintenance",
+            misfire_grace_time=900,
+            coalesce=True,
+            max_instances=1,
+        )
         _scheduler.start()
 
 

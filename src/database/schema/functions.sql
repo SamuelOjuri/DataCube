@@ -149,7 +149,13 @@ RETURNS TEXT AS $$
 BEGIN
     REFRESH MATERIALIZED VIEW conversion_metrics;
     REFRESH MATERIALIZED VIEW conversion_metrics_recent;
-    RETURN 'Analytics views refreshed at ' || NOW()::text;
+
+    -- Forecast aggregate refresh (if deployed)
+    IF to_regclass('public.mv_pipeline_forecast_monthly_12m_v1') IS NOT NULL THEN
+        REFRESH MATERIALIZED VIEW mv_pipeline_forecast_monthly_12m_v1;
+    END IF;
+
+    RETURN 'Analytics and forecast views refreshed at ' || NOW()::text;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -165,5 +171,71 @@ BEGIN
     
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+-- Cleanup old forecast snapshots based on retention window
+CREATE OR REPLACE FUNCTION cleanup_old_pipeline_forecast_snapshots(retain_days INTEGER DEFAULT 730)
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER := 0;
+BEGIN
+    IF retain_days IS NULL OR retain_days < 1 THEN
+        RAISE EXCEPTION 'retain_days must be >= 1, got %', retain_days;
+    END IF;
+
+    DELETE FROM pipeline_forecast_snapshot
+    WHERE snapshot_date < (CURRENT_DATE - retain_days);
+
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Insert one daily snapshot set for the 12-month forecast window
+CREATE OR REPLACE FUNCTION create_pipeline_forecast_snapshot(target_snapshot_date DATE DEFAULT CURRENT_DATE)
+RETURNS INTEGER AS $$
+DECLARE
+    inserted_count INTEGER := 0;
+BEGIN
+    -- Idempotent daily snapshot: replace the day if rerun
+    DELETE FROM pipeline_forecast_snapshot
+    WHERE snapshot_date = target_snapshot_date;
+
+    INSERT INTO pipeline_forecast_snapshot (
+        snapshot_date,
+        project_id,
+        forecast_month,
+        stage_bucket,
+        contract_value,
+        probability,
+        committed_value,
+        expected_value,
+        best_case_value,
+        worst_case_value,
+        analysis_timestamp,
+        created_at
+    )
+    SELECT
+        target_snapshot_date,
+        f.project_id,
+        f.forecast_month,
+        f.stage_bucket,
+        f.contract_value,
+        f.probability,
+        f.committed_value,
+        f.expected_value,
+        f.best_case_value,
+        f.worst_case_value,
+        f.analysis_timestamp,
+        NOW()
+    FROM vw_pipeline_forecast_project_v1 f
+    WHERE f.forecast_month >= DATE_TRUNC('month', target_snapshot_date)::DATE
+      AND f.forecast_month < (DATE_TRUNC('month', target_snapshot_date) + INTERVAL '12 months')::DATE;
+
+    GET DIAGNOSTICS inserted_count = ROW_COUNT;
+    RETURN inserted_count;
 END;
 $$ LANGUAGE plpgsql;
