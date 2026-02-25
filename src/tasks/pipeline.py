@@ -953,8 +953,10 @@ class RecentRehydrationManager:
             await self._warm_hidden_cache(prefixes)
 
     async def _collect_hidden_ids(self, prefixes: Set[str], log_id: Optional[str]) -> Dict[str, Any]:
+
         from collections import deque
 
+        all_prefixes = set(prefixes)
         pending = set(prefixes)
         collected: Set[str] = set()
 
@@ -1050,7 +1052,6 @@ class RecentRehydrationManager:
                     retry_sec = 60
                     try:
                         import re
-
                         match = re.search(r"retry_in_seconds['\"]?:\s*(\d+)", str(exc))
                         if match:
                             retry_sec = max(1, int(match.group(1)))
@@ -1103,7 +1104,7 @@ class RecentRehydrationManager:
                     continue
 
                 prefix = self._leading_digits(name)
-                if prefix and prefix in pending:
+                if prefix and prefix in all_prefixes:
                     collected.add(hid)
                     pending.discard(prefix)
 
@@ -1258,8 +1259,10 @@ class RecentRehydrationManager:
                 prefix = self._leading_digits(name)
                 if not prefix:
                     continue
-                if prefix in self.sync_service._hidden_lookup_by_name:
-                    hidden_stub.append(self.sync_service._hidden_lookup_by_name[prefix])
+                prefix_with_sep = prefix + "_"
+                for hname, hdata in self.sync_service._hidden_lookup_by_name.items():
+                    if isinstance(hname, str) and hname.startswith(prefix_with_sep):
+                        hidden_stub.append(hdata)
 
             processed = self.sync_service._process_and_resolve_mirrors(parents, subitems, hidden_stub)
 

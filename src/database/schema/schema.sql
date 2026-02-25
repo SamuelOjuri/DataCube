@@ -494,6 +494,7 @@ WITH latest_analysis AS (
         ar.expected_gestation_days,
         ar.expected_conversion_rate,
         ar.conversion_confidence,
+        ar.rating_score,
         ROW_NUMBER() OVER (
             PARTITION BY ar.project_id
             ORDER BY ar.analysis_timestamp DESC NULLS LAST, ar.id DESC
@@ -532,6 +533,7 @@ project_base AS (
         la.expected_gestation_days,
         la.expected_conversion_rate,
         la.conversion_confidence,
+        la.rating_score,
 
         CASE
             WHEN p.date_order_received IS NOT NULL THEN p.date_order_received
@@ -560,7 +562,6 @@ probability_base AS (
     SELECT
         pb.*,
 
-        -- Base probability (clamped 0..1) with precedence rules
         GREATEST(
             0.0::NUMERIC,
             LEAST(
@@ -583,9 +584,6 @@ probability_base AS (
             )
         ) AS probability,
 
-        -- Spread policy:
-        -- - confidence present: tighter spread as confidence rises
-        -- - confidence missing: deterministic stage fallback spread
         CASE
             WHEN pb.conversion_confidence IS NOT NULL AND pb.conversion_confidence > 0 THEN
                 LEAST(
@@ -646,9 +644,9 @@ SELECT
     b.expected_gestation_days,
     b.expected_conversion_rate,
     b.conversion_confidence,
+    b.rating_score,
     b.probability_percent,
 
-    -- Stage 3 required outputs
     ROUND(
         CASE WHEN b.stage_bucket = 'Committed' THEN b.contract_value ELSE 0::NUMERIC END,
         2
@@ -658,7 +656,6 @@ SELECT
     ROUND((b.contract_value * b.best_case_probability)::NUMERIC, 2)::NUMERIC(12,2) AS best_case_value,
     ROUND((b.contract_value * b.worst_case_probability)::NUMERIC, 2)::NUMERIC(12,2) AS worst_case_value,
 
-    -- Optional trace columns
     b.best_case_probability,
     b.worst_case_probability,
     b.probability_spread

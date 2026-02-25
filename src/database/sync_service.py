@@ -1583,10 +1583,8 @@ class DataSyncService:
                 continue
 
             rolled_total = total_map.get(pid)
-            if rolled_total is not None:
-                current_total = self._parse_numeric_value(p.get('total_order_value'))
-                if current_total is None or float(current_total) <= 0:
-                    p['total_order_value'] = rolled_total
+            if rolled_total is not None and rolled_total > 0:
+                p['total_order_value'] = rolled_total
 
             rolled_date = min_date_map.get(pid)
             if rolled_date:
@@ -1609,9 +1607,8 @@ class DataSyncService:
             pid = str(p.get('monday_id') or p.get('id') or '')
             if not pid:
                 continue
-            current = self._parse_numeric_value(p.get('new_enquiry_value'))
             rolled = rollup_map.get(pid)
-            if rolled is not None and (current is None or float(current) <= 0):
+            if rolled is not None and rolled > 0:
                 p['new_enquiry_value'] = rolled
 
     def _compute_gestation_fallback_from_subitems(self, subitems_data: List[Dict]) -> Dict[str, int]:
