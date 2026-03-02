@@ -1,5 +1,6 @@
 import os
-from typing import Dict, Any, Optional
+
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
@@ -13,6 +14,22 @@ logger = logging.getLogger(__name__)
 
 # Backoff tiers at or beyond this value indicate coarse/global segments.
 GLOBAL_BACKOFF_THRESHOLD = 4
+
+# Hierarchical segment fallback tiers: (keys, min_n)
+# Tier 0: Account × Type × Category × Product Key (n >= 10)
+# Tier 1: Account × Type × Category               (n >= 8)
+# Tier 2: Account × Type                          (n >= 5)
+# Tier 3: Type × Category                         (n >= 5)
+# Tier 4: Type                                    (n >= 3)
+# Tier 5: Global                                  (n >= 1)
+SEGMENT_BACKOFF_TIERS: List[Tuple[List[str], int]] = [
+    (['account', 'type', 'category', 'product_type'], 10),
+    (['account', 'type', 'category'], 8),
+    (['account', 'type'], 5),
+    (['type', 'category'], 5),
+    (['type'], 3),
+    ([], 1),
+]
 
 class AnalysisService:
     def __init__(self, db_client: Optional[SupabaseClient] = None, lookback_days: Optional[int] = None):
@@ -130,32 +147,41 @@ class AnalysisService:
         )
         return stats
 
-    def _fetch_segment_df(self, key: Dict[str, Any], min_n: int = 15):
+    def _fetch_segment_df(self, key: Dict[str, Any]):
         """
-        Hierarchical backoff with recency filter (configurable lookback period).
+        Hierarchical backoff with tier-specific minimum sample thresholds.
+        Tier index mapping (0=most specific, 5=global):
+          0: account + type + category + product_type (n >= 10)
+          1: account + type + category                (n >= 8)
+          2: account + type                           (n >= 5)
+          3: type + category                          (n >= 5)
+          4: type                                     (n >= 3)
+          5: global                                   (n >= 1)
         Returns: (segment_df, segment_keys_used, backoff_tier)
         """
-        candidates = [
-            ['account', 'type', 'category', 'product_type'],
-            ['type', 'category', 'product_type'],
-            ['type', 'category'],
-            ['category'],
-            []  # global
+        SEGMENT_BACKOFF_TIERS = [
+            (['account', 'type', 'category', 'product_type'], 10),
+            (['account', 'type', 'category'], 8),
+            (['account', 'type'], 5),
+            (['type', 'category'], 5),
+            (['type'], 3),
+            ([], 1),
         ]
         recency_cutoff = (datetime.now().date() - timedelta(days=self.lookback_days)).isoformat()
-        for tier, fields in enumerate(candidates, start=1):
+        for tier, (fields, min_required) in enumerate(SEGMENT_BACKOFF_TIERS):
+            # Skip tiers that require keys missing on the target project
+            if fields and any(key.get(field) in (None, "") for field in fields):
+                continue
             q = self.db.client.table('projects').select('*').gte('date_created', recency_cutoff)
-            for f in fields:
-                v = key.get(f)
-                if v:
-                    # Query product_key column when the segment key is 'product_type'
-                    col = 'product_key' if f == 'product_type' else f
-                    q = q.eq(col, v)
+            for field in fields:
+                # 'product_type' in key maps to 'product_key' column in projects table
+                col = 'product_key' if field == 'product_type' else field
+                q = q.eq(col, key.get(field))
             rows = q.limit(5000).execute().data or []
-            if len(rows) >= (min_n if fields else 50) or not fields:
-                df = pd.DataFrame(rows) if rows else pd.DataFrame()
-                return df, fields, tier
-        return pd.DataFrame(), [], len(candidates)
+            if len(rows) >= min_required:
+                return pd.DataFrame(rows), fields, tier
+        # Should only happen if there are no rows at all in the lookback window.
+        return pd.DataFrame(), [], len(SEGMENT_BACKOFF_TIERS) - 1
 
     def _fetch_global_df(self) -> pd.DataFrame:
         """Fetch global dataset with configurable lookback period."""

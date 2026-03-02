@@ -127,6 +127,11 @@ def process_projects(
             llm_out, meta = llm.analyze_project(features, predictions, seg_stats)
             final = llm.create_final_analysis(features, predictions, llm_out, meta)
 
+            segment_internal_tier = seg_stats.backoff_tier if seg_stats else 5
+            segment_priority_tier = seg_stats.backoff_priority_tier if seg_stats else 6
+            segment_priority_label = seg_stats.backoff_priority_label if seg_stats else "Global median"
+            segment_min_n = seg_stats.backoff_min_n if seg_stats else 1
+
             result = {
                 "project_id": pid,
                 "item_name": project.get("item_name"),
@@ -157,7 +162,10 @@ def process_projects(
                 "segment": {
                     "keys": seg_stats.segment_keys if seg_stats else [],
                     "sample_size": seg_stats.sample_size if seg_stats else 0,
-                    "backoff_tier": seg_stats.backoff_tier if seg_stats else 5,
+                    "backoff_tier": segment_priority_tier,              # reporting tier (1..6)
+                    "backoff_tier_internal": segment_internal_tier,     # internal tier (0..5)
+                    "backoff_label": segment_priority_label,
+                    "backoff_min_n": segment_min_n,
                     "win_rate": seg_stats.conversion_rate if seg_stats else None,
                     "win_rate_inclusive": getattr(seg_stats, "inclusive_conversion_rate", None),
                     "win_rate_closed": getattr(seg_stats, "closed_conversion_rate", None),
@@ -165,9 +173,9 @@ def process_projects(
                     "wins": seg_stats.wins if seg_stats else 0,
                     "losses": seg_stats.losses if seg_stats else 0,
                     "open": seg_stats.open if seg_stats else 0,
-                    "gestation_median": seg_stats.gestation_median,
-                    "gestation_p25": seg_stats.gestation_p25,
-                    "gestation_p75": seg_stats.gestation_p75,
+                    "gestation_median": seg_stats.gestation_median if seg_stats else None,
+                    "gestation_p25": seg_stats.gestation_p25 if seg_stats else None,
+                    "gestation_p75": seg_stats.gestation_p75 if seg_stats else None,
                 },
             }
             results.append(result)

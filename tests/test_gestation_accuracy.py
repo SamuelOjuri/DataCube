@@ -62,6 +62,180 @@ def load_model_predictions(engine):
     return pd.read_sql(query, engine)
 
 
+LEGACY_BACKOFF_TIERS = [
+    {"name": "A×T×C×PK", "fields": ["account", "type", "category", "product_key"], "min_n": 15},
+    {"name": "T×C×PK",   "fields": ["type", "category", "product_key"], "min_n": 15},
+    {"name": "T×C",      "fields": ["type", "category"], "min_n": 15},
+    {"name": "C",        "fields": ["category"], "min_n": 15},
+    {"name": "GLOBAL",   "fields": [], "min_n": 1},
+]
+
+NEW_BACKOFF_TIERS = [
+    {"name": "A×T×C×PK", "fields": ["account", "type", "category", "product_key"], "min_n": 10},
+    {"name": "A×T×C",    "fields": ["account", "type", "category"], "min_n": 8},
+    {"name": "A×T",      "fields": ["account", "type"], "min_n": 5},
+    {"name": "T×C",      "fields": ["type", "category"], "min_n": 5},
+    {"name": "T",        "fields": ["type"], "min_n": 3},
+    {"name": "GLOBAL",   "fields": [], "min_n": 1},
+]
+
+
+def _norm_key_value(v):
+    if pd.isna(v):
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    return v
+
+
+def predict_hierarchical_backoff_loo(df, target_idx, tiers):
+    """
+    Leave-one-out hierarchical backoff prediction for one project.
+    Returns: (predicted_days, tier_idx, tier_name, segment_n)
+    """
+    target = df.loc[target_idx]
+    train = df.drop(index=target_idx)
+
+    for tier_idx, tier in enumerate(tiers):
+        fields = tier["fields"]
+        min_n = int(tier["min_n"])
+
+        # Skip tiers requiring missing target keys
+        if fields and any(_norm_key_value(target.get(f)) is None for f in fields):
+            continue
+
+        if not fields:
+            seg_vals = train["actual_days"].dropna()
+        else:
+            mask = pd.Series(True, index=train.index)
+            for f in fields:
+                mask &= train[f] == target[f]
+            seg_vals = train.loc[mask, "actual_days"].dropna()
+
+        seg_n = int(seg_vals.shape[0])
+        if seg_n >= min_n:
+            return float(seg_vals.median()), tier_idx, tier["name"], seg_n
+
+    # Hard fallback
+    global_vals = train["actual_days"].dropna()
+    if global_vals.empty:
+        return np.nan, len(tiers) - 1, tiers[-1]["name"], 0
+    return float(global_vals.median()), len(tiers) - 1, tiers[-1]["name"], int(global_vals.shape[0])
+
+
+def compute_hierarchical_predictions(df, tiers, tag):
+    out = df.copy()
+    preds, tier_ids, tier_names, seg_ns = [], [], [], []
+
+    for idx in out.index:
+        pred, tier_idx, tier_name, seg_n = predict_hierarchical_backoff_loo(out, idx, tiers)
+        preds.append(pred)
+        tier_ids.append(tier_idx)
+        tier_names.append(tier_name)
+        seg_ns.append(seg_n)
+
+    out[f"predicted_{tag}"] = preds
+    out[f"tier_{tag}"] = tier_ids
+    out[f"tier_name_{tag}"] = tier_names
+    out[f"segment_n_{tag}"] = seg_ns
+    return out
+
+
+def tier_usage_distribution(df, tier_col, seg_n_col, tiers):
+    total = len(df)
+    rows = []
+    for i, t in enumerate(tiers):
+        subset = df[df[tier_col] == i]
+        n = len(subset)
+        seg_sizes = subset[seg_n_col] if n > 0 else pd.Series(dtype=float)
+        rows.append({
+            "tier_idx": i,
+            "tier_name": t["name"],
+            "min_n": t["min_n"],
+            "count": n,
+            "pct": round(100.0 * n / total, 2) if total else 0.0,
+            "mean_segment_n": round(float(seg_sizes.mean()), 2) if n else 0.0,
+            "median_segment_n": round(float(seg_sizes.median()), 2) if n else 0.0,
+            "min_segment_n": int(seg_sizes.min()) if n else 0,
+            "max_segment_n": int(seg_sizes.max()) if n else 0,
+        })
+    return pd.DataFrame(rows)
+
+
+def paired_backoff_eval(actual, pred_a, pred_b, label_a, label_b, n_boot=4000, seed=42):
+    """
+    Paired evaluation of strategy B vs A.
+    Negative deltas mean B improves error.
+    """
+    actual = np.asarray(actual, dtype=float)
+    pred_a = np.asarray(pred_a, dtype=float)
+    pred_b = np.asarray(pred_b, dtype=float)
+
+    valid = ~(np.isnan(actual) | np.isnan(pred_a) | np.isnan(pred_b))
+    actual = actual[valid]
+    pred_a = pred_a[valid]
+    pred_b = pred_b[valid]
+
+    err_a = pred_a - actual
+    err_b = pred_b - actual
+    abs_a = np.abs(err_a)
+    abs_b = np.abs(err_b)
+    sq_a = err_a ** 2
+    sq_b = err_b ** 2
+
+    # Paired tests
+    t_abs, p_abs = stats.ttest_rel(abs_a, abs_b)
+    t_sq, p_sq = stats.ttest_rel(sq_a, sq_b)
+
+    try:
+        w_abs, wp_abs = stats.wilcoxon(abs_a, abs_b)
+    except ValueError:
+        w_abs, wp_abs = np.nan, np.nan
+
+    try:
+        w_sq, wp_sq = stats.wilcoxon(sq_a, sq_b)
+    except ValueError:
+        w_sq, wp_sq = np.nan, np.nan
+
+    # Sign test on absolute errors
+    non_tie = abs_a != abs_b
+    n_non_tie = int(non_tie.sum())
+    wins_b = int((abs_b[non_tie] < abs_a[non_tie]).sum()) if n_non_tie else 0
+    sign_p = stats.binomtest(wins_b, n_non_tie, p=0.5, alternative="greater").pvalue if n_non_tie else np.nan
+
+    # Bootstrap CIs for metric deltas: (B - A)
+    rng = np.random.default_rng(seed)
+    n = len(actual)
+    idx = rng.integers(0, n, size=(n_boot, n))
+
+    mae_delta_samples = abs_b[idx].mean(axis=1) - abs_a[idx].mean(axis=1)
+    rmse_delta_samples = np.sqrt(sq_b[idx].mean(axis=1)) - np.sqrt(sq_a[idx].mean(axis=1))
+    medae_delta_samples = np.median(abs_b[idx], axis=1) - np.median(abs_a[idx], axis=1)
+
+    def ci95(x):
+        return (round(float(np.percentile(x, 2.5)), 3), round(float(np.percentile(x, 97.5)), 3))
+
+    return {
+        "comparison": f"{label_a} vs {label_b}",
+        "n_projects": int(n),
+        "delta_mae_b_minus_a": round(float(abs_b.mean() - abs_a.mean()), 3),
+        "delta_rmse_b_minus_a": round(float(np.sqrt(sq_b.mean()) - np.sqrt(sq_a.mean())), 3),
+        "delta_medae_b_minus_a": round(float(np.median(abs_b) - np.median(abs_a)), 3),
+        "delta_mae_ci95": ci95(mae_delta_samples),
+        "delta_rmse_ci95": ci95(rmse_delta_samples),
+        "delta_medae_ci95": ci95(medae_delta_samples),
+        "paired_t_pvalue_abs_error": round(float(p_abs), 6),
+        "paired_t_pvalue_squared_error": round(float(p_sq), 6),
+        "wilcoxon_pvalue_abs_error": round(float(wp_abs), 6) if not np.isnan(wp_abs) else None,
+        "wilcoxon_pvalue_squared_error": round(float(wp_sq), 6) if not np.isnan(wp_sq) else None,
+        "sign_test_pvalue_abs_error": round(float(sign_p), 6) if not np.isnan(sign_p) else None,
+        "wins_for_b_on_abs_error": wins_b,
+        "non_ties_abs_error": n_non_tie,
+        "winner": label_b if abs_b.mean() < abs_a.mean() else label_a,
+    }
+
+
 def compute_segment_predictions(df, segment_col):
     """
     Compute leave-one-out mean predictions based on a segmentation column.
@@ -173,7 +347,7 @@ def run_comparison():
     df = load_evaluation_set(engine)
     model_preds = load_model_predictions(engine)
 
-    # Merge actual model predictions
+    # Merge production predictions (optional reference line)
     df = df.merge(model_preds, left_on='monday_id', right_on='project_id', how='inner')
 
     print(f"Loaded {len(df)} projects for evaluation")
@@ -181,101 +355,91 @@ def run_comparison():
     print(f"Unique product_key values:  {df['product_key'].nunique()}")
     print()
 
-    # --- Generate predictions under both segmentation approaches ---
+    # Shadow A/B on same projects with leave-one-out medians
+    print("Computing predictions with LEGACY hierarchical backoff...")
+    df = compute_hierarchical_predictions(df, LEGACY_BACKOFF_TIERS, "legacy_backoff")
+
+    print("Computing predictions with NEW hierarchical backoff...")
+    df = compute_hierarchical_predictions(df, NEW_BACKOFF_TIERS, "new_backoff")
+
+    # Optional existing baselines for context
     print("Computing predictions with product_type segmentation...")
     df = compute_segment_predictions(df, 'product_type')
 
     print("Computing predictions with product_key segmentation...")
     df = compute_segment_predictions(df, 'product_key')
 
-    # --- Overall metrics comparison (3-way: actual model vs both baselines) ---
     print("\n" + "=" * 70)
     print("OVERALL ACCURACY COMPARISON")
     print("=" * 70)
 
     metrics_model = compute_metrics(
-        df['actual_days'], df['model_predicted_days'], 'production_model (product_key)'
-    )
-    metrics_product_type = compute_metrics(
-        df['actual_days'], df['predicted_product_type'], 'baseline: product_type mean'
-    )
-    metrics_product_key = compute_metrics(
-        df['actual_days'], df['predicted_product_key'], 'baseline: product_key mean'
+        df['actual_days'], df['model_predicted_days'], 'production_model'
     )
 
-    comparison_df = pd.DataFrame([metrics_model, metrics_product_type, metrics_product_key])
+    metrics_legacy = compute_metrics(
+        df['actual_days'], df['predicted_legacy_backoff'], 'legacy_backoff_sim'
+    )
+
+    metrics_new = compute_metrics(
+        df['actual_days'], df['predicted_new_backoff'], 'new_backoff_sim'
+    )
+
+    comparison_df = pd.DataFrame([metrics_model, metrics_legacy, metrics_new])
     print(comparison_df.to_string(index=False))
 
-    # --- Is the production model better than product_type baseline? ---
+    # Paired significance: legacy vs new (same rows, paired deltas)
     print("\n" + "=" * 70)
-    print("SIGNIFICANCE: Production Model vs product_type Baseline")
+    print("PAIRED SIGNIFICANCE: LEGACY vs NEW BACKOFF")
     print("=" * 70)
 
-    sig_model_vs_type = paired_significance_test(
+    paired_legacy_vs_new = paired_backoff_eval(
         df['actual_days'].values,
-        df['model_predicted_days'].values,
-        df['predicted_product_type'].values,
-        'production_model',
-        'product_type_baseline'
+        df['predicted_legacy_backoff'].values,
+        df['predicted_new_backoff'].values,
+        'legacy_backoff',
+        'new_backoff',
     )
-    for k, v in sig_model_vs_type.items():
+
+    for k, v in paired_legacy_vs_new.items():
         print(f"  {k}: {v}")
 
-    # --- product_type vs product_key baseline ---
+    # Tier usage distributions
     print("\n" + "=" * 70)
-    print("SIGNIFICANCE: product_type vs product_key Baselines")
+    print("TIER USAGE DISTRIBUTION")
     print("=" * 70)
 
-    sig_type_vs_key = paired_significance_test(
-        df['actual_days'].values,
-        df['predicted_product_type'].values,
-        df['predicted_product_key'].values,
-        'product_type',
-        'product_key'
+    legacy_tier_usage = tier_usage_distribution(
+        df, "tier_legacy_backoff", "segment_n_legacy_backoff", LEGACY_BACKOFF_TIERS
     )
-    for k, v in sig_type_vs_key.items():
-        print(f"  {k}: {v}")
 
-    # --- Where does the production model struggle? ---
+    new_tier_usage = tier_usage_distribution(
+        df, "tier_new_backoff", "segment_n_new_backoff", NEW_BACKOFF_TIERS
+    )
+
+    print("\nLegacy tier usage:")
+    print(legacy_tier_usage.to_string(index=False))
+
+    print("\nNew tier usage:")
+    print(new_tier_usage.to_string(index=False))
+
+    # Segment-level A/B (type + category)
     print("\n" + "=" * 70)
-    print("PRODUCTION MODEL: ACCURACY BY SEGMENT")
+    print("SEGMENT-LEVEL COMPARISON: LEGACY vs NEW BACKOFF")
     print("=" * 70)
 
-    for (proj_type, category), group in df.groupby(['type', 'category']):
-        if len(group) < 5:
-            continue
-        actual = group['actual_days'].values
-        predicted = group['model_predicted_days'].values
-        mae = round(np.abs(predicted - actual).mean(), 2)
-        medae = round(np.median(np.abs(predicted - actual)), 2)
-        bias = round((predicted - actual).mean(), 2)
-        print(f"  {proj_type:15s} | {category:12s} | n={len(group):3d} | MAE={mae:7.2f} | MedAE={medae:7.2f} | Bias={bias:7.2f}")
-
-    # --- Segment-level breakdown ---
-    print("\n" + "=" * 70)
-    print("SEGMENT-LEVEL COMPARISON: product_type vs product_key baselines")
-    print("=" * 70)
-
-    seg_comparison = segment_level_comparison(df, 'product_type', 'product_key')
+    seg_comparison = segment_level_comparison(df, 'legacy_backoff', 'new_backoff')
     print(seg_comparison.to_string(index=False))
 
-    # --- Granularity analysis ---
-    print("\n" + "=" * 70)
-    print("SEGMENT SIZE ANALYSIS (risk of overfitting with finer granularity)")
-    print("=" * 70)
-
-    for col in ['product_type', 'product_key']:
-        sizes = df.groupby(col).size()
-        print(f"\n  {col}:")
-        print(f"    Number of segments: {len(sizes)}")
-        print(f"    Mean segment size:  {sizes.mean():.1f}")
-        print(f"    Median segment size: {sizes.median():.1f}")
-        print(f"    Min segment size:   {sizes.min()}")
-        print(f"    Segments with < 5:  {(sizes < 5).sum()}")
-        print(f"    Segments with < 10: {(sizes < 10).sum()}")
-
-    return comparison_df, sig_model_vs_type, sig_type_vs_key, seg_comparison
+    return comparison_df, paired_legacy_vs_new, legacy_tier_usage, new_tier_usage, seg_comparison, df
 
 
 if __name__ == '__main__':
-    comparison_df, sig_model_vs_type, sig_type_vs_key, seg_comparison = run_comparison()
+    (
+        comparison_df,
+        paired_legacy_vs_new,
+        legacy_tier_usage,
+        new_tier_usage,
+        seg_comparison,
+        eval_df,
+    ) = run_comparison()

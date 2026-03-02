@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field
 from pydantic import ConfigDict
-from pydantic import field_validator, model_serializer
+from pydantic import field_validator, model_serializer, model_validator
 
 class PipelineStage(str, Enum):
     """Pipeline stage categories"""
@@ -30,6 +30,52 @@ class ProjectType(str, Enum):
     """Project type categories"""
     REFURBISHMENT = "Refurbishment"
     NEW_BUILD = "New Build"
+
+BACKOFF_PRIORITY_TABLE: Dict[int, Dict[str, Any]] = {
+    1: {
+        "label": "Account × Project Type × Building Category × Product Key",
+        "min_n": 10,
+    },
+    2: {
+        "label": "Account × Project Type × Building Category",
+        "min_n": 8,
+    },
+    3: {
+        "label": "Account × Project Type",
+        "min_n": 5,
+    },
+    4: {
+        "label": "Project Type × Building Category",
+        "min_n": 5,
+    },
+    5: {
+        "label": "Project Type only",
+        "min_n": 3,
+    },
+    6: {
+        "label": "Global median",
+        "min_n": 1,
+    },
+}
+
+
+def get_backoff_priority_metadata(backoff_tier: Optional[int]) -> Dict[str, Any]:
+    """
+    Convert internal zero-based backoff tier (0..5) into reporting tier (1..6)
+    and attach the priority-table label/min_n metadata.
+    """
+    if backoff_tier is None:
+        priority_tier = 6
+    else:
+        tier = int(backoff_tier)
+        priority_tier = min(max(tier + 1, 1), 6)
+
+    cfg = BACKOFF_PRIORITY_TABLE[priority_tier]
+    return {
+        "priority_tier": priority_tier,
+        "label": cfg["label"],
+        "min_n": int(cfg["min_n"]),
+    }
 
 class ProjectFeatures(BaseModel):
     """Features of a project for analysis"""
@@ -58,16 +104,24 @@ class ProjectFeatures(BaseModel):
 
 class SegmentStatistics(BaseModel):
     """Statistics for a data segment"""
+
     segment_keys: List[str] = Field(default_factory=list)
     sample_size: int = Field(ge=0)
+
+    # Internal zero-based tier used by analysis engine (0=most specific, 5=global)
     backoff_tier: int = Field(ge=0, le=5)
-    
+
+    # Reporting-ready priority-table metadata (1=most specific, 6=global median)
+    backoff_priority_tier: int = Field(default=6, ge=1, le=6)
+    backoff_priority_label: str = Field(default="Global median")
+    backoff_min_n: int = Field(default=1, ge=1)
+
     # Gestation statistics
     gestation_median: Optional[float] = None
     gestation_p25: Optional[float] = None
     gestation_p75: Optional[float] = None
     gestation_count: int = 0
-    
+
     # Conversion statistics
     wins: int = 0
     losses: int = 0
@@ -78,11 +132,19 @@ class SegmentStatistics(BaseModel):
     # Report both rates
     inclusive_conversion_rate: Optional[float] = Field(default=None, ge=0, le=1)
     closed_conversion_rate: Optional[float] = Field(default=None, ge=0, le=1)
-    
+
     # Additional metrics
     average_value: Optional[float] = None
     account_win_rate: Optional[float] = None
     product_win_rate: Optional[float] = None
+
+    @model_validator(mode="after")
+    def populate_priority_metadata(self) -> "SegmentStatistics":
+        meta = get_backoff_priority_metadata(self.backoff_tier)
+        self.backoff_priority_tier = meta["priority_tier"]
+        self.backoff_priority_label = meta["label"]
+        self.backoff_min_n = meta["min_n"]
+        return self
 
 class NumericPredictions(BaseModel):
     """Numeric predictions for a project"""

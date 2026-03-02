@@ -24,15 +24,18 @@ import pandas as pd
 #     logger.setLevel(getattr(logging, _env_level, logging.INFO))
 
 try:
+
     from .models import (
         ProjectFeatures,
         NumericPredictions,
         ProjectAnalysisInput,
         ProjectAnalysisOutput,
         AnalysisResult,
-        SegmentStatistics
+        SegmentStatistics,
+        get_backoff_priority_metadata,
     )
     from src.config import ANALYSIS_DIR, CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
+
 except ImportError:
     from models import (
         ProjectFeatures,
@@ -40,7 +43,8 @@ except ImportError:
         ProjectAnalysisInput,
         ProjectAnalysisOutput,
         AnalysisResult,
-        SegmentStatistics
+        SegmentStatistics,
+        get_backoff_priority_metadata,
     )
     from config import ANALYSIS_DIR, CACHE_DIR
 
@@ -125,17 +129,7 @@ class LLMAnalyzer:
     ) -> str:
         """
         Create a structured prompt for LLM analysis.
-        
-        Args:
-            project_features: Features of the project
-            numeric_predictions: Pre-computed numeric baselines
-            segment_statistics: Statistics of the segment used
-            historical_context: Historical data context
-            
-        Returns:
-            Formatted prompt string
         """
-        # Format project features
         project_json = {
             "project_id": project_features.project_id,
             "account": project_features.account or "Unknown",
@@ -146,31 +140,31 @@ class LLMAnalyzer:
             "value_band": project_features.value_band or "Unknown",
             "pipeline_stage": project_features.pipeline_stage or "Unknown"
         }
-        
-        # Format segment information
+
+        internal_tier = segment_statistics.backoff_tier if segment_statistics else 5
+        tier_meta = get_backoff_priority_metadata(internal_tier)
         segment_info = {
             "keys": segment_statistics.segment_keys if segment_statistics else [],
             "sample_size": segment_statistics.sample_size if segment_statistics else 0,
-            "backoff_tier": segment_statistics.backoff_tier if segment_statistics else 5
+            "backoff_tier": segment_statistics.backoff_priority_tier if segment_statistics else tier_meta["priority_tier"],
+            "backoff_label": segment_statistics.backoff_priority_label if segment_statistics else tier_meta["label"],
+            "backoff_min_n": segment_statistics.backoff_min_n if segment_statistics else tier_meta["min_n"],
+            "backoff_tier_internal": internal_tier,
         }
-        
+
         sample_size = segment_info["sample_size"]
         backoff_tier = segment_info["backoff_tier"]
         conv_conf = numeric_predictions.conversion_confidence or 0.0
         gest_conf = numeric_predictions.gestation_confidence or 0.0
         conv_conf_pct = f"{conv_conf:.0%}"
         gest_conf_pct = f"{gest_conf:.0%}"
-        
-        # Calculate confidence level
-        confidence = "High" if segment_info['sample_size'] > 50 else \
-                    "Medium" if segment_info['sample_size'] > 15 else "Low"
-        
-        # Format historical performance separately to avoid f-string issues
+        confidence = "High" if sample_size > 50 else "Medium" if sample_size > 15 else "Low"
+
         if segment_statistics and segment_statistics.conversion_rate:
             win_rate = f"{segment_statistics.conversion_rate:.1%}"
         else:
             win_rate = "N/A"
-        
+
         if segment_statistics:
             total_projects = segment_statistics.wins + segment_statistics.losses + segment_statistics.open
             wins = segment_statistics.wins
@@ -178,94 +172,103 @@ class LLMAnalyzer:
             open_count = segment_statistics.open
         else:
             total_projects = wins = losses = open_count = "N/A"
-        
+
         if segment_statistics and segment_statistics.average_value:
             avg_value = f"£{segment_statistics.average_value:,.2f}"
         else:
             avg_value = "N/A"
-        
+
         prompt = f"""
-        You are analyzing a project with pre-computed baseline predictions. Your role is to:
-        1. Provide clear reasoning for why these predictions make sense
-        2. Identify any special factors that might adjust the rating by ±1
-        3. Explain the predictions in business terms
+    You are analyzing a project with pre-computed baseline predictions. Your role is to:
+    1. Provide clear reasoning for why these predictions make sense
+    2. Identify any special factors that might adjust the rating by ±1
+    3. Explain the predictions in business terms
+    Speak directly to a business stakeholder with no analytics background. Use short sentences, avoid jargon, and translate percentages into relatable odds (e.g., "around one in five"). When you mention confidence, say what it means in practice (e.g., "we're fairly sure, but there is some room for surprises"). Example tone: "We usually see a decision in about seven weeks because around 30 similar refurb jobs wrapped up in that window last year."
 
-        Speak directly to a business stakeholder with no analytics background. Use short sentences, avoid jargon, and translate percentages into relatable odds (e.g., "around one in five"). When you mention confidence, say what it means in practice (e.g., "we're fairly sure, but there is some room for surprises"). Example tone: "We usually see a decision in about seven weeks because around 30 similar refurb jobs wrapped up in that window last year."
+    Project Data:
 
-        Project Data:
-        {json.dumps(project_json, indent=2)}
+    {json.dumps(project_json, indent=2)}
 
-        Historical Context:
-        - Segment used: {', '.join(segment_info['keys']) if segment_info['keys'] else 'Global data'}
-        - Similar projects analyzed: {segment_info['sample_size']}
-        - Backoff tier: {segment_info['backoff_tier']} (0=most specific, 5=global)
-        - Confidence level: {confidence}
-        - Conversion confidence: {conv_conf_pct}
-        - Gestation confidence: {gest_conf_pct}
+    Historical Context:
 
-        Baseline Predictions (already calculated):
-        - Expected Gestation Period: {numeric_predictions.expected_gestation_days} days (range: {numeric_predictions.gestation_range.get('p25', 'N/A')}-{numeric_predictions.gestation_range.get('p75', 'N/A')} days)
-        - Expected Conversion Rate: {numeric_predictions.expected_conversion_rate:.1%} (confidence: {numeric_predictions.conversion_confidence:.1%})
-        - Rating Score: {numeric_predictions.rating_score}/100
+    - Segment used: {', '.join(segment_info['keys']) if segment_info['keys'] else 'Global data'}
+    - Similar projects analyzed: {segment_info['sample_size']}
+    - Backoff priority tier: {segment_info['backoff_tier']} (1=most specific, 6=global median)
+    - Priority label: {segment_info['backoff_label']} (minimum n={segment_info['backoff_min_n']})
+    - Confidence level: {confidence}
+    - Conversion confidence: {conv_conf_pct}
+    - Gestation confidence: {gest_conf_pct}
 
-        Historical Performance in this segment:
-        - Win rate: {win_rate}
-        - Total projects: {total_projects} (Wins: {wins}, Losses: {losses}, Open enquiries: {open_count})
-        - Average project value: {avg_value}
-        - Open enquiries simply indicate no recorded outcome yet; they must not be treated as a negative signal.
+    Baseline Predictions (already calculated):
 
-        Adjustment Guardrails (non-negotiable):
-        - rating_adjustment must be an integer between -5 and +5. Zero is the default and should be used unless a statistically significant deviation is proven.
-        - Only consider a non-zero adjustment if every one of these conditions is satisfied:
-          * sample_size ≥ 60 (current: {sample_size})
-          * conversion confidence ≥ 70% (current: {conv_conf_pct})
-          * backoff tier ≤ 2 (current: {backoff_tier})
-          * You identify and cite a quantified deviation from baselines (e.g., segment win rate vs baseline conversion, project value vs segment average) large enough to justify the magnitude you choose.
-        - If any condition is not met, you must leave rating_adjustment at 0 and explicitly state that no statistically significant adjustment is justified.
-        - When you do apply a non-zero adjustment, you must reference the exact metrics (sample size, conversion confidence, quantified deviation) inside both reasoning.rating and special_factors.
+    - Expected Gestation Period: {numeric_predictions.expected_gestation_days} days (range: {numeric_predictions.gestation_range.get('p25', 'N/A')}-{numeric_predictions.gestation_range.get('p75', 'N/A')} days)
+    - Expected Conversion Rate: {numeric_predictions.expected_conversion_rate:.1%} (confidence: {numeric_predictions.conversion_confidence:.1%})
+    - Rating Score: {numeric_predictions.rating_score}/100
 
-        Please provide:
-        0. **Plain-English Overview**: Two or three sentences or bullet points that summarise the key takeaways in everyday language.
-        1. **Gestation Period Reasoning**: Why {numeric_predictions.expected_gestation_days} days makes sense for this project
-        2. **Conversion Rate Reasoning**: What factors support the {numeric_predictions.expected_conversion_rate:.1%} conversion rate
-        3. **Rating Score Reasoning**: Why this project deserves a {numeric_predictions.rating_score}/100 rating
-        4. **Special Factors**: Any unique aspects that might adjust the rating by ±5?
+    Historical Performance in this segment:
 
-        Consider these factors in your analysis:
-        - The account's historical performance
-        - The project type and category combination
-        - The value band relative to similar projects
-        - The product type's typical success rate
+    - Win rate: {win_rate}
+    - Total projects: {total_projects} (Wins: {wins}, Losses: {losses}, Open enquiries: {open_count})
+    - Average project value: {avg_value}
+    - Open enquiries simply indicate no recorded outcome yet; they must not be treated as a negative signal.
 
-        Rules:
-        - Treat 'Open Enquiry' as neutral; do not infer stage or uncertainty, and do not describe a high count of open enquiries as a risk.
-        - Do not use pipeline-stage wording as justification; focus on numeric baselines (conversion, gestation, value) and segment statistics.
-        - Cite the concrete metrics (sample size, confidence, win/value comparisons) that underpin every conclusion.
-        - Every time you mention a percentage or confidence, add a short interpretation in plain English.
-        - Avoid analytics jargon ("quantile", "standard deviation"); use everyday alternatives ("middle of the range", "spread").
+    Adjustment Guardrails (non-negotiable):
 
-        Return as JSON with structure:
-        {{
-        "summary": "An overview of the analysis...",
-        "reasoning": {{
-            "gestation": "Clear explanation of why the gestation period makes sense...",
-            "conversion": "Explanation of conversion rate factors...",
-            "rating": "Justification for the rating score..."
-        }},
-        "adjustments": {{
-            "rating_adjustment": 0
-        }},
-        "special_factors": "Any notable considerations or risk factors...",
-        "confidence_notes": "Any caveats about data quality or sample size..."
-        }}
+    - rating_adjustment must be an integer between -5 and +5. Zero is the default and should be used unless a statistically significant deviation is proven.
+    - Only consider a non-zero adjustment if every one of these conditions is satisfied:
+      * sample_size ≥ 60 (current: {sample_size})
+      * conversion confidence ≥ 70% (current: {conv_conf_pct})
+      * priority tier ≤ 3 (current: {backoff_tier}: {segment_info['backoff_label']})
+      * You identify and cite a quantified deviation from baselines (e.g., segment win rate vs baseline conversion, project value vs segment average) large enough to justify the magnitude you choose.
+    - If any condition is not met, you must leave rating_adjustment at 0 and explicitly state that no statistically significant adjustment is justified.
+    - When you do apply a non-zero adjustment, you must reference the exact metrics (sample size, conversion confidence, quantified deviation) inside both reasoning.rating and special_factors.
 
-        IMPORTANT: 
-        - rating_adjustment must stay between -5 and +5 (inclusive) and be a whole number
-        - Base your reasoning on the data provided and the guardrails above
-        - Be specific about which factors most influence each prediction
-        - Consider the backoff tier - higher tiers mean less specific data was available
-        """
-        
+    Please provide:
+
+    0. **Plain-English Overview**: Two or three sentences or bullet points that summarise the key takeaways in everyday language.
+    1. **Gestation Period Reasoning**: Why {numeric_predictions.expected_gestation_days} days makes sense for this project
+    2. **Conversion Rate Reasoning**: What factors support the {numeric_predictions.expected_conversion_rate:.1%} conversion rate
+    3. **Rating Score Reasoning**: Why this project deserves a {numeric_predictions.rating_score}/100 rating
+    4. **Special Factors**: Any unique aspects that might adjust the rating by ±5?
+
+    Consider these factors in your analysis:
+
+    - The account's historical performance
+    - The project type and category combination
+    - The value band relative to similar projects
+    - The product type's typical success rate
+
+    Rules:
+
+    - Treat 'Open Enquiry' as neutral; do not infer stage or uncertainty, and do not describe a high count of open enquiries as a risk.
+    - Do not use pipeline-stage wording as justification; focus on numeric baselines (conversion, gestation, value) and segment statistics.
+    - Cite the concrete metrics (sample size, confidence, win/value comparisons) that underpin every conclusion.
+    - Every time you mention a percentage or confidence, add a short interpretation in plain English.
+    - Avoid analytics jargon ("quantile", "standard deviation"); use everyday alternatives ("middle of the range", "spread").
+
+    Return as JSON with structure:
+
+    {{
+    "summary": "An overview of the analysis...",
+    "reasoning": {{
+        "gestation": "Clear explanation of why the gestation period makes sense...",
+        "conversion": "Explanation of conversion rate factors...",
+        "rating": "Justification for the rating score..."
+    }},
+    "adjustments": {{
+        "rating_adjustment": 0
+    }},
+    "special_factors": "Any notable considerations or risk factors...",
+    "confidence_notes": "Any caveats about data quality or sample size..."
+    }}
+
+    IMPORTANT:
+    - rating_adjustment must stay between -5 and +5 (inclusive) and be a whole number
+    - Base your reasoning on the data provided and the guardrails above
+    - Be specific about which factors most influence each prediction
+    - Consider the backoff priority tier: higher tier numbers (closer to 6) mean less specific data was available
+    """
+
         return prompt
 
     def _extract_response_content(self, response: Any) -> str:
@@ -402,11 +405,15 @@ class LLMAnalyzer:
 
     def _build_confidence_notes(self, stats: Optional[SegmentStatistics], preds: NumericPredictions) -> str:
         n = stats.sample_size if stats else 0
-        tier = stats.backoff_tier if stats else 5
+        internal_tier = stats.backoff_tier if stats else 5
+        tier_meta = get_backoff_priority_metadata(internal_tier)
+        priority_tier = stats.backoff_priority_tier if stats else tier_meta["priority_tier"]
+        priority_label = stats.backoff_priority_label if stats else tier_meta["label"]
         conv_conf = preds.conversion_confidence or 0.0
         gest_conf = preds.gestation_confidence or 0.0
         return (
-            f"Confidence reflects sample size {n} (backoff tier {tier}), "
+            f"Confidence reflects sample size {n} "
+            f"(priority tier {priority_tier}: {priority_label}), "
             f"conversion confidence {conv_conf:.0%} and gestation confidence {gest_conf:.0%}. "
             f"Pipeline stage labels (e.g., 'Open Enquiry') are treated as neutral and are not used."
         )
