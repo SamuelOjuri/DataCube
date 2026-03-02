@@ -45,6 +45,110 @@ MIN_SAMPLE_SIZE = 15  # Minimum sample size for statistical analysis
 TIME_WEIGHTING_ENABLED = True  # Prioritise recent projects in baseline stats
 TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay
 
+# =============================================================================
+# Product Type Segmentation Taxonomy
+# =============================================================================
+
+# CANONICAL_PRODUCT_KEYS: the only allowed values for projects.product_key.
+# Keep this set small (10–15 items) to maximise segment sample sizes.
+# =============================================================================
+
+CANONICAL_PRODUCT_KEYS = {
+    # --- Major PIR Families (by Facing) ---
+    "pir_tissue",           # Adhered systems
+    "pir_foil",             # Mechanically fixed systems
+    "pir_torchon",          # Torch-applied systems
+
+    # --- High-Value Composites ---
+    "pir_prebonded",        # PIR + Plywood/OSB (high unit price & margin)
+
+    # --- EPS Variants (by Application) ---
+    "eps_standard",         # Standard warm roof
+    "eps_inverted",         # Inverted / ballasted roof (high compressive strength)
+    "eps_pir_composite",    # EPS bonded to PIR
+
+    # --- Other Material Families ---
+    "xps",                  # Extruded Polystyrene
+    "vips",                 # Vacuum Insulated Panels
+    "hardrock",             # Stone Wool Insulation (base layer)
+    "rockdeck",             # Stone Wool Overlay Board (top layer)
+
+    # --- Proprietary Systems ---
+    "t3_system",            # Modular / specialist system
+
+    # --- Fallback ---
+    "unknown",              # Unmapped non-empty strings
+}
+
+# =============================================================================
+# PRODUCT_TYPE_ALIASES: maps raw (messy) product strings → canonical keys.
+# Keys are matched after runtime normalisation (lowercase, slash/hyphen collapse).
+# =============================================================================
+
+PRODUCT_TYPE_ALIASES = {
+    # --- PIR: Tissue Faced (Adhered) ---
+    "tf pir": "pir_tissue",
+    "tissue faced pir": "pir_tissue",
+
+    # --- PIR: Foil Faced (Mechanically Fixed) ---
+    "foil faced pir": "pir_foil",
+    "enertherm": "pir_foil",
+
+    # --- PIR: Torch-on (Bituminous) ---
+    "torchon pir": "pir_torchon",
+    "torch on pir": "pir_torchon",
+
+    # --- PIR: Prebonded (High Value / Composite Deck) ---
+    "tissue faced pir (prebonded)": "pir_prebonded",
+    "torchon pir (prebonded)": "pir_prebonded",
+    "torch on pir (prebonded)": "pir_prebonded",
+    "Foil Faced PIR (Prebonded)": "pir_prebonded",
+
+    # --- EPS: Standard Warm Roof ---
+    "eps": "eps_standard",
+    "eps 150 (spr)": "eps_standard",
+    "eps 150 (spi)": "eps_standard",
+    "eps 100 (spi)": "eps_standard",
+
+    # --- EPS: Inverted / Heavy Duty ---
+    "inverted eps": "eps_inverted",
+    "eps 200e": "eps_inverted",
+    "eps 300e": "eps_inverted",
+
+    # --- EPS/PIR Composites ---
+    "eps/pir tissue faced": "eps_pir_composite",
+    "eps/pir tissue faced (prebonded)": "eps_pir_composite",
+    "eps/pir foil faced": "eps_pir_composite",
+    "eps/pir enertherm": "eps_pir_composite",
+    "eps/pir torch on": "eps_pir_composite",
+    "eps/pir torch on (prebonded)": "eps_pir_composite",
+
+    # --- XPS & VIPs ---
+    "xps": "xps",
+    "vip": "vips",
+    "vips": "vips",
+    "inverted vips": "vips",
+
+    # --- Stone Wool (Rockwool) ---
+    "hardrock": "hardrock",
+    "rockwool hardrock multi-fix (dd)": "hardrock",
+    "hardrock multi-fix (dd)": "hardrock",
+    "rockwool hardrock multifix (dd)": "hardrock",
+    "hardrock multifix (dd)": "hardrock",
+    "rockwool hardrock multi fix (dd)": "hardrock",
+    "hardrock multi fix (dd)": "hardrock",
+
+    "rockdeck": "rockdeck",
+    "rockdeck coverboard": "rockdeck",
+    "rockdeck coverboard (g-board12.5mm)": "rockdeck",
+    "rockdeck coverboard (g-board 12.5mm)": "rockdeck",
+
+    # --- Proprietary Systems (T3) ---
+    "t3+": "t3_system",
+    "ready t3+": "t3_system",
+    "roofblock g1t3+": "t3_system",
+}
+
 # Project directories
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"

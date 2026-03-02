@@ -267,80 +267,114 @@ FROM projects p
 LEFT JOIN subitems s ON p.monday_id = s.parent_monday_id
 GROUP BY p.id;
 
+
+-- =========================================================
+-- Add product_key column to projects table
+-- =========================================================
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS product_key TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_projects_product_key ON projects (product_key);
+CREATE INDEX IF NOT EXISTS idx_projects_segment_keys ON projects (account, type, category, product_key);
+
+-- Temporary default for existing rows (backfill script will compute proper values)
+UPDATE projects SET product_key = 'unknown' WHERE product_key IS NULL;
+
+
+
+-- =========================================================
+-- Rebuild conversion_metrics (5-year window)
+-- =========================================================
+
 -- Create materialized view for performance metrics
 -- Use closed-won only as the "won" population
 DROP MATERIALIZED VIEW IF EXISTS conversion_metrics CASCADE;
 
 CREATE MATERIALIZED VIEW conversion_metrics AS
-SELECT 
-    NULLIF(TRIM(account), '')        as account,
-    NULLIF(TRIM(type), '')           as type,
-    NULLIF(TRIM(category), '')       as category,
-    NULLIF(TRIM(product_type), '')   as product_type,
-    COUNT(*) as total_projects,
-    COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)') as won_projects,
-    COUNT(*) FILTER (WHERE pipeline_stage = 'Lost') as lost_projects,
-    COUNT(*) FILTER (WHERE pipeline_stage NOT IN ('Won - Closed (Invoiced)', 'Lost')) as open_projects,
+SELECT
+    NULLIF(TRIM(account), '')        AS account,
+    NULLIF(TRIM(type), '')           AS type,
+    NULLIF(TRIM(category), '')       AS category,
+    NULLIF(TRIM(product_type), '')   AS product_type,
+    NULLIF(TRIM(product_key), '')    AS product_key,
+    COUNT(*)                         AS total_projects,
+    COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)')                          AS won_projects,
+    COUNT(*) FILTER (WHERE pipeline_stage = 'Lost')                                             AS lost_projects,
+    COUNT(*) FILTER (WHERE pipeline_stage NOT IN ('Won - Closed (Invoiced)', 'Lost'))           AS open_projects,
     ROUND(
         COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)')::numeric /
-        NULLIF(COUNT(*), 0), 
+        NULLIF(COUNT(*), 0),
         3
-    ) as win_rate,  -- inclusive: won_closed / all
+    ) AS win_rate,
     ROUND(
         COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)')::numeric /
-        NULLIF((COUNT(*) FILTER (WHERE pipeline_stage IN ('Won - Closed (Invoiced)', 'Lost'))), 0),
+        NULLIF(COUNT(*) FILTER (WHERE pipeline_stage IN ('Won - Closed (Invoiced)', 'Lost')), 0),
         3
-    ) as closed_win_rate,
-    AVG(gestation_period) FILTER (WHERE gestation_period > 0) as avg_gestation,
+    ) AS closed_win_rate,
+    AVG(gestation_period) FILTER (WHERE gestation_period > 0)                                   AS avg_gestation,
     PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY gestation_period)
-        FILTER (WHERE gestation_period > 0) as gestation_p25,
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gestation_period) 
-        FILTER (WHERE gestation_period > 0) as median_gestation,
+        FILTER (WHERE gestation_period > 0)                                                     AS gestation_p25,
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gestation_period)
+        FILTER (WHERE gestation_period > 0)                                                     AS median_gestation,
     PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY gestation_period)
-        FILTER (WHERE gestation_period > 0) as gestation_p75
+        FILTER (WHERE gestation_period > 0)                                                     AS gestation_p75
 FROM projects
 WHERE date_created >= CURRENT_DATE - INTERVAL '5 years'
-GROUP BY 1,2,3,4;
+GROUP BY 1, 2, 3, 4, 5;
 
 CREATE UNIQUE INDEX IF NOT EXISTS conversion_metrics_unique
-  ON conversion_metrics (account, type, category, product_type);
+    ON conversion_metrics (account, type, category, product_type, product_key);
+
+-- Index for queries that segment by product_key only
+CREATE INDEX IF NOT EXISTS idx_conversion_metrics_product_key
+    ON conversion_metrics (account, type, category, product_key);
+
+-- =========================================================
+-- Rebuild conversion_metrics_recent (2-year window)
+-- =========================================================
 
 
 DROP MATERIALIZED VIEW IF EXISTS conversion_metrics_recent CASCADE;
 
 CREATE MATERIALIZED VIEW conversion_metrics_recent AS
-SELECT 
-    NULLIF(TRIM(account), '')        as account,
-    NULLIF(TRIM(type), '')           as type,
-    NULLIF(TRIM(category), '')       as category,
-    NULLIF(TRIM(product_type), '')   as product_type,
-    COUNT(*) as total_projects,
-    COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)') as won_projects,
-    COUNT(*) FILTER (WHERE pipeline_stage = 'Lost') as lost_projects,
-    COUNT(*) FILTER (WHERE pipeline_stage NOT IN ('Won - Closed (Invoiced)', 'Lost')) as open_projects,
+SELECT
+    NULLIF(TRIM(account), '')        AS account,
+    NULLIF(TRIM(type), '')           AS type,
+    NULLIF(TRIM(category), '')       AS category,
+    NULLIF(TRIM(product_type), '')   AS product_type,
+    NULLIF(TRIM(product_key), '')    AS product_key,
+    COUNT(*)                         AS total_projects,
+    COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)')                          AS won_projects,
+    COUNT(*) FILTER (WHERE pipeline_stage = 'Lost')                                             AS lost_projects,
+    COUNT(*) FILTER (WHERE pipeline_stage NOT IN ('Won - Closed (Invoiced)', 'Lost'))           AS open_projects,
     ROUND(
         COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)')::numeric /
-        NULLIF(COUNT(*), 0), 
+        NULLIF(COUNT(*), 0),
         3
-    ) as win_rate,
+    ) AS win_rate,
     ROUND(
         COUNT(*) FILTER (WHERE pipeline_stage = 'Won - Closed (Invoiced)')::numeric /
-        NULLIF((COUNT(*) FILTER (WHERE pipeline_stage IN ('Won - Closed (Invoiced)', 'Lost'))), 0),
+        NULLIF(COUNT(*) FILTER (WHERE pipeline_stage IN ('Won - Closed (Invoiced)', 'Lost')), 0),
         3
-    ) as closed_win_rate,
-    AVG(gestation_period) FILTER (WHERE gestation_period > 0) as avg_gestation,
+    ) AS closed_win_rate,
+    AVG(gestation_period) FILTER (WHERE gestation_period > 0)                                   AS avg_gestation,
     PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY gestation_period)
-        FILTER (WHERE gestation_period > 0) as gestation_p25,
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gestation_period) 
-        FILTER (WHERE gestation_period > 0) as median_gestation,
+        FILTER (WHERE gestation_period > 0)                                                     AS gestation_p25,
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gestation_period)
+        FILTER (WHERE gestation_period > 0)                                                     AS median_gestation,
     PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY gestation_period)
-        FILTER (WHERE gestation_period > 0) as gestation_p75
+        FILTER (WHERE gestation_period > 0)                                                     AS gestation_p75
 FROM projects
 WHERE date_created >= CURRENT_DATE - INTERVAL '2 years'
-GROUP BY 1,2,3,4;
+GROUP BY 1, 2, 3, 4, 5;
 
 CREATE UNIQUE INDEX IF NOT EXISTS conversion_metrics_recent_unique
-  ON conversion_metrics_recent (account, type, category, product_type);
+    ON conversion_metrics_recent (account, type, category, product_type, product_key);
+
+CREATE INDEX IF NOT EXISTS idx_conversion_metrics_recent_product_key
+    ON conversion_metrics_recent (account, type, category, product_key);
+
+-- ==================================================================
 
 -- Create index for full-text search
 CREATE INDEX idx_projects_search ON projects USING gin(
@@ -511,6 +545,8 @@ project_base AS (
         p.type,
         p.category,
         p.product_type,
+        p.product_key,
+
         p.pipeline_stage,
 
         CASE
@@ -628,6 +664,7 @@ SELECT
     b.type,
     b.category,
     b.product_type,
+    b.product_key,
     b.pipeline_stage,
     b.stage_bucket,
     b.contract_value,
@@ -661,6 +698,7 @@ SELECT
     b.probability_spread
 FROM project_bands b;
 
+
 -- =========================================================
 -- Stage 2 + Stage 3: Monthly aggregate sourced from centralized project formulas
 -- =========================================================
@@ -674,12 +712,12 @@ WITH bounds AS (
 SELECT
     f.forecast_month,
     f.stage_bucket,
-    COUNT(*) AS project_count,
-    SUM(f.contract_value)::NUMERIC(14,2) AS contract_value,
-    SUM(f.committed_value)::NUMERIC(14,2) AS committed_value,
-    SUM(f.expected_value)::NUMERIC(14,2) AS expected_value,
-    SUM(f.best_case_value)::NUMERIC(14,2) AS best_case_value,
-    SUM(f.worst_case_value)::NUMERIC(14,2) AS worst_case_value
+    COUNT(*)                                    AS project_count,
+    SUM(f.contract_value)::NUMERIC(14,2)        AS contract_value,
+    SUM(f.committed_value)::NUMERIC(14,2)       AS committed_value,
+    SUM(f.expected_value)::NUMERIC(14,2)        AS expected_value,
+    SUM(f.best_case_value)::NUMERIC(14,2)       AS best_case_value,
+    SUM(f.worst_case_value)::NUMERIC(14,2)      AS worst_case_value
 FROM vw_pipeline_forecast_project_v1 f
 CROSS JOIN bounds b
 WHERE f.forecast_month >= b.window_start
@@ -687,7 +725,6 @@ WHERE f.forecast_month >= b.window_start
 GROUP BY f.forecast_month, f.stage_bucket
 ORDER BY f.forecast_month, f.stage_bucket;
 
--- Required for REFRESH MATERIALIZED VIEW CONCURRENTLY
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pipeline_forecast_monthly_12m_v1_unique
     ON mv_pipeline_forecast_monthly_12m_v1 (forecast_month, stage_bucket);
 

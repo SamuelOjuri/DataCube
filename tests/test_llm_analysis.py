@@ -51,15 +51,16 @@ def build_segment_stats(db: SupabaseClient, project: Dict[str, Any]) -> SegmentS
         'account': project.get('account') or None,
         'type': project.get('type') or None,
         'category': project.get('category') or None,
-        'product_type': project.get('product_type') or None
+        'product_type': project.get('product_key') or project.get('product_type') or None,
     }
 
-    # Try full key
+    # Try full key — query product_key column
     q = db.client.table('conversion_metrics').select('*')
     for f in ['account', 'type', 'category', 'product_type']:
         v = key.get(f)
         if v:
-            q = q.eq(f, v)
+            col = 'product_key' if f == 'product_type' else f
+            q = q.eq(col, v)
     res = q.limit(1).execute().data
 
     cm = res[0] if res else None
@@ -91,9 +92,7 @@ def build_segment_stats(db: SupabaseClient, project: Dict[str, Any]) -> SegmentS
         losses=losses,
         open=open_cnt,
         conversion_rate=win_rate,
-        conversion_confidence=0.7 if cm else 0.4
     )
-
 
 
 def fetch_segment_df(db: SupabaseClient, key: Dict[str, Any], min_n: int = 15, lookback_days: Optional[int] = None):
@@ -102,9 +101,9 @@ def fetch_segment_df(db: SupabaseClient, key: Dict[str, Any], min_n: int = 15, l
     Backoff hierarchy with recency filter (configurable lookback period).
     """
     candidates = [
-        ['account','type','category','product_type'],
-        ['type','category','product_type'],
-        ['type','category'],
+        ['account', 'type', 'category', 'product_type'],
+        ['type', 'category', 'product_type'],
+        ['type', 'category'],
         ['category'],
         []  # global
     ]
@@ -117,13 +116,14 @@ def fetch_segment_df(db: SupabaseClient, key: Dict[str, Any], min_n: int = 15, l
         for f in fields:
             v = key.get(f)
             if v:
-                q = q.eq(f, v)
+                # Query product_key column when the segment key is 'product_type'
+                col = 'product_key' if f == 'product_type' else f
+                q = q.eq(col, v)
         rows = q.limit(5000).execute().data or []
-        # Require fewer rows for specific segments; more for global
         if len(rows) >= (min_n if fields else 50) or not fields:
-            return pd.DataFrame(rows), fields, tier
-    # Fallback (should rarely happen)
-    return pd.DataFrame(), [], 5
+            df = pd.DataFrame(rows) if rows else pd.DataFrame()
+            return df, fields, tier
+    return pd.DataFrame(), [], len(candidates)
 
 
 def to_project_features(p: Dict[str, Any]) -> ProjectFeatures:
@@ -262,7 +262,7 @@ def main(n: int = 100, out_path: Optional[str] = None, csv_path: Optional[str] =
                 'account': p.get('account') or None,
                 'type': p.get('type') or None,
                 'category': p.get('category') or None,
-                'product_type': p.get('product_type') or None
+                'product_type': p.get('product_key') or p.get('product_type') or None,
             }
             seg_df, seg_keys, backoff_tier = fetch_segment_df(db, key, lookback_days=lookback_days)
 

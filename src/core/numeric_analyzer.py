@@ -164,7 +164,7 @@ class NumericBaseline:
         
         # Filter out invalid values (zeros and extreme outliers)
         gestation_values = gestation_values[
-            (gestation_values > 0) & (gestation_values < 1000)
+            (gestation_values > 0) & (gestation_values < 1460)
         ]
         
         if len(gestation_values) < 3:
@@ -572,7 +572,9 @@ class NumericBaseline:
         if not product or segment_data.empty:
             return 0.5
         
-        product_data = segment_data[segment_data['product_type'] == product]
+        # Use product_key column if available, fall back to product_type
+        col = 'product_key' if 'product_key' in segment_data.columns else 'product_type'
+        product_data = segment_data[segment_data[col] == product]
         if product_data.empty:
             return 0.5
         

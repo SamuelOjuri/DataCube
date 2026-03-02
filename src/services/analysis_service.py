@@ -33,7 +33,7 @@ class AnalysisService:
             'account': p.get('account') or None,
             'type': p.get('type') or None,
             'category': p.get('category') or None,
-            'product_type': p.get('product_type') or None
+            'product_type': p.get('product_key') or p.get('product_type') or None,
         }
 
     def _get_cluster_metrics(self, key: Dict[str, Any]) -> Dict[str, Any]:
@@ -136,9 +136,9 @@ class AnalysisService:
         Returns: (segment_df, segment_keys_used, backoff_tier)
         """
         candidates = [
-            ['account','type','category','product_type'],
-            ['type','category','product_type'],
-            ['type','category'],
+            ['account', 'type', 'category', 'product_type'],
+            ['type', 'category', 'product_type'],
+            ['type', 'category'],
             ['category'],
             []  # global
         ]
@@ -148,11 +148,14 @@ class AnalysisService:
             for f in fields:
                 v = key.get(f)
                 if v:
-                    q = q.eq(f, v)
+                    # Query product_key column when the segment key is 'product_type'
+                    col = 'product_key' if f == 'product_type' else f
+                    q = q.eq(col, v)
             rows = q.limit(5000).execute().data or []
             if len(rows) >= (min_n if fields else 50) or not fields:
-                return pd.DataFrame(rows), fields, tier
-        return pd.DataFrame(), [], 5
+                df = pd.DataFrame(rows) if rows else pd.DataFrame()
+                return df, fields, tier
+        return pd.DataFrame(), [], len(candidates)
 
     def _fetch_global_df(self) -> pd.DataFrame:
         """Fetch global dataset with configurable lookback period."""

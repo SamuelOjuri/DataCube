@@ -22,7 +22,7 @@ from src.core.models import ProjectFeatures, NumericPredictions, SegmentStatisti
 from src.core.numeric_analyzer import NumericBaseline
 from src.config import ANALYSIS_LOOKBACK_DAYS, GEMINI_API_KEY, GEMINI_MODEL
 
-from scripts.test_llm_analysis import (
+from tests.test_llm_analysis import (
     build_segment_stats,
     fetch_segment_df,
     fetch_global_df,
@@ -106,7 +106,7 @@ def process_projects(
                 "account": project.get("account") or None,
                 "type": project.get("type") or None,
                 "category": project.get("category") or None,
-                "product_type": project.get("product_type") or None,
+                "product_type": project.get("product_key") or project.get("product_type") or None,
             }
 
             segment_df, segment_keys, backoff_tier = fetch_segment_df(

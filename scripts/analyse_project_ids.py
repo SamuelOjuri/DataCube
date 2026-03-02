@@ -122,7 +122,7 @@ def process_selected_projects(
                 "account": project.get("account") or None,
                 "type": project.get("type") or None,
                 "category": project.get("category") or None,
-                "product_type": project.get("product_type") or None,
+                "product_type": project.get("product_key") or project.get("product_type") or None,
             }
 
             segment_df, segment_keys, backoff_tier = fetch_segment_df(

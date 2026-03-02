@@ -184,9 +184,9 @@ class HierarchicalSegmentation:
     def __init__(self, min_sample_size: int = MIN_SAMPLE_SIZE):
         self.min_sample_size = min_sample_size
         self.backoff_tiers = [
-            ['account', 'type', 'category', 'product_type', 'value_band'],  # Tier 1: All features
-            ['type', 'category', 'product_type', 'value_band'],              # Tier 2: Drop account
-            ['category', 'product_type', 'type'],                            # Tier 3: Drop value
+            ['account', 'type', 'category', 'product_key', 'value_band'],  # Tier 1: All features
+            ['type', 'category', 'product_key', 'value_band'],              # Tier 2: Drop account
+            ['category', 'product_key', 'type'],                            # Tier 3: Drop value
             ['category', 'type'],                                            # Tier 4: Core duo
             []                                                                # Tier 5: Global
         ]
