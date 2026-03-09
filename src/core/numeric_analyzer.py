@@ -167,7 +167,7 @@ class NumericBaseline:
         
         # Filter out invalid values (zeros and extreme outliers)
         gestation_values = gestation_values[
-            (gestation_values > 0) & (gestation_values < 1000)
+            (gestation_values > 0) & (gestation_values < 1460)
         ]
         
         if len(gestation_values) < 3:
