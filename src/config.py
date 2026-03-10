@@ -377,3 +377,110 @@ def get_lookback_days(preset: str = '5_years') -> Optional[int]:
         Number of days to look back, or None for all_time
     """
     return LOOKBACK_PRESETS.get(preset, ANALYSIS_LOOKBACK_DAYS)
+
+
+# ---------------------------------------------------------------------------
+# Gestation bias correction tuning
+# Support-aware, tier-aware shrinkage instead of flat additive uplift.
+# ---------------------------------------------------------------------------
+
+GESTATION_BIAS_CORRECTION_ENABLED = True
+
+# Raw global weighted bias from historical diagnostics: (actual - expected).
+# Keep this as the uncapped historical signal.
+GESTATION_BIAS_GLOBAL_DAYS = 105
+
+# Conservative fallback used when segment support is weak.
+# This is the anchor that low-support segments shrink toward.
+GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 80
+
+# Final adjustment formula still uses damping and a hard cap, but the raw bias
+# is now blended/shrunk first in numeric_analyzer.py.
+#
+# Recommended starting values:
+# - Slightly reduce damping from 0.50 -> 0.45
+# - Slightly reduce cap from 60 -> 55
+# These are a bit more conservative and should help median error while still
+# correcting the strong underprediction bias.
+GESTATION_BIAS_DAMPING_FACTOR = 0.43
+GESTATION_BIAS_MAX_ABS_DAYS = 55
+
+# Legacy threshold kept for compatibility / fallback defaults.
+# The new logic uses continuous shrinkage, so this is no longer the main gate.
+GESTATION_BIAS_MIN_SEGMENT_N = 20
+
+# Continuous support shrinkage:
+# segment_trust = support / (support + GESTATION_BIAS_SUPPORT_SHRINKAGE)
+#
+# Higher values:
+# - trust segment bias less
+# - pull more strongly toward global fallback
+# - reduce overcorrection on sparse/noisy segments
+#
+# Recommended starting value: 30.0
+GESTATION_BIAS_SUPPORT_SHRINKAGE = 30.0
+
+# Tier weights applied after segment/global blending and before damping.
+# These reduce broad type/category bias when the baseline came from a narrower
+# hierarchical tier.
+#
+# Tier mapping in AnalysisService / NumericBaseline:
+#   0: account + type + category + product_type
+#   1: account + type + category
+#   2: account + type
+#   3: type + category
+#   4: type
+#   5: global
+GESTATION_BIAS_TIER_WEIGHTS = {
+    0: 0.50,
+    1: 0.65,
+    2: 0.85,
+    3: 1.00,
+    4: 0.90,
+    5: 0.75,
+}
+
+# Segment mean bias (days): actual_days - expected_days
+# These remain the historical raw segment signals before shrinkage.
+GESTATION_BIAS_BY_SEGMENT = {
+    ("Refurbishment", "Commercial"): 152,
+    ("New Build", "Health"): 150,
+    ("New Build", "Mixed Use"): 146,
+    ("New Build", "Apartments"): 138,
+    ("New Build", "Leisure"): 128,
+    ("Refurbishment", "Leisure"): 118,
+    ("New Build", "Industrial"): 112,
+    ("New Build", "Commercial"): 105,
+    ("New Build", "Education"): 105,
+    ("Refurbishment", "Apartments"): 95,
+    ("New Build", "Datacentre"): 89,
+    ("Refurbishment", "Health"): 88,
+    ("New Build", "House"): 82,
+    ("Refurbishment", "Education"): 82,
+    ("Refurbishment", "Industrial"): 51,
+    ("Refurbishment", "House"): 44,
+    ("New Build", "Consultancy"): 35,
+}
+
+# Historical support counts for the segment-bias table above.
+# The new code prefers actual effective support from the live segment when
+# available, and falls back to these values when it is not.
+GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = {
+    ("Refurbishment", "Commercial"): 51,
+    ("New Build", "Health"): 38,
+    ("New Build", "Mixed Use"): 6,
+    ("New Build", "Apartments"): 186,
+    ("New Build", "Leisure"): 22,
+    ("Refurbishment", "Leisure"): 23,
+    ("New Build", "Industrial"): 9,
+    ("New Build", "Commercial"): 43,
+    ("New Build", "Education"): 39,
+    ("Refurbishment", "Apartments"): 78,
+    ("New Build", "Datacentre"): 8,
+    ("Refurbishment", "Health"): 27,
+    ("New Build", "House"): 68,
+    ("Refurbishment", "Education"): 109,
+    ("Refurbishment", "Industrial"): 6,
+    ("Refurbishment", "House"): 77,
+    ("New Build", "Consultancy"): 6,
+}

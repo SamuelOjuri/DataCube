@@ -101,7 +101,8 @@ class AnalysisService:
                     'win_rate_closed': preds.expected_conversion_rate,
                     'gestation_median': preds.expected_gestation_days,
                     'gestation_p25': preds.gestation_range.get('p25'),
-                    'gestation_p75': preds.gestation_range.get('p75')
+                    'gestation_p75': preds.gestation_range.get('p75'),
+                    'bias_correction_applied': True,
                 }
             },
             'llm_model': 'numeric-baseline',

@@ -37,6 +37,49 @@ except ImportError:  # pragma: no cover - fallback for direct execution
 TIME_WEIGHTING_ENABLED = getattr(_config, "TIME_WEIGHTING_ENABLED", True)
 TIME_WEIGHTING_HALF_LIFE_DAYS = getattr(_config, "TIME_WEIGHTING_HALF_LIFE_DAYS", 730)
 
+GESTATION_BIAS_CORRECTION_ENABLED = getattr(_config, "GESTATION_BIAS_CORRECTION_ENABLED", False)
+GESTATION_BIAS_GLOBAL_DAYS = int(getattr(_config, "GESTATION_BIAS_GLOBAL_DAYS", 0))
+GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = int(
+    getattr(_config, "GESTATION_BIAS_GLOBAL_FALLBACK_DAYS", GESTATION_BIAS_GLOBAL_DAYS)
+)
+
+GESTATION_BIAS_BY_SEGMENT = getattr(_config, "GESTATION_BIAS_BY_SEGMENT", {})
+GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = getattr(_config, "GESTATION_BIAS_SEGMENT_SAMPLE_SIZES", {})
+GESTATION_BIAS_MIN_SEGMENT_N = int(getattr(_config, "GESTATION_BIAS_MIN_SEGMENT_N", 20))
+GESTATION_BIAS_DAMPING_FACTOR = float(getattr(_config, "GESTATION_BIAS_DAMPING_FACTOR", 0.5))
+GESTATION_BIAS_MAX_ABS_DAYS = int(getattr(_config, "GESTATION_BIAS_MAX_ABS_DAYS", 60))
+
+# New tuning knobs for continuous, support-aware shrinkage.
+_DEFAULT_GESTATION_BIAS_TIER_WEIGHTS = {
+    0: 0.50,  # account + type + category + product
+    1: 0.65,  # account + type + category
+    2: 0.85,  # account + type
+    3: 1.00,  # type + category
+    4: 0.90,  # type
+    5: 0.75,  # global
+}
+
+GESTATION_BIAS_SUPPORT_SHRINKAGE = float(
+    getattr(
+        _config,
+        "GESTATION_BIAS_SUPPORT_SHRINKAGE",
+        float(GESTATION_BIAS_MIN_SEGMENT_N or 20),
+    )
+)
+
+_raw_tier_weights = getattr(
+    _config,
+    "GESTATION_BIAS_TIER_WEIGHTS",
+    _DEFAULT_GESTATION_BIAS_TIER_WEIGHTS,
+)
+
+try:
+    GESTATION_BIAS_TIER_WEIGHTS = {
+        int(k): float(v) for k, v in dict(_raw_tier_weights).items()
+    }
+except Exception:
+    GESTATION_BIAS_TIER_WEIGHTS = _DEFAULT_GESTATION_BIAS_TIER_WEIGHTS.copy()
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +158,167 @@ class NumericBaseline:
             weights *= len(weights) / total_weight
 
         return weights
+
+    def _effective_sample_size(self, weights: Optional[pd.Series]) -> float:
+        """Kish effective sample size for weighted rows."""
+        if weights is None or weights.empty:
+            return 0.0
+
+        arr = pd.to_numeric(weights, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        total = float(arr.sum())
+        denom = float(np.square(arr).sum())
+
+        if total <= 0 or denom <= 0:
+            return 0.0
+
+        return float((total ** 2) / denom)
+
+    def _gestation_support_stats(
+        self,
+        segment_data: pd.DataFrame,
+        apply_time_weighting: Optional[bool] = None,
+        half_life_days: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Return valid gestation values plus raw and effective support."""
+        if segment_data is None or segment_data.empty or "gestation_period" not in segment_data.columns:
+            return {
+                "values": pd.Series(dtype=float),
+                "weights": None,
+                "count": 0,
+                "effective_n": 0.0,
+                "weighting": "unweighted",
+            }
+
+        gestation_values = segment_data["gestation_period"].dropna()
+        gestation_values = gestation_values[
+            (gestation_values > 0) & (gestation_values < 1460)
+        ]
+
+        if gestation_values.empty:
+            return {
+                "values": gestation_values,
+                "weights": None,
+                "count": 0,
+                "effective_n": 0.0,
+                "weighting": "unweighted",
+            }
+
+        use_weighting = (
+            self.time_weighting_enabled
+            if apply_time_weighting is None
+            else bool(apply_time_weighting)
+        )
+        weight_half_life = (
+            half_life_days if half_life_days is not None else self.time_weighting_half_life_days
+        )
+
+        weights = None
+        weighting_note = "unweighted"
+        if use_weighting and "date_created" in segment_data.columns:
+            weights = self._calculate_time_weights(
+                segment_data.loc[gestation_values.index, "date_created"],
+                half_life_days=weight_half_life,
+            )
+            weights = weights.reindex(gestation_values.index).fillna(0.0)
+
+            if weights.empty or float(weights.sum()) <= 0:
+                weights = None
+            else:
+                weighting_note = f"time_weighted_half_life_{int(weight_half_life)}d"
+
+        effective_n = (
+            self._effective_sample_size(weights)
+            if weights is not None
+            else float(len(gestation_values))
+        )
+
+        return {
+            "values": gestation_values,
+            "weights": weights,
+            "count": int(len(gestation_values)),
+            "effective_n": float(effective_n),
+            "weighting": weighting_note,
+        }
+
+    def _compute_gestation_bias_adjustment(
+        self,
+        project: ProjectFeatures,
+        support_data: pd.DataFrame,
+        backoff_tier: int,
+        gest_stats: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compute a shrunk, tier-aware gestation bias adjustment.
+
+        Key changes versus the old version:
+        - continuous shrinkage instead of binary segment/global switching
+        - uses actual effective support from the current baseline data
+        - attenuates broad type/category bias when the baseline came from a narrower tier
+        """
+        seg_key = (
+            getattr(project, "type", None),
+            getattr(project, "category", None),
+        )
+        seg_bias = GESTATION_BIAS_BY_SEGMENT.get(seg_key)
+        config_segment_n = int(GESTATION_BIAS_SEGMENT_SAMPLE_SIZES.get(seg_key, 0))
+
+        global_bias = GESTATION_BIAS_GLOBAL_FALLBACK_DAYS
+        if global_bias is None:
+            global_bias = GESTATION_BIAS_GLOBAL_DAYS
+        global_bias = int(global_bias or 0)
+
+        actual_support = 0.0
+        if gest_stats:
+            actual_support = float(
+                gest_stats.get("effective_n")
+                or gest_stats.get("count")
+                or 0.0
+            )
+        if actual_support <= 0 and support_data is not None and not support_data.empty:
+            actual_support = float(
+                self._gestation_support_stats(support_data).get("effective_n", 0.0)
+            )
+
+        support_signal = actual_support if actual_support > 0 else float(config_segment_n)
+        shrinkage = max(1.0, float(GESTATION_BIAS_SUPPORT_SHRINKAGE))
+
+        if seg_bias is None:
+            segment_trust = 0.0
+            blended_bias = float(global_bias)
+            source = "global_only"
+        else:
+            segment_trust = support_signal / (support_signal + shrinkage)
+            blended_bias = (
+                segment_trust * float(seg_bias)
+                + (1.0 - segment_trust) * float(global_bias)
+            )
+            source = "segment_shrunk" if actual_support > 0 else "segment_table"
+
+        tier_weight = float(GESTATION_BIAS_TIER_WEIGHTS.get(int(backoff_tier), 1.0))
+        tier_adjusted_bias = blended_bias * tier_weight
+
+        raw_bias_days = int(round(tier_adjusted_bias))
+
+        k = max(0.0, float(GESTATION_BIAS_DAMPING_FACTOR))
+        adjustment_days = int(round(raw_bias_days * k))
+
+        cap_days = abs(int(GESTATION_BIAS_MAX_ABS_DAYS)) if GESTATION_BIAS_MAX_ABS_DAYS else 0
+        if cap_days > 0:
+            adjustment_days = max(-cap_days, min(cap_days, adjustment_days))
+
+        return {
+            "segment_key": seg_key,
+            "segment_bias_days": int(seg_bias) if seg_bias is not None else None,
+            "global_bias_days": int(global_bias),
+            "config_segment_n": config_segment_n,
+            "actual_support": float(actual_support),
+            "segment_trust": float(segment_trust),
+            "tier_weight": float(tier_weight),
+            "raw_bias_days": int(raw_bias_days),
+            "adjustment_days": int(adjustment_days),
+            "cap_days": int(cap_days),
+            "source": source,
+        }
     
     def _compute_global_closed_prior(self, df: pd.DataFrame) -> Tuple[Optional[float], int]:
         if df is None or df.empty:
@@ -152,84 +356,84 @@ class NumericBaseline:
         half_life_days: Optional[float] = None
     ) -> Tuple[Optional[int], Dict[str, Any]]:
         """
-        Calculate expected gestation period using median with IQR
+        Calculate expected gestation period using median with IQR.
+        Uses effective sample size for confidence when time weighting is active.
         Returns: (expected_days, statistics)
         """
         if segment_data.empty:
             logger.warning("Empty segment data for gestation calculation")
-            return None, {'confidence': 0}
-        
-        # Extract and clean gestation values
-        gestation_values = segment_data['gestation_period'].dropna()
-        
-        # Filter out invalid values (zeros and extreme outliers)
-        gestation_values = gestation_values[
-            (gestation_values > 0) & (gestation_values < 1460)
-        ]
-        
+            return None, {"confidence": 0, "sample_size": 0, "effective_n": 0.0}
+
+        support = self._gestation_support_stats(
+            segment_data,
+            apply_time_weighting=apply_time_weighting,
+            half_life_days=half_life_days,
+        )
+        gestation_values = support["values"]
+        weights = support["weights"]
+        weighting_note = support["weighting"]
+        effective_n = float(support["effective_n"])
+
         if len(gestation_values) < 3:
             logger.warning(f"Insufficient gestation data: {len(gestation_values)} samples")
             return None, {
-                'confidence': 0,
-                'sample_size': len(gestation_values)
+                "confidence": 0,
+                "sample_size": len(gestation_values),
+                "effective_n": round(effective_n, 2),
             }
-        
-        use_weighting = self.time_weighting_enabled if apply_time_weighting is None else bool(apply_time_weighting)
-        weight_half_life = half_life_days if half_life_days is not None else self.time_weighting_half_life_days
 
-        weighting_note = "unweighted"
         mean_val = float(gestation_values.mean())
         std_val = float(gestation_values.std())
         median_val = float(gestation_values.median())
         p25 = float(gestation_values.quantile(0.25))
         p75 = float(gestation_values.quantile(0.75))
 
-        if use_weighting and 'date_created' in segment_data.columns:
-            weights = self._calculate_time_weights(
-                segment_data.loc[gestation_values.index, 'date_created'],
-                half_life_days=weight_half_life
-            )
-            weights = weights.reindex(gestation_values.index).fillna(0.0)
-            if not weights.empty and float(weights.sum()) > 0:
-                sorted_idx = gestation_values.sort_values().index
-                sorted_values = gestation_values.loc[sorted_idx].to_numpy(dtype=float)
-                sorted_weights = weights.loc[sorted_idx].to_numpy(dtype=float)
-                cumulative = np.cumsum(sorted_weights)
-                if cumulative[-1] > 0:
-                    cumulative /= cumulative[-1]
-                    median_val = float(np.interp(0.5, cumulative, sorted_values))
-                    p25 = float(np.interp(0.25, cumulative, sorted_values))
-                    p75 = float(np.interp(0.75, cumulative, sorted_values))
-                    mean_val = float(np.average(sorted_values, weights=sorted_weights))
-                    variance = float(np.average((sorted_values - mean_val) ** 2, weights=sorted_weights))
-                    std_val = float(np.sqrt(max(variance, 0.0)))
-                    weighting_note = f"time_weighted_half_life_{int(weight_half_life)}d"
+        if weights is not None:
+            sorted_idx = gestation_values.sort_values().index
+            sorted_values = gestation_values.loc[sorted_idx].to_numpy(dtype=float)
+            sorted_weights = weights.loc[sorted_idx].to_numpy(dtype=float)
+            cumulative = np.cumsum(sorted_weights)
+            if len(cumulative) and cumulative[-1] > 0:
+                cumulative /= cumulative[-1]
+                median_val = float(np.interp(0.5, cumulative, sorted_values))
+                p25 = float(np.interp(0.25, cumulative, sorted_values))
+                p75 = float(np.interp(0.75, cumulative, sorted_values))
+                mean_val = float(np.average(sorted_values, weights=sorted_weights))
+                variance = float(
+                    np.average((sorted_values - mean_val) ** 2, weights=sorted_weights)
+                )
+                std_val = float(np.sqrt(max(variance, 0.0)))
 
         iqr = p75 - p25
 
-        # Calculate confidence based on sample size and spread
-        sample_confidence = min(len(gestation_values) / 30, 1.0)
+        # Effective sample size gives a fairer confidence signal under weighting.
+        sample_confidence = min(effective_n / 30.0, 1.0)
 
         # Penalize high variance
-        cv = std_val / mean_val if mean_val > 0 else 1
-        spread_confidence = max(0, 1 - cv)
+        cv = std_val / mean_val if mean_val > 0 else 1.0
+        spread_confidence = max(0.0, 1.0 - cv)
 
         overall_confidence = sample_confidence * 0.7 + spread_confidence * 0.3
 
         statistics = {
-            'median': int(round(median_val)),
-            'p25': int(round(p25)),
-            'p75': int(round(p75)),
-            'iqr': int(round(iqr)),
-            'mean': int(round(mean_val)),
-            'std': int(round(std_val)),
-            'count': len(gestation_values),
-            'confidence': round(overall_confidence, 2),
-            'weighting': weighting_note
+            "median": int(round(median_val)),
+            "p25": int(round(p25)),
+            "p75": int(round(p75)),
+            "iqr": int(round(iqr)),
+            "mean": int(round(mean_val)),
+            "std": int(round(std_val)),
+            "count": int(len(gestation_values)),
+            "effective_n": round(effective_n, 2),
+            "confidence": round(overall_confidence, 2),
+            "weighting": weighting_note,
         }
 
         logger.info(
-            f"Gestation baseline: {int(round(median_val))} days (n={len(gestation_values)}, {weighting_note})"
+            "Gestation baseline: %d days (n=%d, n_eff=%.1f, %s)",
+            int(round(median_val)),
+            len(gestation_values),
+            effective_n,
+            weighting_note,
         )
 
         return int(round(median_val)), statistics
@@ -661,36 +865,89 @@ class NumericBaseline:
         use_prior_rate = prior_rate if (prior_rate is not None and global_closed_n > 0) else None
         use_prior_strength = prior_strength if use_prior_rate is not None else None
 
+        gestation_source_data = segment_data
+        gestation_bias_tier = backoff_tier
+
         gestation_days, gest_stats = self.calculate_gestation_baseline(segment_data)
+
         if not gestation_days and global_data is not None and not global_data.empty:
             g2, gs2 = self.calculate_gestation_baseline(global_data)
-            gestation_days, gest_stats = (g2, gs2) if g2 else (None, {'confidence': 0})
+            if g2:
+                gestation_days, gest_stats = g2, gs2
+                gestation_source_data = global_data
+                gestation_bias_tier = 5
+            else:
+                gestation_days, gest_stats = (None, {"confidence": 0, "effective_n": 0.0})
+
         if gestation_days:
             predictions.expected_gestation_days = gestation_days
-            predictions.gestation_confidence = gest_stats['confidence']
+            predictions.gestation_confidence = gest_stats["confidence"]
             predictions.gestation_range = {
-                'p25': gest_stats.get('p25'),
-                'p75': gest_stats.get('p75')
+                "p25": gest_stats.get("p25"),
+                "p75": gest_stats.get("p75"),
             }
 
+            if GESTATION_BIAS_CORRECTION_ENABLED:
+                bias_meta = self._compute_gestation_bias_adjustment(
+                    project=project,
+                    support_data=gestation_source_data,
+                    backoff_tier=gestation_bias_tier,
+                    gest_stats=gest_stats,
+                )
+                adjustment_days = int(bias_meta["adjustment_days"])
+                if adjustment_days != 0:
+                    corrected = max(1, int(gestation_days) + adjustment_days)
+                    logger.info(
+                        (
+                            "Bias correction: %d -> %d days "
+                            "(segment=%s, seg_bias=%s, global=%+d, support=%.1f, "
+                            "config_n=%d, trust=%.2f, tier=%d, tier_w=%.2f, "
+                            "raw=%+d, k=%.2f, adj=%+d, cap=%d, source=%s)"
+                        ),
+                        gestation_days,
+                        corrected,
+                        bias_meta["segment_key"],
+                        bias_meta["segment_bias_days"],
+                        bias_meta["global_bias_days"],
+                        bias_meta["actual_support"],
+                        bias_meta["config_segment_n"],
+                        bias_meta["segment_trust"],
+                        gestation_bias_tier,
+                        bias_meta["tier_weight"],
+                        bias_meta["raw_bias_days"],
+                        GESTATION_BIAS_DAMPING_FACTOR,
+                        adjustment_days,
+                        bias_meta["cap_days"],
+                        bias_meta["source"],
+                    )
+                    predictions.expected_gestation_days = corrected
+                    if predictions.gestation_range.get("p25") is not None:
+                        predictions.gestation_range["p25"] = max(
+                            1, int(predictions.gestation_range["p25"]) + adjustment_days
+                        )
+                    if predictions.gestation_range.get("p75") is not None:
+                        predictions.gestation_range["p75"] = max(
+                            1, int(predictions.gestation_range["p75"]) + adjustment_days
+                        )
+
         # Conversion: inclusive (closed-won / all) is the main signal; closed-only retained as reference
-        conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(segment_data, method='inclusive')
+        conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(segment_data, method="inclusive")
         conv_rate_closed, conv_stats_closed = self.calculate_conversion_rate(
-            segment_data, method='closed_only',
+            segment_data, method="closed_only",
             prior_rate=use_prior_rate, prior_strength=use_prior_strength
         )
         predictions.expected_conversion_rate = conv_rate_incl
-        predictions.conversion_confidence = conv_stats_incl['confidence']
-        predictions.conversion_method = 'inclusive'
+        predictions.conversion_confidence = conv_stats_incl["confidence"]
+        predictions.conversion_method = "inclusive"
 
         # Rating
         project_metrics = {
-            'conversion_rate': predictions.expected_conversion_rate,
-            'expected_gestation_days': predictions.expected_gestation_days,
-            'new_enquiry_value': project.new_enquiry_value,
-            'account': project.account,
-            'product_type': project.product_type,
-            'value_band': project.value_band
+            "conversion_rate": predictions.expected_conversion_rate,
+            "expected_gestation_days": predictions.expected_gestation_days,
+            "new_enquiry_value": project.new_enquiry_value,
+            "account": project.account,
+            "product_type": project.product_type,
+            "value_band": project.value_band
         }
         rating, rating_components = self.calculate_rating_score(project_metrics, segment_data)
         predictions.rating_score = rating
@@ -703,4 +960,5 @@ class NumericBaseline:
             prior_rate=use_prior_rate,
             prior_strength=use_prior_strength
         )
+
         return predictions
