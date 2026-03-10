@@ -29,7 +29,7 @@ async def test_recent_rehydrate_invokes_pipeline(monkeypatch):
     await _scheduled_recent_rehydrate()
 
     assert captured["kwargs"]["since"] is None
-    assert captured["kwargs"]["days_back"] == 2
+    assert captured["kwargs"]["days_back"] == 3
     assert captured["kwargs"]["chunk_size"] == 200
     assert captured["kwargs"]["logger_name"] == "scheduler.recent_rehydrate"
     logger.info("Completed happy-path recent rehydrate test")
