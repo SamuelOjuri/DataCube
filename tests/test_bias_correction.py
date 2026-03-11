@@ -21,6 +21,7 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from collections import defaultdict
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -149,6 +150,34 @@ def compute_metrics(errors: List[float]) -> Dict[str, float]:
         "severe_under_180": sum(1 for e in errors if e > 180) / len(errors),
         "severe_over_180": sum(1 for e in errors if e < -180) / len(errors),
     }
+
+
+def build_bias_tables(rows, min_n=8):
+    buckets = defaultdict(list)
+
+    for r in rows:
+        err = r.get("new_err")
+        if err is None:
+            continue
+        seg = (r.get("type") or "?", r.get("category") or "?")
+        buckets[seg].append(float(err))
+
+    seg_bias = {}
+    seg_n = {}
+    all_err = []
+
+    for seg, errs in buckets.items():
+        n = len(errs)
+        all_err.extend(errs)
+        if n < min_n:
+            continue
+        seg_n[seg] = n
+        seg_bias[seg] = int(round(sum(errs) / n))
+
+    global_bias = int(round(sum(all_err) / len(all_err))) if all_err else 0
+    global_fallback = int(round(global_bias * 0.85))
+
+    return seg_bias, seg_n, global_bias, global_fallback
 
 
 def main():
@@ -355,6 +384,28 @@ def main():
         )
 
     print("=" * 78)
+
+    # seg_bias, seg_n, global_bias, global_fallback = build_bias_tables(comparison_rows, min_n=8)
+
+    # print("\n" + "=" * 78)
+    # print("REFRESHED BIAS TABLES (paste into src/config.py)")
+    # print("=" * 78)
+    # print(f"GESTATION_BIAS_GLOBAL_DAYS = {global_bias}")
+    # print(f"GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = {global_fallback}")
+    # print()
+
+    # print("GESTATION_BIAS_BY_SEGMENT = {")
+    # for (t, c), v in sorted(seg_bias.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+    #     print(f"    ({t!r}, {c!r}): {v},")
+    # print("}")
+    # print()
+
+    # print("GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = {")
+    # for (t, c), n in sorted(seg_n.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+    #     print(f"    ({t!r}, {c!r}): {n},")
+    # print("}")
+
+    # print("=" * 78)
 
     if failed_ids:
         print(f"\nFailed IDs ({len(failed_ids)}): {', '.join(failed_ids[:30])}" + (" ..." if len(failed_ids) > 30 else ""))

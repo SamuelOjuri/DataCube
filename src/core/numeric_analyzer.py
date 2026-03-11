@@ -80,6 +80,13 @@ try:
 except Exception:
     GESTATION_BIAS_TIER_WEIGHTS = _DEFAULT_GESTATION_BIAS_TIER_WEIGHTS.copy()
 
+GESTATION_OUTLIER_FILTERING_ENABLED = getattr(_config, "GESTATION_OUTLIER_FILTERING_ENABLED", True)
+GESTATION_OUTLIER_IQR_MULTIPLIER = float(getattr(_config, "GESTATION_OUTLIER_IQR_MULTIPLIER", 1.5))
+GESTATION_OUTLIER_MIN_SAMPLES = int(getattr(_config, "GESTATION_OUTLIER_MIN_SAMPLES", 8))
+
+GESTATION_VARIANCE_AWARE_DAMPING_ENABLED = getattr(_config, "GESTATION_VARIANCE_AWARE_DAMPING_ENABLED", True)
+GESTATION_VARIANCE_DAMPING_FLOOR = float(getattr(_config, "GESTATION_VARIANCE_DAMPING_FLOOR", 0.20))
+
 logger = logging.getLogger(__name__)
 
 
@@ -179,15 +186,24 @@ class NumericBaseline:
         apply_time_weighting: Optional[bool] = None,
         half_life_days: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Return valid gestation values plus raw and effective support."""
+        """
+        Return valid gestation values plus raw and effective support.
+
+        When segment outlier filtering is enabled and the segment has enough
+        raw samples, values beyond per-segment Tukey fences are excluded
+        *before* time-weighting and median computation.
+        """
+        empty_result = {
+            "values": pd.Series(dtype=float),
+            "weights": None,
+            "count": 0,
+            "effective_n": 0.0,
+            "weighting": "unweighted",
+            "outliers_removed": 0,
+        }
+
         if segment_data is None or segment_data.empty or "gestation_period" not in segment_data.columns:
-            return {
-                "values": pd.Series(dtype=float),
-                "weights": None,
-                "count": 0,
-                "effective_n": 0.0,
-                "weighting": "unweighted",
-            }
+            return empty_result
 
         gestation_values = segment_data["gestation_period"].dropna()
         gestation_values = gestation_values[
@@ -195,13 +211,38 @@ class NumericBaseline:
         ]
 
         if gestation_values.empty:
-            return {
-                "values": gestation_values,
-                "weights": None,
-                "count": 0,
-                "effective_n": 0.0,
-                "weighting": "unweighted",
-            }
+            return {**empty_result, "values": gestation_values}
+
+        outliers_removed = 0
+
+        if (
+            GESTATION_OUTLIER_FILTERING_ENABLED
+            and len(gestation_values) >= GESTATION_OUTLIER_MIN_SAMPLES
+        ):
+            q25 = float(gestation_values.quantile(0.25))
+            q75 = float(gestation_values.quantile(0.75))
+            iqr = q75 - q25
+
+            if iqr > 0:
+                k_iqr = GESTATION_OUTLIER_IQR_MULTIPLIER
+                lower_fence = max(1.0, q25 - k_iqr * iqr)
+                upper_fence = q75 + k_iqr * iqr
+
+                pre_count = len(gestation_values)
+                gestation_values = gestation_values[
+                    (gestation_values >= lower_fence) & (gestation_values <= upper_fence)
+                ]
+                outliers_removed = pre_count - len(gestation_values)
+
+                if outliers_removed > 0:
+                    logger.info(
+                        "Segment outlier filter: removed %d/%d values outside [%.0f, %.0f] "
+                        "(IQR=%.0f, k=%.1f)",
+                        outliers_removed, pre_count, lower_fence, upper_fence, iqr, k_iqr,
+                    )
+
+        if gestation_values.empty:
+            return {**empty_result, "outliers_removed": outliers_removed}
 
         use_weighting = (
             self.time_weighting_enabled
@@ -214,6 +255,7 @@ class NumericBaseline:
 
         weights = None
         weighting_note = "unweighted"
+
         if use_weighting and "date_created" in segment_data.columns:
             weights = self._calculate_time_weights(
                 segment_data.loc[gestation_values.index, "date_created"],
@@ -238,6 +280,7 @@ class NumericBaseline:
             "count": int(len(gestation_values)),
             "effective_n": float(effective_n),
             "weighting": weighting_note,
+            "outliers_removed": outliers_removed,
         }
 
     def _compute_gestation_bias_adjustment(
@@ -250,10 +293,11 @@ class NumericBaseline:
         """
         Compute a shrunk, tier-aware gestation bias adjustment.
 
-        Key changes versus the old version:
+        Key behaviours:
         - continuous shrinkage instead of binary segment/global switching
         - uses actual effective support from the current baseline data
         - attenuates broad type/category bias when the baseline came from a narrower tier
+        - scales damping inversely with segment CV when variance-aware damping is enabled
         """
         seg_key = (
             getattr(project, "type", None),
@@ -300,6 +344,17 @@ class NumericBaseline:
         raw_bias_days = int(round(tier_adjusted_bias))
 
         k = max(0.0, float(GESTATION_BIAS_DAMPING_FACTOR))
+        segment_cv = None
+        variance_damping = 1.0
+        if GESTATION_VARIANCE_AWARE_DAMPING_ENABLED and gest_stats:
+            mean_val = gest_stats.get("mean", 0)
+            std_val = gest_stats.get("std", 0)
+            if mean_val and mean_val > 0:
+                segment_cv = float(std_val) / float(mean_val)
+                floor = max(0.0, float(GESTATION_VARIANCE_DAMPING_FLOOR))
+                variance_damping = max(floor, 1.0 - segment_cv)
+                k *= variance_damping
+
         adjustment_days = int(round(raw_bias_days * k))
 
         cap_days = abs(int(GESTATION_BIAS_MAX_ABS_DAYS)) if GESTATION_BIAS_MAX_ABS_DAYS else 0
@@ -318,6 +373,8 @@ class NumericBaseline:
             "adjustment_days": int(adjustment_days),
             "cap_days": int(cap_days),
             "source": source,
+            "segment_cv": round(segment_cv, 4) if segment_cv is not None else None,
+            "variance_damping": round(variance_damping, 4),
         }
     
     def _compute_global_closed_prior(self, df: pd.DataFrame) -> Tuple[Optional[float], int]:
@@ -373,6 +430,7 @@ class NumericBaseline:
         weights = support["weights"]
         weighting_note = support["weighting"]
         effective_n = float(support["effective_n"])
+        outliers_removed = int(support.get("outliers_removed", 0))
 
         if len(gestation_values) < 3:
             logger.warning(f"Insufficient gestation data: {len(gestation_values)} samples")
@@ -387,6 +445,8 @@ class NumericBaseline:
         median_val = float(gestation_values.median())
         p25 = float(gestation_values.quantile(0.25))
         p75 = float(gestation_values.quantile(0.75))
+        p10 = float(gestation_values.quantile(0.10))
+        p90 = float(gestation_values.quantile(0.90))
 
         if weights is not None:
             sorted_idx = gestation_values.sort_values().index
@@ -398,6 +458,8 @@ class NumericBaseline:
                 median_val = float(np.interp(0.5, cumulative, sorted_values))
                 p25 = float(np.interp(0.25, cumulative, sorted_values))
                 p75 = float(np.interp(0.75, cumulative, sorted_values))
+                p10 = float(np.interp(0.10, cumulative, sorted_values))
+                p90 = float(np.interp(0.90, cumulative, sorted_values))
                 mean_val = float(np.average(sorted_values, weights=sorted_weights))
                 variance = float(
                     np.average((sorted_values - mean_val) ** 2, weights=sorted_weights)
@@ -409,8 +471,8 @@ class NumericBaseline:
         # Effective sample size gives a fairer confidence signal under weighting.
         sample_confidence = min(effective_n / 30.0, 1.0)
 
-        # Penalize high variance
         cv = std_val / mean_val if mean_val > 0 else 1.0
+
         spread_confidence = max(0.0, 1.0 - cv)
 
         overall_confidence = sample_confidence * 0.7 + spread_confidence * 0.3
@@ -419,20 +481,35 @@ class NumericBaseline:
             "median": int(round(median_val)),
             "p25": int(round(p25)),
             "p75": int(round(p75)),
+            "p10": max(1, int(round(p10))),
+            "p90": int(round(p90)),
             "iqr": int(round(iqr)),
             "mean": int(round(mean_val)),
             "std": int(round(std_val)),
+            "cv": round(cv, 4),
             "count": int(len(gestation_values)),
             "effective_n": round(effective_n, 2),
             "confidence": round(overall_confidence, 2),
             "weighting": weighting_note,
+            "outliers_removed": outliers_removed,
+            "prediction_interval": {
+                "p10": max(1, int(round(p10))),
+                "p50": int(round(median_val)),
+                "p90": int(round(p90)),
+            },
         }
 
         logger.info(
-            "Gestation baseline: %d days (n=%d, n_eff=%.1f, %s)",
+            "Gestation baseline: %d days (n=%d, n_eff=%.1f, cv=%.2f, "
+            "PI=[%d, %d, %d], outliers_removed=%d, %s)",
             int(round(median_val)),
             len(gestation_values),
             effective_n,
+            cv,
+            statistics["prediction_interval"]["p10"],
+            statistics["prediction_interval"]["p50"],
+            statistics["prediction_interval"]["p90"],
+            outliers_removed,
             weighting_note,
         )
 
@@ -886,6 +963,14 @@ class NumericBaseline:
                 "p25": gest_stats.get("p25"),
                 "p75": gest_stats.get("p75"),
             }
+            predictions.gestation_cv = gest_stats.get("cv")
+            pi = gest_stats.get("prediction_interval")
+            if pi:
+                predictions.gestation_prediction_interval = {
+                    "p10": pi.get("p10"),
+                    "p50": pi.get("p50"),
+                    "p90": pi.get("p90"),
+                }
 
             if GESTATION_BIAS_CORRECTION_ENABLED:
                 bias_meta = self._compute_gestation_bias_adjustment(
@@ -902,7 +987,7 @@ class NumericBaseline:
                             "Bias correction: %d -> %d days "
                             "(segment=%s, seg_bias=%s, global=%+d, support=%.1f, "
                             "config_n=%d, trust=%.2f, tier=%d, tier_w=%.2f, "
-                            "raw=%+d, k=%.2f, adj=%+d, cap=%d, source=%s)"
+                            "raw=%+d, k=%.2f, var_damp=%.2f, cv=%s, adj=%+d, cap=%d, source=%s)"
                         ),
                         gestation_days,
                         corrected,
@@ -916,6 +1001,8 @@ class NumericBaseline:
                         bias_meta["tier_weight"],
                         bias_meta["raw_bias_days"],
                         GESTATION_BIAS_DAMPING_FACTOR,
+                        bias_meta["variance_damping"],
+                        bias_meta["segment_cv"],
                         adjustment_days,
                         bias_meta["cap_days"],
                         bias_meta["source"],
@@ -929,6 +1016,22 @@ class NumericBaseline:
                         predictions.gestation_range["p75"] = max(
                             1, int(predictions.gestation_range["p75"]) + adjustment_days
                         )
+                    if (
+                        hasattr(predictions, "gestation_prediction_interval")
+                        and predictions.gestation_prediction_interval is not None
+                    ):
+                        if predictions.gestation_prediction_interval.get("p10") is not None:
+                            predictions.gestation_prediction_interval["p10"] = max(
+                                1, int(predictions.gestation_prediction_interval["p10"]) + adjustment_days
+                            )
+                        if predictions.gestation_prediction_interval.get("p50") is not None:
+                            predictions.gestation_prediction_interval["p50"] = max(
+                                1, int(predictions.gestation_prediction_interval["p50"]) + adjustment_days
+                            )
+                        if predictions.gestation_prediction_interval.get("p90") is not None:
+                            predictions.gestation_prediction_interval["p90"] = max(
+                                1, int(predictions.gestation_prediction_interval["p90"]) + adjustment_days
+                            )
 
         # Conversion: inclusive (closed-won / all) is the main signal; closed-only retained as reference
         conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(segment_data, method="inclusive")

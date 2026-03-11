@@ -43,7 +43,7 @@ MIN_SAMPLE_SIZE = 15  # Minimum sample size for statistical analysis
 
 # Numeric baseline weighting configuration
 TIME_WEIGHTING_ENABLED = True  # Prioritise recent projects in baseline stats
-TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay
+TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay (730)
 
 # =============================================================================
 # Product Type Segmentation Taxonomy
@@ -388,11 +388,11 @@ GESTATION_BIAS_CORRECTION_ENABLED = True
 
 # Raw global weighted bias from historical diagnostics: (actual - expected).
 # Keep this as the uncapped historical signal.
-GESTATION_BIAS_GLOBAL_DAYS = 105
+GESTATION_BIAS_GLOBAL_DAYS = 90
 
 # Conservative fallback used when segment support is weak.
 # This is the anchor that low-support segments shrink toward.
-GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 80
+GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 76
 
 # Final adjustment formula still uses damping and a hard cap, but the raw bias
 # is now blended/shrunk first in numeric_analyzer.py.
@@ -402,7 +402,7 @@ GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 80
 # - Slightly reduce cap from 60 -> 55
 # These are a bit more conservative and should help median error while still
 # correcting the strong underprediction bias.
-GESTATION_BIAS_DAMPING_FACTOR = 0.43
+GESTATION_BIAS_DAMPING_FACTOR = 0.62
 GESTATION_BIAS_MAX_ABS_DAYS = 55
 
 # Legacy threshold kept for compatibility / fallback defaults.
@@ -418,7 +418,7 @@ GESTATION_BIAS_MIN_SEGMENT_N = 20
 # - reduce overcorrection on sparse/noisy segments
 #
 # Recommended starting value: 30.0
-GESTATION_BIAS_SUPPORT_SHRINKAGE = 30.0
+GESTATION_BIAS_SUPPORT_SHRINKAGE = 14.0
 
 # Tier weights applied after segment/global blending and before damping.
 # These reduce broad type/category bias when the baseline came from a narrower
@@ -433,54 +433,75 @@ GESTATION_BIAS_SUPPORT_SHRINKAGE = 30.0
 #   5: global
 GESTATION_BIAS_TIER_WEIGHTS = {
     0: 0.50,
-    1: 0.65,
-    2: 0.85,
+    1: 0.75,
+    2: 0.90,
     3: 1.00,
     4: 0.90,
-    5: 0.75,
+    5: 0.80,
 }
 
 # Segment mean bias (days): actual_days - expected_days
 # These remain the historical raw segment signals before shrinkage.
 GESTATION_BIAS_BY_SEGMENT = {
-    ("Refurbishment", "Commercial"): 152,
-    ("New Build", "Health"): 150,
-    ("New Build", "Mixed Use"): 146,
-    ("New Build", "Apartments"): 138,
-    ("New Build", "Leisure"): 128,
-    ("Refurbishment", "Leisure"): 118,
-    ("New Build", "Industrial"): 112,
-    ("New Build", "Commercial"): 105,
-    ("New Build", "Education"): 105,
-    ("Refurbishment", "Apartments"): 95,
-    ("New Build", "Datacentre"): 89,
-    ("Refurbishment", "Health"): 88,
-    ("New Build", "House"): 82,
-    ("Refurbishment", "Education"): 82,
-    ("Refurbishment", "Industrial"): 51,
-    ("Refurbishment", "House"): 44,
-    ("New Build", "Consultancy"): 35,
+    ('New Build', 'Apartments'): 127,
+    ('New Build', 'Commercial'): 92,
+    ('New Build', 'Datacentre'): 85,
+    ('New Build', 'Education'): 67,
+    ('New Build', 'Health'): 85,
+    ('New Build', 'House'): 60,
+    ('New Build', 'Industrial'): 96,
+    ('New Build', 'Leisure'): 142,
+    ('New Build', 'Mixed Use'): 45,
+    ('Refurbishment', 'Apartments'): 71,
+    ('Refurbishment', 'Commercial'): 143,
+    ('Refurbishment', 'Education'): 78,
+    ('Refurbishment', 'Health'): 85,
+    ('Refurbishment', 'House'): 36,
+    ('Refurbishment', 'Leisure'): 100,
 }
 
 # Historical support counts for the segment-bias table above.
 # The new code prefers actual effective support from the live segment when
 # available, and falls back to these values when it is not.
 GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = {
-    ("Refurbishment", "Commercial"): 51,
-    ("New Build", "Health"): 38,
-    ("New Build", "Mixed Use"): 6,
-    ("New Build", "Apartments"): 186,
-    ("New Build", "Leisure"): 22,
-    ("Refurbishment", "Leisure"): 23,
-    ("New Build", "Industrial"): 9,
-    ("New Build", "Commercial"): 43,
-    ("New Build", "Education"): 39,
-    ("Refurbishment", "Apartments"): 78,
-    ("New Build", "Datacentre"): 8,
-    ("Refurbishment", "Health"): 27,
-    ("New Build", "House"): 68,
-    ("Refurbishment", "Education"): 109,
-    ("Refurbishment", "Industrial"): 6,
-    ("Refurbishment", "House"): 77,
-    ("New Build", "Consultancy"): 6,
+    ('New Build', 'Apartments'): 187,
+    ('New Build', 'Commercial'): 43,
+    ('New Build', 'Datacentre'): 8,
+    ('New Build', 'Education'): 41,
+    ('New Build', 'Health'): 38,
+    ('New Build', 'House'): 68,
+    ('New Build', 'Industrial'): 10,
+    ('New Build', 'Leisure'): 23,
+    ('New Build', 'Mixed Use'): 8,
+    ('Refurbishment', 'Apartments'): 78,
+    ('Refurbishment', 'Commercial'): 51,
+    ('Refurbishment', 'Education'): 109,
+    ('Refurbishment', 'Health'): 27,
+    ('Refurbishment', 'House'): 77,
+    ('Refurbishment', 'Leisure'): 23,
 }
+
+
+# ---------------------------------------------------------------------------
+# Per-segment outlier filtering (Tukey fences)
+# ---------------------------------------------------------------------------
+GESTATION_OUTLIER_FILTERING_ENABLED = True
+
+# Tukey fence multiplier: values beyond p75 + k*IQR (or below p25 - k*IQR)
+# are excluded before computing the baseline median.
+# 1.5 is the standard Tukey fence; use 2.0 for a more permissive filter.
+GESTATION_OUTLIER_IQR_MULTIPLIER = 2.0
+
+# Minimum raw samples required before IQR-based filtering is applied.
+# Below this threshold, the global (0, 1460) cap remains the only filter
+# to avoid discarding too much data from tiny segments.
+GESTATION_OUTLIER_MIN_SAMPLES = 12
+
+# ---------------------------------------------------------------------------
+# Variance-aware bias damping
+# ---------------------------------------------------------------------------
+GESTATION_VARIANCE_AWARE_DAMPING_ENABLED = True
+
+# Floor for the variance damping multiplier.  Even the noisiest segments
+# still receive at least this fraction of the configured damping factor.
+GESTATION_VARIANCE_DAMPING_FLOOR = 0.45

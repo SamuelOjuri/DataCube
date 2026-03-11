@@ -31,6 +31,12 @@ SEGMENT_BACKOFF_TIERS: List[Tuple[List[str], int]] = [
     ([], 1),
 ]
 
+# Gestation support gates for tier acceptance.
+# Preferred threshold used for normal acceptance.
+GESTATION_MIN_VALID_SEGMENT_N = 5
+# Hard floor to avoid returning tiers that cannot compute baseline at all.
+GESTATION_HARD_FLOOR_VALID_SEGMENT_N = 3
+
 class AnalysisService:
     def __init__(self, db_client: Optional[SupabaseClient] = None, lookback_days: Optional[int] = None):
         self.db = db_client or SupabaseClient()
@@ -67,14 +73,32 @@ class AnalysisService:
         res = q.limit(1).execute().data
         return res[0] if res else {}
 
+    def _gestation_support_count(self, df: pd.DataFrame) -> int:
+        """Count valid gestation rows using NumericBaseline's filtering rules."""
+        if df is None or df.empty:
+            return 0
+
+        support = self.numeric_baseline._gestation_support_stats(
+            df,
+            apply_time_weighting=False,
+        )
+        return int(support.get("count", 0))
+
     def analyze_project(self, project: Dict[str, Any]) -> Dict[str, Any]:
         key = self._cluster_key(project)
         seg_df, seg_keys, backoff_tier = self._fetch_segment_df(key)
         pf = self._to_project_features(project)
         nb = self.numeric_baseline
 
+        gest_support_n = self._gestation_support_count(seg_df)
+
         global_df: Optional[pd.DataFrame] = None
-        if seg_df.empty or len(seg_df) < 3 or backoff_tier >= GLOBAL_BACKOFF_THRESHOLD:
+        if (
+            seg_df.empty
+            or len(seg_df) < 3
+            or gest_support_n < GESTATION_HARD_FLOOR_VALID_SEGMENT_N
+            or backoff_tier >= GLOBAL_BACKOFF_THRESHOLD
+        ):
             # Supply broader context so NumericBaseline can apply priors/backoff logic.
             global_df = self._fetch_global_df()
 
@@ -150,37 +174,104 @@ class AnalysisService:
 
     def _fetch_segment_df(self, key: Dict[str, Any]):
         """
-        Hierarchical backoff with tier-specific minimum sample thresholds.
-        Tier index mapping (0=most specific, 5=global):
-          0: account + type + category + product_type (n >= 10)
-          1: account + type + category                (n >= 8)
-          2: account + type                           (n >= 5)
-          3: type + category                          (n >= 5)
-          4: type                                     (n >= 3)
-          5: global                                   (n >= 1)
-        Returns: (segment_df, segment_keys_used, backoff_tier)
+        Hierarchical backoff with gestation-support gating.
+        Decision rule:
+          1) Candidate tier must satisfy total_n >= min_required.
+          2) Accept immediately if valid_gestation_n >= GESTATION_MIN_VALID_SEGMENT_N.
+          3) If none meet (2), choose candidate with highest valid_gestation_n
+             among tiers where valid_gestation_n >= GESTATION_HARD_FLOOR_VALID_SEGMENT_N.
+             Tie-breaker: more specific tier (lower tier index).
+          4) If none meet hard floor, fall back to first tier that met total_n
+             (legacy behavior).
         """
-        SEGMENT_BACKOFF_TIERS = [
-            (['account', 'type', 'category', 'product_type'], 10),
-            (['account', 'type', 'category'], 8),
-            (['account', 'type'], 5),
-            (['type', 'category'], 5),
-            (['type'], 3),
-            ([], 1),
-        ]
+
+        # Use module-level thresholds defined in this file (5/3).
+        preferred_support_n = int(GESTATION_MIN_VALID_SEGMENT_N)
+        hard_floor_support_n = int(GESTATION_HARD_FLOOR_VALID_SEGMENT_N)
+
         recency_cutoff = (datetime.now().date() - timedelta(days=self.lookback_days)).isoformat()
+
+        best_soft_candidate: Optional[Dict[str, Any]] = None
+        first_total_candidate: Optional[Dict[str, Any]] = None
+
         for tier, (fields, min_required) in enumerate(SEGMENT_BACKOFF_TIERS):
             # Skip tiers that require keys missing on the target project
             if fields and any(key.get(field) in (None, "") for field in fields):
                 continue
+
             q = self.db.client.table('projects').select('*').gte('date_created', recency_cutoff)
             for field in fields:
                 # 'product_type' in key maps to 'product_key' column in projects table
                 col = 'product_key' if field == 'product_type' else field
                 q = q.eq(col, key.get(field))
             rows = q.limit(5000).execute().data or []
-            if len(rows) >= min_required:
-                return pd.DataFrame(rows), fields, tier
+
+            total_n = len(rows)
+            if total_n < min_required:
+                continue
+
+            df = pd.DataFrame(rows)
+            valid_gestation_n = self._gestation_support_count(df)
+            candidate = {
+                "df": df,
+                "fields": fields,
+                "tier": tier,
+                "total_n": total_n,
+                "valid_gestation_n": valid_gestation_n,
+            }
+
+            if first_total_candidate is None:
+                first_total_candidate = candidate
+
+            if valid_gestation_n >= preferred_support_n:
+                return df, fields, tier
+
+            if valid_gestation_n >= hard_floor_support_n:
+                if (
+                    best_soft_candidate is None
+                    or valid_gestation_n > best_soft_candidate["valid_gestation_n"]
+                    or (
+                        valid_gestation_n == best_soft_candidate["valid_gestation_n"]
+                        and tier < best_soft_candidate["tier"]
+                    )
+                ):
+                    best_soft_candidate = candidate
+
+            logger.info(
+                "Tier %d rejected for gestation support: total_n=%d (min_n=%d), valid_gestation_n=%d (required=%d)",
+                tier,
+                total_n,
+                min_required,
+                valid_gestation_n,
+                preferred_support_n,
+            )
+
+        if best_soft_candidate is not None:
+            logger.warning(
+                "No tier met preferred gestation support >= %d; using best available tier=%d with valid_gestation_n=%d",
+                preferred_support_n,
+                best_soft_candidate["tier"],
+                best_soft_candidate["valid_gestation_n"],
+            )
+            return (
+                best_soft_candidate["df"],
+                best_soft_candidate["fields"],
+                best_soft_candidate["tier"],
+            )
+
+        if first_total_candidate is not None:
+            logger.warning(
+                "No tier met hard gestation support >= %d; using first total_n-qualified tier=%d with valid_gestation_n=%d",
+                hard_floor_support_n,
+                first_total_candidate["tier"],
+                first_total_candidate["valid_gestation_n"],
+            )
+            return (
+                first_total_candidate["df"],
+                first_total_candidate["fields"],
+                first_total_candidate["tier"],
+            )
+
         # Should only happen if there are no rows at all in the lookback window.
         return pd.DataFrame(), [], len(SEGMENT_BACKOFF_TIERS) - 1
 
