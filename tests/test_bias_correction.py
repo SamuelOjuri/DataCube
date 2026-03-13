@@ -52,7 +52,7 @@ def fetch_eligible_projects(
     while True:
         q = (
             db.client.table("projects")
-            .select("monday_id, type, category, gestation_period, status_category")
+            .select("monday_id, type, category, gestation_period, status_category, value_band")
             .gte("date_created", cutoff)
             .in_("status_category", ["Won", "Lost"])
             .gt("gestation_period", 0)
@@ -179,6 +179,28 @@ def build_bias_tables(rows, min_n=8):
 
     return seg_bias, seg_n, global_bias, global_fallback
 
+def build_value_band_bias_tables(rows, min_n=15):
+    """Compute bias tables keyed on (type, category, value_band)."""
+    buckets = defaultdict(list)
+    for r in rows:
+        err = r.get("new_err")
+        vb = r.get("value_band")
+        if err is None or not vb:
+            continue
+        seg = (r.get("type") or "?", r.get("category") or "?", vb)
+        buckets[seg].append(float(err))
+
+    seg_bias = {}
+    seg_n = {}
+    for seg, errs in buckets.items():
+        n = len(errs)
+        if n < min_n:
+            continue
+        seg_n[seg] = n
+        seg_bias[seg] = int(round(sum(errs) / n))
+
+    return seg_bias, seg_n
+
 
 def main():
     parser = argparse.ArgumentParser(description="Test bias-corrected analysis (numeric-only, no LLM)")
@@ -268,6 +290,7 @@ def main():
                     "monday_id": monday_id,
                     "type": proj_type,
                     "category": proj_cat,
+                    "value_band": proj.get("value_band"),
                     "actual": actual,
                     "old_expected": old_expected,
                     "new_expected": new_expected,
@@ -385,7 +408,10 @@ def main():
 
     print("=" * 78)
 
+    # # --- Residual bias tables ---
     # seg_bias, seg_n, global_bias, global_fallback = build_bias_tables(comparison_rows, min_n=8)
+
+    # vb_bias, vb_n = build_value_band_bias_tables(comparison_rows, min_n=15)
 
     # print("\n" + "=" * 78)
     # print("REFRESHED BIAS TABLES (paste into src/config.py)")
@@ -404,7 +430,18 @@ def main():
     # for (t, c), n in sorted(seg_n.items(), key=lambda kv: (kv[0][0], kv[0][1])):
     #     print(f"    ({t!r}, {c!r}): {n},")
     # print("}")
+    # print()
 
+    # print("GESTATION_BIAS_BY_VALUE_BAND_SEGMENT = {")
+    # for (t, c, vb), v in sorted(vb_bias.items()):
+    #     print(f"    ({t!r}, {c!r}, {vb!r}): {v},")
+    # print("}")
+    # print()
+
+    # print("GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {")
+    # for (t, c, vb), n in sorted(vb_n.items()):
+    #     print(f"    ({t!r}, {c!r}, {vb!r}): {n},")
+    # print("}")
     # print("=" * 78)
 
     if failed_ids:

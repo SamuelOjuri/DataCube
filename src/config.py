@@ -388,11 +388,12 @@ GESTATION_BIAS_CORRECTION_ENABLED = True
 
 # Raw global weighted bias from historical diagnostics: (actual - expected).
 # Keep this as the uncapped historical signal.
-GESTATION_BIAS_GLOBAL_DAYS = 90
+# GESTATION_BIAS_GLOBAL_DAYS is the primary shrinkage anchor for supported segment and value-band corrections
+GESTATION_BIAS_GLOBAL_DAYS = 85
 
-# Conservative fallback used when segment support is weak.
-# This is the anchor that low-support segments shrink toward.
-GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 76
+# Conservative fallback used only for global-only or truly zero-support cases.
+# Supported low-support segments shrink toward GESTATION_BIAS_GLOBAL_DAYS; this fallback is reserved for global-only or zero-support cases.
+GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 72
 
 # Final adjustment formula still uses damping and a hard cap, but the raw bias
 # is now blended/shrunk first in numeric_analyzer.py.
@@ -414,7 +415,7 @@ GESTATION_BIAS_MIN_SEGMENT_N = 20
 #
 # Higher values:
 # - trust segment bias less
-# - pull more strongly toward global fallback
+# - pull more strongly toward the primary global bias anchor for supported rows
 # - reduce overcorrection on sparse/noisy segments
 #
 # Recommended starting value: 30.0
@@ -443,40 +444,40 @@ GESTATION_BIAS_TIER_WEIGHTS = {
 # Segment mean bias (days): actual_days - expected_days
 # These remain the historical raw segment signals before shrinkage.
 GESTATION_BIAS_BY_SEGMENT = {
-    ('New Build', 'Apartments'): 127,
-    ('New Build', 'Commercial'): 92,
-    ('New Build', 'Datacentre'): 85,
-    ('New Build', 'Education'): 67,
-    ('New Build', 'Health'): 85,
-    ('New Build', 'House'): 60,
-    ('New Build', 'Industrial'): 96,
-    ('New Build', 'Leisure'): 142,
-    ('New Build', 'Mixed Use'): 45,
-    ('Refurbishment', 'Apartments'): 71,
-    ('Refurbishment', 'Commercial'): 143,
-    ('Refurbishment', 'Education'): 78,
-    ('Refurbishment', 'Health'): 85,
-    ('Refurbishment', 'House'): 36,
-    ('Refurbishment', 'Leisure'): 100,
+    ('New Build', 'Apartments'): 108,
+    ('New Build', 'Commercial'): 76,
+    ('New Build', 'Datacentre'): 65,
+    ('New Build', 'Education'): 51,
+    ('New Build', 'Health'): 69,
+    ('New Build', 'House'): 43,
+    ('New Build', 'Industrial'): 73,
+    ('New Build', 'Leisure'): 115,
+    ('New Build', 'Mixed Use'): 27,
+    ('Refurbishment', 'Apartments'): 58,
+    ('Refurbishment', 'Commercial'): 115,
+    ('Refurbishment', 'Education'): 62,
+    ('Refurbishment', 'Health'): 62,
+    ('Refurbishment', 'House'): 25,
+    ('Refurbishment', 'Leisure'): 80,
 }
 
 # Historical support counts for the segment-bias table above.
 # The new code prefers actual effective support from the live segment when
 # available, and falls back to these values when it is not.
 GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = {
-    ('New Build', 'Apartments'): 187,
+    ('New Build', 'Apartments'): 190,
     ('New Build', 'Commercial'): 43,
     ('New Build', 'Datacentre'): 8,
     ('New Build', 'Education'): 41,
-    ('New Build', 'Health'): 38,
-    ('New Build', 'House'): 68,
+    ('New Build', 'Health'): 39,
+    ('New Build', 'House'): 69,
     ('New Build', 'Industrial'): 10,
     ('New Build', 'Leisure'): 23,
     ('New Build', 'Mixed Use'): 8,
-    ('Refurbishment', 'Apartments'): 78,
-    ('Refurbishment', 'Commercial'): 51,
-    ('Refurbishment', 'Education'): 109,
-    ('Refurbishment', 'Health'): 27,
+    ('Refurbishment', 'Apartments'): 79,
+    ('Refurbishment', 'Commercial'): 52,
+    ('Refurbishment', 'Education'): 110,
+    ('Refurbishment', 'Health'): 28,
     ('Refurbishment', 'House'): 77,
     ('Refurbishment', 'Leisure'): 23,
 }
@@ -490,7 +491,7 @@ GESTATION_OUTLIER_FILTERING_ENABLED = True
 # Tukey fence multiplier: values beyond p75 + k*IQR (or below p25 - k*IQR)
 # are excluded before computing the baseline median.
 # 1.5 is the standard Tukey fence; use 2.0 for a more permissive filter.
-GESTATION_OUTLIER_IQR_MULTIPLIER = 2.0
+GESTATION_OUTLIER_IQR_MULTIPLIER = 3.0
 
 # Minimum raw samples required before IQR-based filtering is applied.
 # Below this threshold, the global (0, 1460) cap remains the only filter
@@ -505,3 +506,56 @@ GESTATION_VARIANCE_AWARE_DAMPING_ENABLED = True
 # Floor for the variance damping multiplier.  Even the noisiest segments
 # still receive at least this fraction of the configured damping factor.
 GESTATION_VARIANCE_DAMPING_FLOOR = 0.45
+
+
+# ---------------------------------------------------------------------------
+# Value-band segment bias correction (additive refinement on top of type×category)
+# ---------------------------------------------------------------------------
+GESTATION_BIAS_VALUE_BAND_ENABLED = True
+
+# Minimum closed-project events in a (type, category, value_band) cell before
+# its segment calibrator is trusted.  Below this, falls back to (type, category).
+GESTATION_BIAS_VALUE_BAND_MIN_N = 15
+
+# Shrinkage constant for value-band segments (higher = more conservative).
+# Works identically to GESTATION_BIAS_SUPPORT_SHRINKAGE but for the finer grain.
+GESTATION_BIAS_VALUE_BAND_SHRINKAGE = 20.0
+
+# Static value-band segment bias table: (type, category, value_band) -> days
+# Populated from historical diagnostics, same convention as GESTATION_BIAS_BY_SEGMENT.
+GESTATION_BIAS_BY_VALUE_BAND_SEGMENT = {
+    ('New Build', 'Apartments', 'Large (40-100k)'): 163,
+    ('New Build', 'Apartments', 'Medium (15-40k)'): 119,
+    ('New Build', 'Apartments', 'Small (<15k)'): 54,
+    ('New Build', 'Apartments', 'Zero'): 163,
+    ('New Build', 'Commercial', 'Small (<15k)'): -1,
+    ('New Build', 'Education', 'Small (<15k)'): -15,
+    ('New Build', 'Health', 'Small (<15k)'): 0,
+    ('New Build', 'House', 'Small (<15k)'): 42,
+    ('Refurbishment', 'Apartments', 'Small (<15k)'): 13,
+    ('Refurbishment', 'Commercial', 'Small (<15k)'): 122,
+    ('Refurbishment', 'Education', 'Large (40-100k)'): 127,
+    ('Refurbishment', 'Education', 'Medium (15-40k)'): 29,
+    ('Refurbishment', 'Education', 'Small (<15k)'): 13,
+    ('Refurbishment', 'Health', 'Small (<15k)'): 54,
+    ('Refurbishment', 'House', 'Small (<15k)'): 25,
+}
+
+# Sample sizes for the above table (optional, used as fallback when live support unavailable).
+GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
+    ('New Build', 'Apartments', 'Large (40-100k)'): 17,
+    ('New Build', 'Apartments', 'Medium (15-40k)'): 32,
+    ('New Build', 'Apartments', 'Small (<15k)'): 102,
+    ('New Build', 'Apartments', 'Zero'): 31,
+    ('New Build', 'Commercial', 'Small (<15k)'): 23,
+    ('New Build', 'Education', 'Small (<15k)'): 17,
+    ('New Build', 'Health', 'Small (<15k)'): 18,
+    ('New Build', 'House', 'Small (<15k)'): 56,
+    ('Refurbishment', 'Apartments', 'Small (<15k)'): 54,
+    ('Refurbishment', 'Commercial', 'Small (<15k)'): 38,
+    ('Refurbishment', 'Education', 'Large (40-100k)'): 24,
+    ('Refurbishment', 'Education', 'Medium (15-40k)'): 28,
+    ('Refurbishment', 'Education', 'Small (<15k)'): 41,
+    ('Refurbishment', 'Health', 'Small (<15k)'): 16,
+    ('Refurbishment', 'House', 'Small (<15k)'): 68,
+}

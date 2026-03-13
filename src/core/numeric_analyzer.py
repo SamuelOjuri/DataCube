@@ -87,6 +87,12 @@ GESTATION_OUTLIER_MIN_SAMPLES = int(getattr(_config, "GESTATION_OUTLIER_MIN_SAMP
 GESTATION_VARIANCE_AWARE_DAMPING_ENABLED = getattr(_config, "GESTATION_VARIANCE_AWARE_DAMPING_ENABLED", True)
 GESTATION_VARIANCE_DAMPING_FLOOR = float(getattr(_config, "GESTATION_VARIANCE_DAMPING_FLOOR", 0.20))
 
+GESTATION_BIAS_VALUE_BAND_ENABLED = getattr(_config, "GESTATION_BIAS_VALUE_BAND_ENABLED", False)
+GESTATION_BIAS_VALUE_BAND_MIN_N = int(getattr(_config, "GESTATION_BIAS_VALUE_BAND_MIN_N", 15))
+GESTATION_BIAS_VALUE_BAND_SHRINKAGE = float(getattr(_config, "GESTATION_BIAS_VALUE_BAND_SHRINKAGE", 20.0))
+GESTATION_BIAS_BY_VALUE_BAND_SEGMENT = getattr(_config, "GESTATION_BIAS_BY_VALUE_BAND_SEGMENT", {})
+GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = getattr(_config, "GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES", {})
+
 logger = logging.getLogger(__name__)
 
 
@@ -296,7 +302,10 @@ class NumericBaseline:
         Key behaviours:
         - continuous shrinkage instead of binary segment/global switching
         - uses actual effective support from the current baseline data
+        - uses GESTATION_BIAS_GLOBAL_DAYS as the primary shrinkage anchor
+        - reserves GESTATION_BIAS_GLOBAL_FALLBACK_DAYS for global-only or zero-support cases
         - attenuates broad type/category bias when the baseline came from a narrower tier
+        - optionally refines with (type, category, value_band) when support is sufficient
         - scales damping inversely with segment CV when variance-aware damping is enabled
         """
         seg_key = (
@@ -306,10 +315,17 @@ class NumericBaseline:
         seg_bias = GESTATION_BIAS_BY_SEGMENT.get(seg_key)
         config_segment_n = int(GESTATION_BIAS_SEGMENT_SAMPLE_SIZES.get(seg_key, 0))
 
-        global_bias = GESTATION_BIAS_GLOBAL_FALLBACK_DAYS
-        if global_bias is None:
-            global_bias = GESTATION_BIAS_GLOBAL_DAYS
-        global_bias = int(global_bias or 0)
+        # Primary shrinkage anchor for any row with usable segment support.
+        global_primary_bias = GESTATION_BIAS_GLOBAL_DAYS
+        if global_primary_bias is None:
+            global_primary_bias = GESTATION_BIAS_GLOBAL_FALLBACK_DAYS
+        global_primary_bias = int(global_primary_bias or 0)
+
+        # Conservative fallback reserved for global-only or truly zero-support cases.
+        global_fallback_bias = GESTATION_BIAS_GLOBAL_FALLBACK_DAYS
+        if global_fallback_bias is None:
+            global_fallback_bias = global_primary_bias
+        global_fallback_bias = int(global_fallback_bias or 0)
 
         actual_support = 0.0
         if gest_stats:
@@ -328,15 +344,74 @@ class NumericBaseline:
 
         if seg_bias is None:
             segment_trust = 0.0
-            blended_bias = float(global_bias)
+            global_bias = float(global_fallback_bias)
+            blended_bias = global_bias
             source = "global_only"
+        elif support_signal <= 0:
+            segment_trust = 0.0
+            global_bias = float(global_fallback_bias)
+            blended_bias = global_bias
+            source = "segment_zero_support"
         else:
+            global_bias = float(global_primary_bias)
             segment_trust = support_signal / (support_signal + shrinkage)
             blended_bias = (
                 segment_trust * float(seg_bias)
-                + (1.0 - segment_trust) * float(global_bias)
+                + (1.0 - segment_trust) * global_bias
             )
             source = "segment_shrunk" if actual_support > 0 else "segment_table"
+
+        # --- Value-band refinement (optional second-pass) ---
+        vb_key = None
+        vb_support = 0.0
+        vb_trust = None
+        if GESTATION_BIAS_VALUE_BAND_ENABLED:
+            vb = getattr(project, "value_band", None)
+            if vb:
+                vb_key = (seg_key[0], seg_key[1], vb)  # (type, category, value_band)
+                vb_bias = GESTATION_BIAS_BY_VALUE_BAND_SEGMENT.get(vb_key)
+
+                if vb_bias is not None:
+                    # Compute value-band support from the live segment data
+                    if support_data is not None and not support_data.empty:
+                        vb_col = support_data.get("value_band")
+                        if vb_col is not None:
+                            vb_mask = vb_col == vb
+                            if vb_mask.any():
+                                vb_slice = support_data.loc[vb_mask]
+                                vb_stats = self._gestation_support_stats(vb_slice)
+                                vb_support = float(
+                                    vb_stats.get("effective_n") or vb_stats.get("count") or 0.0
+                                )
+
+                    # Fall back to config table if live support is zero
+                    if vb_support <= 0:
+                        vb_support = float(
+                            GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES.get(vb_key, 0)
+                        )
+
+                    vb_min_n = float(GESTATION_BIAS_VALUE_BAND_MIN_N)
+                    vb_shrinkage = max(1.0, float(GESTATION_BIAS_VALUE_BAND_SHRINKAGE))
+
+                    if vb_support >= vb_min_n:
+                        # Enough events — shrink toward the coarser bias already selected above.
+                        vb_trust = vb_support / (vb_support + vb_shrinkage)
+                        blended_bias = (
+                            vb_trust * float(vb_bias)
+                            + (1.0 - vb_trust) * blended_bias
+                        )
+                        source = "value_band_shrunk"
+                        logger.info(
+                            "Value-band refinement applied: vb_key=%s, vb_bias=%d, "
+                            "vb_support=%.1f, vb_trust=%.2f, blended_bias=%.1f",
+                            vb_key, vb_bias, vb_support, vb_trust, blended_bias,
+                        )
+                    else:
+                        logger.info(
+                            "Value-band segment %s rejected: support=%.1f < min_n=%d; "
+                            "keeping (type,category) bias=%.1f",
+                            vb_key, vb_support, int(vb_min_n), blended_bias,
+                        )
 
         tier_weight = float(GESTATION_BIAS_TIER_WEIGHTS.get(int(backoff_tier), 1.0))
         tier_adjusted_bias = blended_bias * tier_weight
@@ -365,6 +440,8 @@ class NumericBaseline:
             "segment_key": seg_key,
             "segment_bias_days": int(seg_bias) if seg_bias is not None else None,
             "global_bias_days": int(global_bias),
+            "global_primary_bias_days": int(global_primary_bias),
+            "global_fallback_bias_days": int(global_fallback_bias),
             "config_segment_n": config_segment_n,
             "actual_support": float(actual_support),
             "segment_trust": float(segment_trust),
@@ -375,6 +452,9 @@ class NumericBaseline:
             "source": source,
             "segment_cv": round(segment_cv, 4) if segment_cv is not None else None,
             "variance_damping": round(variance_damping, 4),
+            "value_band_key": vb_key,
+            "value_band_support": round(vb_support, 2) if vb_key else None,
+            "value_band_trust": round(vb_trust, 4) if vb_trust is not None else None,
         }
     
     def _compute_global_closed_prior(self, df: pd.DataFrame) -> Tuple[Optional[float], int]:
@@ -985,15 +1065,18 @@ class NumericBaseline:
                     logger.info(
                         (
                             "Bias correction: %d -> %d days "
-                            "(segment=%s, seg_bias=%s, global=%+d, support=%.1f, "
-                            "config_n=%d, trust=%.2f, tier=%d, tier_w=%.2f, "
-                            "raw=%+d, k=%.2f, var_damp=%.2f, cv=%s, adj=%+d, cap=%d, source=%s)"
+                            "(segment=%s, seg_bias=%s, global=%+d, global_primary=%+d, "
+                            "global_fallback=%+d, support=%.1f, config_n=%d, trust=%.2f, "
+                            "tier=%d, tier_w=%.2f, raw=%+d, k=%.2f, var_damp=%.2f, "
+                            "cv=%s, adj=%+d, cap=%d, source=%s)"
                         ),
                         gestation_days,
                         corrected,
                         bias_meta["segment_key"],
                         bias_meta["segment_bias_days"],
                         bias_meta["global_bias_days"],
+                        bias_meta["global_primary_bias_days"],
+                        bias_meta["global_fallback_bias_days"],
                         bias_meta["actual_support"],
                         bias_meta["config_segment_n"],
                         bias_meta["segment_trust"],
