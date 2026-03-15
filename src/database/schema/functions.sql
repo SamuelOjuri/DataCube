@@ -160,15 +160,34 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Function to clean old webhook events
-CREATE OR REPLACE FUNCTION cleanup_old_webhook_events()
+CREATE OR REPLACE FUNCTION cleanup_old_webhook_events_batch(
+    p_batch_size INTEGER DEFAULT 2000,
+    p_older_than_days INTEGER DEFAULT 30
+)
 RETURNS INTEGER AS $$
 DECLARE
-    deleted_count INTEGER;
+    deleted_count INTEGER := 0;
 BEGIN
-    DELETE FROM webhook_events 
-    WHERE received_at < NOW() - INTERVAL '30 days'
-    AND status IN ('processed', 'failed');
-    
+    IF p_batch_size IS NULL OR p_batch_size < 1 THEN
+        RAISE EXCEPTION 'p_batch_size must be >= 1, got %', p_batch_size;
+    END IF;
+
+    IF p_older_than_days IS NULL OR p_older_than_days < 1 THEN
+        RAISE EXCEPTION 'p_older_than_days must be >= 1, got %', p_older_than_days;
+    END IF;
+
+    WITH candidates AS (
+        SELECT id
+        FROM webhook_events
+        WHERE received_at < NOW() - (p_older_than_days || ' days')::interval
+          AND status IN ('processed', 'failed', 'processed_with_warnings')
+        ORDER BY received_at ASC
+        LIMIT p_batch_size
+    )
+    DELETE FROM webhook_events w
+    USING candidates c
+    WHERE w.id = c.id;
+
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;

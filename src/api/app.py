@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import os
+from typing import Any
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -39,6 +40,35 @@ def _env_int(name: str, default: int) -> int:
         )
         return default
 
+def parse_deleted_count(raw: Any) -> int:
+    if raw is None:
+        return 0
+    if isinstance(raw, (int, float)):
+        return int(raw)
+
+    if isinstance(raw, list):
+        if not raw:
+            return 0
+        first = raw[0]
+        if isinstance(first, dict):
+            return int(
+                first.get("cleanup_old_webhook_events_batch")
+                or first.get("cleanup_old_webhook_events")
+                or next(iter(first.values()), 0)
+                or 0
+            )
+        return int(first or 0)
+
+    if isinstance(raw, dict):
+        return int(
+            raw.get("cleanup_old_webhook_events_batch")
+            or raw.get("cleanup_old_webhook_events")
+            or next(iter(raw.values()), 0)
+            or 0
+        )
+
+    return int(raw)
+
 
 FORECAST_SNAPSHOT_RETENTION_DAYS = _env_int(
     "FORECAST_SNAPSHOT_RETENTION_DAYS",
@@ -46,6 +76,12 @@ FORECAST_SNAPSHOT_RETENTION_DAYS = _env_int(
 )
 FORECAST_SNAPSHOT_CRON_HOUR_UTC = _env_int("FORECAST_SNAPSHOT_CRON_HOUR_UTC", 3)
 FORECAST_SNAPSHOT_CRON_MINUTE_UTC = _env_int("FORECAST_SNAPSHOT_CRON_MINUTE_UTC", 10)
+
+WEBHOOK_PURGE_CRON_HOUR_UTC = _env_int("WEBHOOK_PURGE_CRON_HOUR_UTC", 3)
+WEBHOOK_PURGE_CRON_MINUTE_UTC = _env_int("WEBHOOK_PURGE_CRON_MINUTE_UTC", 40)
+WEBHOOK_PURGE_BATCH_SIZE = _env_int("WEBHOOK_PURGE_BATCH_SIZE", 1000)
+WEBHOOK_PURGE_OLDER_THAN_DAYS = _env_int("WEBHOOK_PURGE_OLDER_THAN_DAYS", 30)
+WEBHOOK_PURGE_MAX_BATCHES_PER_RUN = _env_int("WEBHOOK_PURGE_MAX_BATCHES_PER_RUN", 20)
 
 async def _scheduled_forecast_snapshot_maintenance() -> None:
     log = logging.getLogger("scheduler.forecast_snapshot_maintenance")
@@ -208,6 +244,49 @@ async def _scheduled_monday_sync() -> None:
         )
         log.exception("Monday sync job failed")
 
+async def _scheduled_webhook_cleanup() -> None:
+    log = logging.getLogger("scheduler.webhook_cleanup")
+    loop = asyncio.get_running_loop()
+    supabase = SupabaseClient()
+    started = time.perf_counter()
+
+    total_deleted = 0
+    batches_run = 0
+
+    try:
+        for _ in range(max(1, WEBHOOK_PURGE_MAX_BATCHES_PER_RUN)):
+            result = await loop.run_in_executor(
+                None,
+                lambda: supabase.client.rpc(
+                    "cleanup_old_webhook_events_batch",
+                    {
+                        "p_batch_size": WEBHOOK_PURGE_BATCH_SIZE,
+                        "p_older_than_days": WEBHOOK_PURGE_OLDER_THAN_DAYS,
+                    },
+                ).execute(),
+            )
+
+            deleted = parse_deleted_count(result.data)
+            total_deleted += deleted
+            batches_run += 1
+
+            if deleted == 0:
+                break
+
+            if deleted < WEBHOOK_PURGE_BATCH_SIZE:
+                break
+
+        log.info(
+            "Webhook cleanup finished (total_deleted=%s, batches_run=%s, batch_size=%s, older_than_days=%s, elapsed=%.2fs)",
+            total_deleted,
+            batches_run,
+            WEBHOOK_PURGE_BATCH_SIZE,
+            WEBHOOK_PURGE_OLDER_THAN_DAYS,
+            time.perf_counter() - started,
+        )
+    except Exception:
+        log.exception("Webhook cleanup job failed")
+
 async def _scheduled_refresh_conversion_views() -> None:
     log = logging.getLogger("scheduler.refresh_conversion_views")
     loop = asyncio.get_running_loop()
@@ -254,6 +333,16 @@ async def _startup() -> None:
             hour=FORECAST_SNAPSHOT_CRON_HOUR_UTC,
             minute=FORECAST_SNAPSHOT_CRON_MINUTE_UTC,
             id="forecast_snapshot_maintenance",
+            misfire_grace_time=900,
+            coalesce=True,
+            max_instances=1,
+        )
+        _scheduler.add_job(
+            _scheduled_webhook_cleanup,
+            "cron",
+            hour=WEBHOOK_PURGE_CRON_HOUR_UTC,
+            minute=WEBHOOK_PURGE_CRON_MINUTE_UTC,
+            id="webhook_cleanup",
             misfire_grace_time=900,
             coalesce=True,
             max_instances=1,
