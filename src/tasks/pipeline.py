@@ -326,8 +326,19 @@ class DeltaRehydrationManager:
     async def _collect_hidden_ids(self, prefixes: Set[str], log_id: Optional[str]) -> Dict[str, Any]:
         from collections import deque
 
-        pending = set(prefixes)
+        all_prefixes = set(prefixes)
+        matched_prefixes: Set[str] = set()
         collected: Set[str] = set()
+
+        if not all_prefixes:
+            return {
+                "matched_ids": [],
+                "pages": 0,
+                "processed_total": 0,
+                "matched_prefixes": 0,
+                "unmatched_prefixes": 0,
+                "unmatched_prefix_values": [],
+            }
 
         column_ids = ["name"]
         cursor: Optional[str] = None
@@ -352,7 +363,7 @@ class DeltaRehydrationManager:
                 .execute()
             )
             if prev.data:
-                meta = (prev.data[0].get("metadata") or {})
+                meta = prev.data[0].get("metadata") or {}
                 if meta.get("phase") == "hidden" and meta.get("last_cursor"):
                     cursor = meta.get("last_cursor")
                     hidden_pages = int(meta.get("pages") or 0)
@@ -370,24 +381,30 @@ class DeltaRehydrationManager:
                 if cursor:
                     page = self.monday.get_next_items_page(cursor, column_ids, limit=100)
                 else:
-                    page = self.monday.get_items_page(HIDDEN_ITEMS_BOARD_ID, column_ids, limit=100, cursor=None)
+                    page = self.monday.get_items_page(
+                        HIDDEN_ITEMS_BOARD_ID,
+                        column_ids,
+                        limit=100,
+                        cursor=None,
+                    )
             except Exception as exc:
                 msg = str(exc).lower()
 
                 if "cursorexpirederror" in msg or ("cursor" in msg and "expire" in msg):
-                    try:
-                        self.supabase.save_cursor_checkpoint(
-                            log_id,
-                            cursor,
-                            {
-                                "phase": "hidden",
-                                "pages": hidden_pages,
-                                "processed_total": hidden_processed,
-                                "last_seen_ring": list(hidden_last_seen),
-                            },
-                        )
-                    except Exception:
-                        pass
+                    if log_id:
+                        try:
+                            self.supabase.save_cursor_checkpoint(
+                                log_id,
+                                cursor,
+                                {
+                                    "phase": "hidden",
+                                    "pages": hidden_pages,
+                                    "processed_total": hidden_processed,
+                                    "last_seen_ring": list(hidden_last_seen),
+                                },
+                            )
+                        except Exception:
+                            pass
 
                     seed = self.monday.get_items_page(HIDDEN_ITEMS_BOARD_ID, column_ids, limit=1, cursor=None)
                     cursor = seed.get("next_cursor")
@@ -425,6 +442,7 @@ class DeltaRehydrationManager:
                             retry_sec = max(1, int(match.group(1)))
                     except Exception:
                         pass
+
                     self.logger.info("Hidden pagination hit rate limit; sleeping %ds", retry_sec)
                     await asyncio.sleep(retry_sec)
                     continue
@@ -433,7 +451,7 @@ class DeltaRehydrationManager:
                     consecutive_502 += 1
                     wait_for = 10 * min(consecutive_502, 6)
                     self.logger.warning(
-                        "[delta][hidden] 502 Bad Gateway (streak=%d) — sleeping %ds before retry",
+                        "[delta][hidden] 502 Bad Gateway (streak=%d) - sleeping %ds before retry",
                         consecutive_502,
                         wait_for,
                     )
@@ -472,9 +490,9 @@ class DeltaRehydrationManager:
                     continue
 
                 prefix = self._leading_digits(name)
-                if prefix and prefix in pending:
+                if prefix and prefix in all_prefixes:
                     collected.add(hid)
-                    pending.discard(prefix)
+                    matched_prefixes.add(prefix)
 
                 try:
                     hidden_last_seen.append(hid)
@@ -487,42 +505,49 @@ class DeltaRehydrationManager:
             self.hidden_ids_scanned = hidden_processed
             last_progress = datetime.utcnow()
 
+            unmatched_count = len(all_prefixes - matched_prefixes)
             elapsed = (datetime.utcnow() - start).total_seconds() or 1
             self.logger.info(
-                "[delta][hidden] pages=%d processed_total=%d matched=%d unmatched=%d rate=%.1f/s",
+                "[delta][hidden] pages=%d processed_total=%d matched_ids=%d matched_prefixes=%d unmatched_prefixes=%d rate=%.1f/s",
                 hidden_pages,
                 hidden_processed,
                 len(collected),
-                len(pending),
+                len(matched_prefixes),
+                unmatched_count,
                 hidden_processed / elapsed,
             )
 
             cursor = page.get("next_cursor")
-            try:
-                self.supabase.save_cursor_checkpoint(
-                    log_id,
-                    cursor,
-                    {
-                        "phase": "hidden",
-                        "pages": hidden_pages,
-                        "processed_total": hidden_processed,
-                        "last_seen_ring": list(hidden_last_seen),
-                    },
-                )
-            except Exception:
-                pass
+            if log_id:
+                try:
+                    self.supabase.save_cursor_checkpoint(
+                        log_id,
+                        cursor,
+                        {
+                            "phase": "hidden",
+                            "pages": hidden_pages,
+                            "processed_total": hidden_processed,
+                            "last_seen_ring": list(hidden_last_seen),
+                        },
+                    )
+                except Exception:
+                    pass
 
-            if not cursor or not pending:
+            # Important: do not stop when each prefix is seen once.
+            # Continue scanning until cursor is exhausted to collect all hidden rows for each prefix.
+            if not cursor:
                 break
 
             await asyncio.sleep(self.RATE_LIMIT_DELAY)
 
+        unmatched_values = sorted(all_prefixes - matched_prefixes)
         return {
             "matched_ids": list(collected),
             "pages": hidden_pages,
             "processed_total": hidden_processed,
-            "unmatched_prefixes": len(pending),
-            "unmatched_prefix_values": sorted(pending),
+            "matched_prefixes": len(matched_prefixes),
+            "unmatched_prefixes": len(unmatched_values),
+            "unmatched_prefix_values": unmatched_values,
         }
 
     async def _fast_forward_to_known_ids(
@@ -957,8 +982,18 @@ class RecentRehydrationManager:
         from collections import deque
 
         all_prefixes = set(prefixes)
-        pending = set(prefixes)
+        matched_prefixes: Set[str] = set()
         collected: Set[str] = set()
+
+        if not all_prefixes:
+            return {
+                "matched_ids": [],
+                "pages": 0,
+                "processed_total": 0,
+                "matched_prefixes": 0,
+                "unmatched_prefixes": 0,
+                "unmatched_prefix_values": [],
+            }
 
         cursor: Optional[str] = None
         hidden_last_seen: Deque[str] = deque(maxlen=10)
@@ -1006,7 +1041,7 @@ class RecentRehydrationManager:
             except Exception as exc:
                 msg = str(exc).lower()
 
-                if "cursor" in msg and "expire" in msg:
+                if "cursorexpirederror" in msg or ("cursor" in msg and "expire" in msg):
                     if log_id:
                         try:
                             self.supabase.save_cursor_checkpoint(
@@ -1064,7 +1099,7 @@ class RecentRehydrationManager:
                     consecutive_502 += 1
                     wait_for = 10 * min(consecutive_502, 6)
                     self.logger.warning(
-                        "[rehydrate][hidden] 502 Bad Gateway (streak=%d) — sleeping %ds before retry",
+                        "[rehydrate][hidden] 502 Bad Gateway (streak=%d) - sleeping %ds before retry",
                         consecutive_502,
                         wait_for,
                     )
@@ -1106,7 +1141,7 @@ class RecentRehydrationManager:
                 prefix = self._leading_digits(name)
                 if prefix and prefix in all_prefixes:
                     collected.add(hid)
-                    pending.discard(prefix)
+                    matched_prefixes.add(prefix)
 
                 try:
                     hidden_last_seen.append(hid)
@@ -1116,17 +1151,20 @@ class RecentRehydrationManager:
             hidden_pages += 1
             hidden_processed += len(items)
             last_progress = datetime.utcnow()
+            self.hidden_pages = hidden_pages
+            self.hidden_ids_scanned = hidden_processed
+
+            unmatched_count = len(all_prefixes - matched_prefixes)
             elapsed = (datetime.utcnow() - start).total_seconds() or 1
             self.logger.info(
-                "[rehydrate][hidden] pages=%d processed_total=%d matched=%d unmatched=%d rate=%.1f/s",
+                "[rehydrate][hidden] pages=%d processed_total=%d matched_ids=%d matched_prefixes=%d unmatched_prefixes=%d rate=%.1f/s",
                 hidden_pages,
                 hidden_processed,
                 len(collected),
-                len(pending),
+                len(matched_prefixes),
+                unmatched_count,
                 hidden_processed / elapsed,
             )
-            self.hidden_pages = hidden_pages
-            self.hidden_ids_scanned = hidden_processed
 
             cursor = page.get("next_cursor")
             if log_id:
@@ -1144,23 +1182,28 @@ class RecentRehydrationManager:
                 except Exception:
                     pass
 
-            if not cursor or not pending:
+            # Important: continue until cursor is exhausted so all hidden rows are captured.
+            if not cursor:
                 break
 
             await asyncio.sleep(self.RATE_LIMIT_DELAY)
 
+        unmatched_values = sorted(all_prefixes - matched_prefixes)
+
         self.logger.info(
-            "Hidden ID scan finished: matched=%d, unmatched_prefixes=%d",
+            "Hidden ID scan finished: matched_ids=%d matched_prefixes=%d unmatched_prefixes=%d",
             len(collected),
-            len(pending),
+            len(matched_prefixes),
+            len(unmatched_values),
         )
 
         return {
             "matched_ids": list(collected),
             "pages": hidden_pages,
             "processed_total": hidden_processed,
-            "unmatched_prefixes": len(pending),
-            "unmatched_prefix_values": sorted(pending),
+            "matched_prefixes": len(matched_prefixes),
+            "unmatched_prefixes": len(unmatched_values),
+            "unmatched_prefix_values": unmatched_values,
         }
 
     async def _fast_forward_to_known_ids(

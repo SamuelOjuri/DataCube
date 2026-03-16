@@ -562,7 +562,6 @@ project_base AS (
         p.probability_percent,
         p.date_order_received,
         p.expected_start_date,
-        p.follow_up_date,
         p.date_created,
 
         la.analysis_timestamp,
@@ -573,19 +572,17 @@ project_base AS (
 
         CASE
             WHEN p.date_order_received IS NOT NULL THEN p.date_order_received
-            WHEN p.expected_start_date IS NOT NULL THEN p.expected_start_date
-            WHEN p.follow_up_date IS NOT NULL THEN p.follow_up_date
             WHEN p.date_created IS NOT NULL AND la.expected_gestation_days IS NOT NULL
                 THEN (p.date_created + GREATEST(la.expected_gestation_days, 0))
+            WHEN p.expected_start_date IS NOT NULL THEN p.expected_start_date
             WHEN p.date_created IS NOT NULL THEN p.date_created
             ELSE CURRENT_DATE
         END AS forecast_date,
 
         CASE
             WHEN p.date_order_received IS NOT NULL THEN 'date_order_received'
-            WHEN p.expected_start_date IS NOT NULL THEN 'expected_start_date'
-            WHEN p.follow_up_date IS NOT NULL THEN 'follow_up_date'
             WHEN p.date_created IS NOT NULL AND la.expected_gestation_days IS NOT NULL THEN 'date_created_plus_expected_gestation_days'
+            WHEN p.expected_start_date IS NOT NULL THEN 'expected_start_date'
             WHEN p.date_created IS NOT NULL THEN 'date_created'
             ELSE 'current_date_default'
         END AS forecast_date_source
@@ -730,3 +727,99 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pipeline_forecast_monthly_12m_v1_unique
 
 CREATE INDEX IF NOT EXISTS idx_mv_pipeline_forecast_monthly_12m_v1_forecast_month
     ON mv_pipeline_forecast_monthly_12m_v1 (forecast_month);
+
+
+-- ============================================================
+-- Bookings(Contracted Value) vs Pipeline Forecast Chart Views
+-- ============================================================
+
+-- Actual Bookings Monthly View: Uses total_order_value and date_order_received from the projects table
+-- CREATE OR REPLACE VIEW vw_actual_bookings_monthly_v1 AS
+-- SELECT
+--     DATE_TRUNC('month', p.date_order_received)::DATE AS booking_month,
+--     COUNT(*) AS project_count,
+--     SUM(p.total_order_value)::NUMERIC(14,2) AS actual_bookings
+-- FROM projects p
+-- WHERE p.date_order_received IS NOT NULL
+--   AND COALESCE(p.total_order_value, 0) > 0
+--   AND p.pipeline_stage IN (
+--       'Won - Open (Order Received)',
+--       'Won - Closed (Invoiced)',
+--       'Won Via Other Ref'
+--   )
+-- GROUP BY 1
+-- ORDER BY 1;
+
+CREATE OR REPLACE VIEW vw_actual_bookings_monthly_v1 AS
+SELECT
+    DATE_TRUNC('month', p.date_order_received)::DATE AS booking_month,
+    COUNT(*) AS project_count,
+    SUM(p.total_order_value)::NUMERIC(14,2) AS actual_bookings
+FROM projects p
+WHERE p.date_order_received IS NOT NULL
+  AND COALESCE(p.total_order_value, 0) > 0
+GROUP BY 1
+ORDER BY 1;
+
+
+-- Collapse the existing materialized view's stage_bucket dimension into a single row per month
+CREATE OR REPLACE VIEW vw_pipeline_forecast_monthly_total_v1 AS
+SELECT
+    f.forecast_month,
+    SUM(f.project_count) AS project_count,
+    SUM(f.committed_value)::NUMERIC(14,2) AS committed_pipeline,
+    SUM(f.expected_value)::NUMERIC(14,2) AS expected_pipeline,
+    SUM(f.best_case_value)::NUMERIC(14,2) AS best_case_pipeline,
+    SUM(f.worst_case_value)::NUMERIC(14,2) AS worst_case_pipeline
+FROM mv_pipeline_forecast_monthly_12m_v1 f
+GROUP BY f.forecast_month
+ORDER BY f.forecast_month;
+
+
+-- Chart-ready view with a continuous month spine joining actuals and forecast for Power BI.
+CREATE OR REPLACE VIEW vw_bookings_vs_pipeline_chart_v1 AS
+WITH actuals AS (
+    SELECT
+        booking_month AS month_start,
+        actual_bookings
+    FROM vw_actual_bookings_monthly_v1
+),
+forecast AS (
+    SELECT
+        forecast_month AS month_start,
+        expected_pipeline,
+        best_case_pipeline,
+        worst_case_pipeline,
+        committed_pipeline
+    FROM vw_pipeline_forecast_monthly_total_v1
+),
+bounds AS (
+    SELECT
+        LEAST(
+            COALESCE((SELECT MIN(month_start) FROM actuals), CURRENT_DATE),
+            COALESCE((SELECT MIN(month_start) FROM forecast), CURRENT_DATE)
+        )::DATE AS min_month,
+        GREATEST(
+            COALESCE((SELECT MAX(month_start) FROM actuals), CURRENT_DATE),
+            COALESCE((SELECT MAX(month_start) FROM forecast), CURRENT_DATE)
+        )::DATE AS max_month
+),
+months AS (
+    SELECT
+        GENERATE_SERIES(
+            DATE_TRUNC('month', (SELECT min_month FROM bounds))::DATE,
+            DATE_TRUNC('month', (SELECT max_month FROM bounds))::DATE,
+            INTERVAL '1 month'
+        )::DATE AS month_start
+)
+SELECT
+    m.month_start,
+    COALESCE(a.actual_bookings, 0)::NUMERIC(14,2) AS actual_bookings,
+    COALESCE(f.expected_pipeline, 0)::NUMERIC(14,2) AS expected_pipeline,
+    COALESCE(f.best_case_pipeline, 0)::NUMERIC(14,2) AS best_case_pipeline,
+    COALESCE(f.worst_case_pipeline, 0)::NUMERIC(14,2) AS worst_case_pipeline,
+    COALESCE(f.committed_pipeline, 0)::NUMERIC(14,2) AS committed_pipeline
+FROM months m
+LEFT JOIN actuals a ON a.month_start = m.month_start
+LEFT JOIN forecast f ON f.month_start = m.month_start
+ORDER BY m.month_start;

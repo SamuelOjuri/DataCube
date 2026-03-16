@@ -1084,14 +1084,69 @@ class DataSyncService:
         return str(category_value) if category_value else ""
 
     def _parse_numeric_value(self, value: Any) -> Optional[float]:
-        if value is None or value == "":
+        if value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        if isinstance(value, dict):
+            for key in ("value", "text", "display_value", "amount", "numeric"):
+                parsed = self._parse_numeric_value(value.get(key))
+                if parsed is not None:
+                    return parsed
+            return None
+
+        if not isinstance(value, str):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        raw = value.strip()
+        if not raw:
+            return None
+
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+            raw = raw[1:-1].strip()
+            if not raw:
+                return None
+
+        if raw.startswith("{") and raw.endswith("}"):
+            try:
+                obj = json.loads(raw)
+                parsed = self._parse_numeric_value(obj)
+                if parsed is not None:
+                    return parsed
+            except Exception:
+                pass
+
+        clean = (
+            raw.replace("£", "")
+            .replace("$", "")
+            .replace("€", "")
+            .replace(",", "")
+            .strip()
+        )
+
+        if not clean:
+            return None
+
+        try:
+            return float(clean)
+        except (TypeError, ValueError):
+            pass
+
+        import re
+        match = re.search(r"-?\d+(?:\.\d+)?", clean)
+        if not match:
             return None
         try:
-            if isinstance(value, str):
-                clean_value = value.replace("£", "").replace(",", "").strip()
-                return float(clean_value) if clean_value else None
-            return float(value)
-        except (ValueError, TypeError):
+            return float(match.group(0))
+        except (TypeError, ValueError):
             return None
 
     def _parse_gestation_period(self, value: Any) -> Optional[int]:
