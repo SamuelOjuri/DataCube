@@ -83,6 +83,9 @@ WEBHOOK_PURGE_BATCH_SIZE = _env_int("WEBHOOK_PURGE_BATCH_SIZE", 1000)
 WEBHOOK_PURGE_OLDER_THAN_DAYS = _env_int("WEBHOOK_PURGE_OLDER_THAN_DAYS", 30)
 WEBHOOK_PURGE_MAX_BATCHES_PER_RUN = _env_int("WEBHOOK_PURGE_MAX_BATCHES_PER_RUN", 20)
 
+REHYDRATE_CHUNK_SIZE = _env_int("REHYDRATE_CHUNK_SIZE", 40)
+REHYDRATE_BATCH_PREFIX_LIMIT = _env_int("REHYDRATE_BATCH_PREFIX_LIMIT", 40)
+
 async def _scheduled_forecast_snapshot_maintenance() -> None:
     log = logging.getLogger("scheduler.forecast_snapshot_maintenance")
     loop = asyncio.get_running_loop()
@@ -106,7 +109,12 @@ async def _scheduled_forecast_snapshot_maintenance() -> None:
 async def _scheduled_delta_rehydrate() -> None:
     log = logging.getLogger("scheduler.delta_rehydrate")
     try:
-        await rehydrate_delta(days_back=3, chunk_size=200, logger=log)
+        await rehydrate_delta(
+            days_back=3,
+            chunk_size=REHYDRATE_CHUNK_SIZE,
+            batch_prefix_limit=REHYDRATE_BATCH_PREFIX_LIMIT,
+            logger=log,
+        )
     except Exception:  # noqa: BLE001
         log.exception("Delta rehydrate job failed")
 
@@ -114,7 +122,12 @@ async def _scheduled_delta_rehydrate() -> None:
 async def _scheduled_recent_rehydrate() -> None:
     log = logging.getLogger("scheduler.recent_rehydrate")
     try:
-        await rehydrate_recent(days_back=3, chunk_size=200, logger=log)
+        await rehydrate_recent(
+            days_back=3,
+            chunk_size=REHYDRATE_CHUNK_SIZE,
+            batch_prefix_limit=REHYDRATE_BATCH_PREFIX_LIMIT,
+            logger=log,
+        )
     except Exception:
         log.exception("Recent rehydrate job failed")
 

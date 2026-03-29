@@ -6,7 +6,7 @@ Contains all board IDs, column mappings, and API settings.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, Dict, List
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +33,10 @@ BATCH_SIZE = 100  # Default for simple boards
 PARENT_BOARD_BATCH_SIZE = 100  # Reduced for complex main board
 SUBITEM_BOARD_BATCH_SIZE = 100  # Moderate for subitems
 HIDDEN_ITEMS_BATCH_SIZE = 100  # Keep high for simple hidden items board
+
+
+REHYDRATE_BATCH_PREFIX_LIMIT = 40 # Max batch size for prefix-based rehydration queries (keep small to avoid timeouts)
+REHYDRATE_CHUNK_SIZE = 40 # Chunk size for rehydration queries
 
 RATE_LIMIT_DELAY = 0.5  # Seconds between batches
 CACHE_EXPIRY_HOURS = 24  # Cache duration for label mappings
@@ -252,6 +256,8 @@ HIDDEN_ITEMS_COLUMNS = {
     'reason_for_change': 'dropdown2__1',
     'date_design_completed': 'date__1',
     'invoice_date': 'date42__1',
+    'invoice_number': 'invoice_number_mkm2nq6s',
+    'amount_invoiced': 'numbers56__1',
     'date_received': 'date4__1',
     'status': 'status__1',
     'project_attachments': 'files__1',
@@ -377,6 +383,196 @@ def get_lookback_days(preset: str = '5_years') -> Optional[int]:
         Number of days to look back, or None for all_time
     """
     return LOOKBACK_PRESETS.get(preset, ANALYSIS_LOOKBACK_DAYS)
+
+
+# ---------------------------------------------------------------------------
+# Invoice roll-up field contract utilities
+# ---------------------------------------------------------------------------
+
+INVOICE_ROLLUP_CONTRACT = {
+    "hidden_items": {
+        "item_id": "id",
+        "item_name": "name",
+        "amount_invoiced": "numbers56__1",
+        "invoice_date": "date42__1",
+        "invoice_number": "invoice_number_mkm2nq6s",
+    },
+    "subitems": {
+        "parent_project_id": "parent_item.id",
+        "hidden_item_link": "connect_boards8__1",
+        "item_name": "name",
+        "amount_invoiced": "mirror5__1",
+        "invoice_date": "mirror082__1",
+        "invoice_number": "mirror682__1",
+    },
+    "projects": {
+        "rollup_target": "total_amount_invoiced",
+    },
+}
+
+# Column IDs that exist on multiple boards but mean different things.
+# mirror5__1:
+#   - Parent board  -> total_order_value
+#   - Subitems board -> amount_invoiced
+AMBIGUOUS_CROSS_BOARD_COLUMN_IDS = frozenset({"mirror5__1"})
+
+
+def _build_board_scoped_column_to_field() -> Dict[str, Dict[str, str]]:
+    return {
+        PARENT_BOARD_ID: {column_id: field for field, column_id in PARENT_COLUMNS.items()},
+        SUBITEM_BOARD_ID: {column_id: field for field, column_id in SUBITEM_COLUMNS.items()},
+        HIDDEN_ITEMS_BOARD_ID: {column_id: field for field, column_id in HIDDEN_ITEMS_COLUMNS.items()},
+    }
+
+
+BOARD_SCOPED_COLUMN_TO_FIELD = _build_board_scoped_column_to_field()
+
+
+def resolve_board_scoped_field_name(board_id: Optional[str], column_id: str) -> Optional[str]:
+    """Resolve a Monday column ID to an internal field name with board scope."""
+    if not column_id:
+        return None
+
+    normalized_board_id = str(board_id) if board_id is not None else None
+
+    if normalized_board_id:
+        board_map = BOARD_SCOPED_COLUMN_TO_FIELD.get(normalized_board_id)
+        if board_map is not None:
+            return board_map.get(column_id)
+
+    # If board scope is unknown, never guess ambiguous IDs.
+    if column_id in AMBIGUOUS_CROSS_BOARD_COLUMN_IDS:
+        return None
+
+    # Safe fallback for non-ambiguous IDs only.
+    for candidate_board_id in (SUBITEM_BOARD_ID, PARENT_BOARD_ID, HIDDEN_ITEMS_BOARD_ID):
+        field_name = BOARD_SCOPED_COLUMN_TO_FIELD[candidate_board_id].get(column_id)
+        if field_name:
+            return field_name
+
+    return None
+
+
+def get_hidden_items_extraction_columns() -> List[str]:
+    """Columns that must always be requested for hidden-items extraction."""
+    columns = list(HIDDEN_ITEMS_COLUMNS.values())
+
+    required_hidden_invoice_columns = [
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["amount_invoiced"],
+    ]
+
+    for column_id in required_hidden_invoice_columns:
+        if column_id and column_id not in columns:
+            columns.append(column_id)
+
+    return columns
+
+def get_subitems_extraction_columns() -> List[str]:
+    """Columns that must always be requested for subitems extraction."""
+    columns = list(SUBITEM_COLUMNS.values())
+
+    required_subitem_invoice_columns = [
+        INVOICE_ROLLUP_CONTRACT["subitems"]["hidden_item_link"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["amount_invoiced"],
+    ]
+
+    for column_id in required_subitem_invoice_columns:
+        if column_id and column_id not in columns:
+            columns.append(column_id)
+
+    return columns
+
+def validate_invoice_rollup_contract() -> None:
+    """Fail-fast validation to lock invoice rollup semantics."""
+
+    required_sections = {"hidden_items", "subitems", "projects"}
+    missing_sections = required_sections - set(INVOICE_ROLLUP_CONTRACT.keys())
+    if missing_sections:
+        raise ValueError(
+            f"INVOICE_ROLLUP_CONTRACT missing sections: {sorted(missing_sections)}"
+        )
+
+    hidden_required = {"item_id", "item_name", "amount_invoiced", "invoice_date", "invoice_number"}
+    subitem_required = {
+        "parent_project_id",
+        "hidden_item_link",
+        "item_name",
+        "amount_invoiced",
+        "invoice_date",
+        "invoice_number",
+    }
+    project_required = {"rollup_target"}
+
+    missing_hidden = hidden_required - set(INVOICE_ROLLUP_CONTRACT["hidden_items"].keys())
+    missing_subitems = subitem_required - set(INVOICE_ROLLUP_CONTRACT["subitems"].keys())
+    missing_projects = project_required - set(INVOICE_ROLLUP_CONTRACT["projects"].keys())
+
+    if missing_hidden:
+        raise ValueError(f"INVOICE_ROLLUP_CONTRACT.hidden_items missing keys: {sorted(missing_hidden)}")
+    if missing_subitems:
+        raise ValueError(f"INVOICE_ROLLUP_CONTRACT.subitems missing keys: {sorted(missing_subitems)}")
+    if missing_projects:
+        raise ValueError(f"INVOICE_ROLLUP_CONTRACT.projects missing keys: {sorted(missing_projects)}")
+
+    parent_mirror5 = resolve_board_scoped_field_name(PARENT_BOARD_ID, "mirror5__1")
+    subitem_mirror5 = resolve_board_scoped_field_name(SUBITEM_BOARD_ID, "mirror5__1")
+
+    if parent_mirror5 != "total_order_value":
+        raise ValueError(
+            f"Parent mirror5__1 must map to total_order_value (got: {parent_mirror5})"
+        )
+
+    if subitem_mirror5 != "amount_invoiced":
+        raise ValueError(
+            f"Subitem mirror5__1 must map to amount_invoiced (got: {subitem_mirror5})"
+        )
+
+    expected_hidden_mappings = {
+        "invoice_date": INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_date"],
+        "invoice_number": INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_number"],
+        "amount_invoiced": INVOICE_ROLLUP_CONTRACT["hidden_items"]["amount_invoiced"],
+    }
+
+    for field_name, expected_column_id in expected_hidden_mappings.items():
+        actual_column_id = HIDDEN_ITEMS_COLUMNS.get(field_name)
+        if actual_column_id != expected_column_id:
+            raise ValueError(
+                f"HIDDEN_ITEMS_COLUMNS['{field_name}'] must be '{expected_column_id}' "
+                f"(got: {actual_column_id})"
+            )
+
+    hidden_extract_cols = set(get_hidden_items_extraction_columns())
+    subitem_extract_cols = set(get_subitems_extraction_columns())
+
+    required_hidden_extract = {
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["amount_invoiced"],
+    }
+
+    required_subitem_extract = {
+        INVOICE_ROLLUP_CONTRACT["subitems"]["hidden_item_link"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["amount_invoiced"],
+    }
+
+    missing_hidden_extract = required_hidden_extract - hidden_extract_cols
+    missing_subitem_extract = required_subitem_extract - subitem_extract_cols
+
+    if missing_hidden_extract:
+        raise ValueError(
+            f"Hidden extraction columns missing required IDs: {sorted(missing_hidden_extract)}"
+        )
+
+    if missing_subitem_extract:
+        raise ValueError(
+            f"Subitem extraction columns missing required IDs: {sorted(missing_subitem_extract)}"
+        )
 
 
 # ---------------------------------------------------------------------------

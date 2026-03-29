@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +7,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, List
 import time
 from collections import defaultdict
 
@@ -67,25 +66,256 @@ def _queue_push_job(project_id: str, reason: str) -> None:
         logger.warning("Failed to enqueue Monday sync for %s: %s", project_id, exc)
 
 
-def _lookup_parents_for_hidden(hidden_item_id: str) -> Set[str]:
+HIDDEN_SUBITEM_FALLBACK_LIMIT = 250
+HIDDEN_PROJECT_FALLBACK_LIMIT = 100
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _load_hidden_snapshot(hidden_item_id: str) -> Optional[Dict[str, Any]]:
     try:
         rows = (
-            supabase_client.client.table('subitems')
-            .select('parent_monday_id')
-            .eq('hidden_item_id', hidden_item_id)
+            supabase_client.client.table("hidden_items")
+            .select("monday_id, item_name, prefix")
+            .eq("monday_id", hidden_item_id)
+            .limit(1)
             .execute()
             .data
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to map hidden item %s to parents: %s", hidden_item_id, exc)
+        logger.warning("Failed to load hidden item snapshot for %s: %s", hidden_item_id, exc)
+        return None
+
+    return rows[0] if rows else None
+
+
+def _collect_parent_ids_from_rows(rows: List[Dict[str, Any]]) -> Set[str]:
+    return {
+        str(row.get("parent_monday_id"))
+        for row in rows
+        if row.get("parent_monday_id")
+    }
+
+
+def _lookup_parents_for_hidden(
+    hidden_item_id: str,
+    *,
+    extra_names: Optional[Set[str]] = None,
+    extra_prefixes: Optional[Set[str]] = None,
+) -> Set[str]:
+    matched_parent_ids: Set[str] = set()
+    candidate_names: Set[str] = {_clean_text(v) for v in (extra_names or set()) if _clean_text(v)}
+    candidate_prefixes: Set[str] = {_clean_text(v) for v in (extra_prefixes or set()) if _clean_text(v)}
+
+    hidden_snapshot = _load_hidden_snapshot(hidden_item_id)
+    if hidden_snapshot:
+        snapshot_name = _clean_text(hidden_snapshot.get("item_name"))
+        if snapshot_name:
+            candidate_names.add(snapshot_name)
+
+        snapshot_prefix = (
+            _clean_text(hidden_snapshot.get("prefix"))
+            or sync_service._leading_digits_from_name(snapshot_name)
+            or ""
+        )
+        if snapshot_prefix:
+            candidate_prefixes.add(snapshot_prefix)
+
+    for name in list(candidate_names):
+        derived_prefix = sync_service._leading_digits_from_name(name)
+        if derived_prefix:
+            candidate_prefixes.add(derived_prefix)
+
+    normalized_names = {
+        sync_service._normalize_hidden_name_key(name)
+        for name in candidate_names
+        if name
+    }
+
+    try:
+        direct_rows = (
+            supabase_client.client.table("subitems")
+            .select("parent_monday_id, item_name, hidden_item_id")
+            .eq("hidden_item_id", hidden_item_id)
+            .execute()
+            .data
+            or []
+        )
+        matched_parent_ids |= _collect_parent_ids_from_rows(direct_rows)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed direct hidden link lookup for %s: %s", hidden_item_id, exc)
+
+    candidate_subitems: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+
+    for name in sorted(candidate_names):
+        try:
+            rows = (
+                supabase_client.client.table("subitems")
+                .select("parent_monday_id, item_name, hidden_item_id")
+                .eq("item_name", name)
+                .limit(HIDDEN_SUBITEM_FALLBACK_LIMIT)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed exact-name subitem lookup for hidden item %s name %s: %s",
+                hidden_item_id,
+                name,
+                exc,
+            )
+            continue
+
+        for row in rows:
+            key = (
+                _clean_text(row.get("parent_monday_id")),
+                _clean_text(row.get("item_name")),
+                _clean_text(row.get("hidden_item_id")),
+            )
+            candidate_subitems[key] = row
+
+    for prefix in sorted(candidate_prefixes):
+        try:
+            rows = (
+                supabase_client.client.table("subitems")
+                .select("parent_monday_id, item_name, hidden_item_id")
+                .ilike("item_name", f"{prefix}%")
+                .limit(HIDDEN_SUBITEM_FALLBACK_LIMIT)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed prefix subitem lookup for hidden item %s prefix %s: %s",
+                hidden_item_id,
+                prefix,
+                exc,
+            )
+            continue
+
+        for row in rows:
+            key = (
+                _clean_text(row.get("parent_monday_id")),
+                _clean_text(row.get("item_name")),
+                _clean_text(row.get("hidden_item_id")),
+            )
+            candidate_subitems[key] = row
+
+    exact_name_matches = 0
+    normalized_name_matches = 0
+    prefix_subitem_matches = 0
+
+    for row in candidate_subitems.values():
+        parent_id = _clean_text(row.get("parent_monday_id"))
+        if not parent_id:
+            continue
+
+        row_hidden_id = _clean_text(row.get("hidden_item_id"))
+        row_name = _clean_text(row.get("item_name"))
+        row_normalized = sync_service._normalize_hidden_name_key(row_name) if row_name else ""
+        row_prefix = sync_service._leading_digits_from_name(row_name) if row_name else None
+
+        if row_hidden_id and row_hidden_id == hidden_item_id:
+            matched_parent_ids.add(parent_id)
+            continue
+
+        if row_name and row_name in candidate_names:
+            matched_parent_ids.add(parent_id)
+            exact_name_matches += 1
+            continue
+
+        if row_normalized and row_normalized in normalized_names:
+            matched_parent_ids.add(parent_id)
+            normalized_name_matches += 1
+            continue
+
+        if row_prefix and row_prefix in candidate_prefixes:
+            matched_parent_ids.add(parent_id)
+            prefix_subitem_matches += 1
+
+    prefix_project_matches = 0
+    for prefix in sorted(candidate_prefixes):
+        for field_name in ("item_name", "project_name"):
+            try:
+                rows = (
+                    supabase_client.client.table("projects")
+                    .select("monday_id")
+                    .ilike(field_name, f"{prefix}%")
+                    .limit(HIDDEN_PROJECT_FALLBACK_LIMIT)
+                    .execute()
+                    .data
+                    or []
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed prefix project lookup for hidden item %s prefix %s field %s: %s",
+                    hidden_item_id,
+                    prefix,
+                    field_name,
+                    exc,
+                )
+                continue
+
+            for row in rows:
+                project_id = _clean_text(row.get("monday_id"))
+                if project_id:
+                    matched_parent_ids.add(project_id)
+                    prefix_project_matches += 1
+
+    logger.info(
+        (
+            "Hidden parent lookup resolved | hidden_item=%s parents=%d "
+            "candidate_names=%d candidate_prefixes=%d "
+            "exact_name_matches=%d normalized_name_matches=%d "
+            "prefix_subitem_matches=%d prefix_project_matches=%d"
+        ),
+        hidden_item_id,
+        len(matched_parent_ids),
+        len(candidate_names),
+        len(candidate_prefixes),
+        exact_name_matches,
+        normalized_name_matches,
+        prefix_subitem_matches,
+        prefix_project_matches,
+    )
+
+    return matched_parent_ids
+
+
+def _queue_hidden_rehydrate_jobs(
+    hidden_item_id: str,
+    reason: str,
+    *,
+    extra_names: Optional[Set[str]] = None,
+    extra_prefixes: Optional[Set[str]] = None,
+) -> Set[str]:
+    parents = _lookup_parents_for_hidden(
+        hidden_item_id,
+        extra_names=extra_names,
+        extra_prefixes=extra_prefixes,
+    )
+    if not parents:
+        logger.warning(
+            "No parent projects resolved for hidden item %s via hidden_id/name/normalized/prefix lookup",
+            hidden_item_id,
+        )
         return set()
 
-    return {
-        str(row.get('parent_monday_id'))
-        for row in rows
-        if row.get('parent_monday_id')
-    }
+    for parent in sorted(parents):
+        _queue_rehydrate_job(parent, reason)
+
+    logger.info(
+        "Queued %d parent rehydrate jobs for hidden item %s (%s)",
+        len(parents),
+        hidden_item_id,
+        reason,
+    )
+    return parents
 
 
 def _lookup_parent_for_subitem(subitem_id: str) -> Optional[str]:
@@ -146,6 +376,9 @@ ANALYSIS_TRIGGER_COLUMNS = {
         SUBITEM_COLUMNS['product_type'],
         SUBITEM_COLUMNS['new_enquiry_value'],
         SUBITEM_COLUMNS['cust_order_value_material'],
+        SUBITEM_COLUMNS['amount_invoiced'],
+        SUBITEM_COLUMNS['invoice_date'],
+        SUBITEM_COLUMNS['invoice_number'],
     },
 }
 
@@ -569,35 +802,16 @@ async def handle_item_created(
         item_data = result['data']['items'][0]
 
         if board_id == PARENT_BOARD_ID:
-            # Normalize the item before transformation
+            # Seed the project row quickly, then let the queued rehydrate path
+            # perform the full refresh -> analysis -> push flow.
             normalized_item = sync_service._normalize_monday_item(item_data)
             transformed = sync_service._transform_for_projects_table([normalized_item])
             if transformed:
                 supabase_client.upsert_projects(transformed)
-                logger.info("Upserted project: %s", transformed[0].get("monday_id"))
-            from ..services.analysis_service import AnalysisService
+                logger.info("Upserted project placeholder: %s", transformed[0].get("monday_id"))
 
-            try:
-                logger.info(
-                    "Running analysis for new project %s on board %s",
-                    item_id,
-                    board_id,
-                )
-                analysis_started = time.time()
-                AnalysisService().analyze_and_store(item_id)
-                logger.info(
-                    "Analysis complete for project %s (%.2f ms)",
-                    item_id,
-                    (time.time() - analysis_started) * 1000,
-                )
-                _queue_push_job(item_id, "parent_create")
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "Analysis failed for newly created item %s on board %s",
-                    item_id,
-                    board_id,
-                )
-                _mark_analysis_warning(webhook_log_id, f"analysis failed: {exc}")
+            _queue_rehydrate_job(str(item_id), "parent_create")
+            return
 
         elif board_id == SUBITEM_BOARD_ID:
             transformed = sync_service._transform_for_subitems_table([item_data])
@@ -611,13 +825,34 @@ async def handle_item_created(
 
         elif board_id == HIDDEN_ITEMS_BOARD_ID:
             transformed = sync_service._transform_for_hidden_table([item_data])
+
+            extra_names: Set[str] = set()
+            extra_prefixes: Set[str] = set()
+
             if transformed:
                 supabase_client.upsert_hidden_items(transformed)
                 logger.info("Upserted hidden item: %s", transformed[0].get("monday_id"))
+
+                hidden_name = _clean_text(transformed[0].get("item_name"))
+                if hidden_name:
+                    extra_names.add(hidden_name)
+
+                hidden_prefix = (
+                    _clean_text(transformed[0].get("prefix"))
+                    or sync_service._leading_digits_from_name(hidden_name)
+                    or ""
+                )
+                if hidden_prefix:
+                    extra_prefixes.add(hidden_prefix)
             else:
                 logger.debug("Hidden item %s produced no rows after transform", item_id)
-            for parent in _lookup_parents_for_hidden(str(item_id)):
-                _queue_rehydrate_job(parent, "hidden_create")
+
+            _queue_hidden_rehydrate_jobs(
+                str(item_id),
+                "hidden_create",
+                extra_names=extra_names,
+                extra_prefixes=extra_prefixes,
+            )
             return  # skip AnalysisService for hidden items
 
     except Exception as e:
@@ -657,19 +892,14 @@ async def handle_column_changed_minimal(
 
     # Important: hidden board updates should still trigger parent rehydrate
     # even when the changed column is currently unmapped.
+    
     if not field_mapping:
         if board_id == HIDDEN_ITEMS_BOARD_ID:
-            parents = _lookup_parents_for_hidden(item_id)
-            if parents:
-                for parent in parents:
-                    _queue_rehydrate_job(parent, f"hidden_change_unmapped:{column_id}")
-                logger.info(
-                    "Queued %d parent rehydrate jobs for unmapped hidden column %s on %s",
-                    len(parents),
-                    column_id,
-                    item_id,
-                )
-            else:
+            parents = _queue_hidden_rehydrate_jobs(
+                item_id,
+                f"hidden_change_unmapped:{column_id}",
+            )
+            if not parents:
                 logger.debug(
                     "No mapping for hidden column %s and no parent link found for hidden item %s",
                     column_id,
@@ -689,8 +919,10 @@ async def handle_column_changed_minimal(
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Value transformation failed for {column_id}: {exc}")
             if board_id == HIDDEN_ITEMS_BOARD_ID:
-                for parent in _lookup_parents_for_hidden(item_id):
-                    _queue_rehydrate_job(parent, f"hidden_change_parse_error:{column_id}")
+                _queue_hidden_rehydrate_jobs(
+                    item_id,
+                    f"hidden_change_parse_error:{column_id}",
+                )
             return
 
     try:
@@ -746,9 +978,10 @@ async def handle_column_changed_minimal(
                 _queue_rehydrate_job(target_id, "subitem_change")
 
         elif board_id == HIDDEN_ITEMS_BOARD_ID:
-            parents = _lookup_parents_for_hidden(item_id)
-            for parent in parents:
-                _queue_rehydrate_job(parent, f"hidden_change:{column_id}")
+            parents = _queue_hidden_rehydrate_jobs(
+                item_id,
+                f"hidden_change:{column_id}",
+            )
             if not parents:
                 logger.debug("No parent project found for hidden item %s", item_id)
 
@@ -810,6 +1043,8 @@ async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict) -
         logger.warning(f"No new name provided for item {item_id} (value={raw_value!r})")
         return
 
+    hidden_snapshot = _load_hidden_snapshot(str(item_id)) if board_id == HIDDEN_ITEMS_BOARD_ID else None
+
     try:
         table_map = {
             PARENT_BOARD_ID: "projects",
@@ -835,6 +1070,41 @@ async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict) -
         )
 
         logger.info(f"Updated name for {item_id} in {table_name}: {new_name}")
+
+        if board_id == SUBITEM_BOARD_ID:
+            parent_id = _lookup_parent_for_subitem(str(item_id))
+            if parent_id:
+                _queue_rehydrate_job(parent_id, "subitem_name_update")
+
+        elif board_id == HIDDEN_ITEMS_BOARD_ID:
+            extra_names: Set[str] = set()
+            extra_prefixes: Set[str] = set()
+
+            old_name = _clean_text((hidden_snapshot or {}).get("item_name"))
+            if old_name:
+                extra_names.add(old_name)
+
+            if new_name:
+                extra_names.add(new_name)
+
+            old_prefix = (
+                _clean_text((hidden_snapshot or {}).get("prefix"))
+                or sync_service._leading_digits_from_name(old_name)
+                or ""
+            )
+            if old_prefix:
+                extra_prefixes.add(old_prefix)
+
+            new_prefix = sync_service._leading_digits_from_name(new_name) or ""
+            if new_prefix:
+                extra_prefixes.add(new_prefix)
+
+            _queue_hidden_rehydrate_jobs(
+                str(item_id),
+                "hidden_name_update",
+                extra_names=extra_names,
+                extra_prefixes=extra_prefixes,
+            )
 
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Failed to update name for item {item_id}: {exc}")
@@ -1049,6 +1319,8 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
     hidden_reason_col = HIDDEN_ITEMS_COLUMNS.get('reason_for_change', 'dropdown2__1')
     hidden_design_col = HIDDEN_ITEMS_COLUMNS.get('date_design_completed', 'date__1')
     hidden_invoice_col = HIDDEN_ITEMS_COLUMNS.get('invoice_date', 'date42__1')
+    hidden_invoice_number_col = HIDDEN_ITEMS_COLUMNS.get('invoice_number', 'invoice_number_mkm2nq6s')
+    hidden_amount_invoiced_col = HIDDEN_ITEMS_COLUMNS.get('amount_invoiced', 'numbers56__1')
     hidden_received_col = HIDDEN_ITEMS_COLUMNS.get('date_received', 'date4__1')
     hidden_order_col = HIDDEN_ITEMS_COLUMNS.get('date_order_received', 'date7__1')
     hidden_covm_col = HIDDEN_ITEMS_COLUMNS.get('cust_order_value_material', 'numbers98__1')
@@ -1132,6 +1404,21 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
                 "field": "cust_order_value_material",
                 "transform": parse_numeric_value,
             },
+            SUBITEM_COLUMNS["invoice_date"]: {
+                "table": "subitems",
+                "field": "invoice_date",
+                "transform": parse_date_value,
+            },
+            SUBITEM_COLUMNS["invoice_number"]: {
+                "table": "subitems",
+                "field": "invoice_number",
+                "transform": parse_text_value,
+            },
+            SUBITEM_COLUMNS["amount_invoiced"]: {
+                "table": "subitems",
+                "field": "amount_invoiced",
+                "transform": parse_numeric_value,
+            },
         },
         HIDDEN_ITEMS_BOARD_ID: {
             hidden_quote_col: {
@@ -1153,6 +1440,16 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
                 "table": "hidden_items",
                 "field": "invoice_date",
                 "transform": parse_date_value,
+            },
+            hidden_invoice_number_col: {
+                "table": "hidden_items",
+                "field": "invoice_number",
+                "transform": parse_text_value,
+            },
+            hidden_amount_invoiced_col: {
+                "table": "hidden_items",
+                "field": "amount_invoiced",
+                "transform": parse_numeric_value,
             },
             hidden_received_col: {
                 "table": "hidden_items",
