@@ -332,7 +332,8 @@ CATEGORY_LABELS = {
     "9": "Military",
     "10": "Mixed Use",
     "11": "Student Accommodation",
-    "12": "Consultancy"
+    "12": "Consultancy",
+    "13": "Datacentre",
 }
 
 
@@ -580,7 +581,7 @@ def validate_invoice_rollup_contract() -> None:
 # Support-aware, tier-aware shrinkage instead of flat additive uplift.
 # ---------------------------------------------------------------------------
 
-GESTATION_BIAS_CORRECTION_ENABLED = True
+GESTATION_BIAS_CORRECTION_ENABLED = False
 
 # Raw global weighted bias from historical diagnostics: (actual - expected).
 # Keep this as the uncapped historical signal.
@@ -641,19 +642,19 @@ GESTATION_BIAS_TIER_WEIGHTS = {
 # These remain the historical raw segment signals before shrinkage.
 GESTATION_BIAS_BY_SEGMENT = {
     ('New Build', 'Apartments'): 108,
-    ('New Build', 'Commercial'): 76,
+    ('New Build', 'Commercial'): 116,
     ('New Build', 'Datacentre'): 65,
-    ('New Build', 'Education'): 51,
+    ('New Build', 'Education'): 92,
     ('New Build', 'Health'): 69,
-    ('New Build', 'House'): 43,
+    ('New Build', 'House'): 63,
     ('New Build', 'Industrial'): 73,
-    ('New Build', 'Leisure'): 115,
+    ('New Build', 'Leisure'): 131,
     ('New Build', 'Mixed Use'): 27,
     ('Refurbishment', 'Apartments'): 58,
-    ('Refurbishment', 'Commercial'): 115,
+    ('Refurbishment', 'Commercial'): 138,
     ('Refurbishment', 'Education'): 62,
     ('Refurbishment', 'Health'): 62,
-    ('Refurbishment', 'House'): 25,
+    ('Refurbishment', 'House'): 45,
     ('Refurbishment', 'Leisure'): 80,
 }
 
@@ -662,20 +663,63 @@ GESTATION_BIAS_BY_SEGMENT = {
 # available, and falls back to these values when it is not.
 GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = {
     ('New Build', 'Apartments'): 190,
-    ('New Build', 'Commercial'): 43,
+    ('New Build', 'Commercial'): 45,
     ('New Build', 'Datacentre'): 8,
-    ('New Build', 'Education'): 41,
+    ('New Build', 'Education'): 46,
     ('New Build', 'Health'): 39,
-    ('New Build', 'House'): 69,
+    ('New Build', 'House'): 76,
     ('New Build', 'Industrial'): 10,
-    ('New Build', 'Leisure'): 23,
+    ('New Build', 'Leisure'): 26,
     ('New Build', 'Mixed Use'): 8,
     ('Refurbishment', 'Apartments'): 79,
-    ('Refurbishment', 'Commercial'): 52,
+    ('Refurbishment', 'Commercial'): 57,
     ('Refurbishment', 'Education'): 110,
     ('Refurbishment', 'Health'): 28,
-    ('Refurbishment', 'House'): 77,
+    ('Refurbishment', 'House'): 88,
     ('Refurbishment', 'Leisure'): 23,
+}
+
+# Product-key refinement sits above coarse type×category correction in the
+# fallback chain and below the most specific product-key + value-band cells.
+GESTATION_BIAS_PRODUCT_KEY_ENABLED = True
+GESTATION_BIAS_PRODUCT_KEY_MIN_N = 10
+GESTATION_BIAS_PRODUCT_KEY_SHRINKAGE = 18.0
+
+# Static product-key bias table: (type, category, product_key) -> days.
+# Leave empty until refreshed by product-key-aware diagnostics.
+GESTATION_BIAS_BY_PRODUCT_KEY_SEGMENT = {
+    ('New Build', 'Apartments', 'hardrock'): 146,
+    ('New Build', 'Apartments', 'pir_tissue'): 55,
+    ('New Build', 'Commercial', 'pir_tissue'): 36,
+    ('New Build', 'Education', 'hardrock'): 123,
+    ('New Build', 'Education', 'pir_tissue'): 74,
+    ('New Build', 'Health', 'pir_tissue'): 75,
+    ('New Build', 'House', 'pir_tissue'): 57,
+    ('Refurbishment', 'Apartments', 'pir_tissue'): 22,
+    ('Refurbishment', 'Commercial', 'pir_tissue'): 85,
+    ('Refurbishment', 'Education', 'pir_prebonded'): 65,
+    ('Refurbishment', 'Education', 'pir_tissue'): 28,
+    ('Refurbishment', 'Education', 'pir_torchon'): 49,
+    ('Refurbishment', 'House', 'pir_tissue'): 34,
+    ('Refurbishment', 'Leisure', 'pir_tissue'): 50,
+}
+
+# Optional support counts for the table above.
+GESTATION_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = {
+    ('New Build', 'Apartments', 'hardrock'): 34,
+    ('New Build', 'Apartments', 'pir_tissue'): 81,
+    ('New Build', 'Commercial', 'pir_tissue'): 13,
+    ('New Build', 'Education', 'hardrock'): 19,
+    ('New Build', 'Education', 'pir_tissue'): 13,
+    ('New Build', 'Health', 'pir_tissue'): 13,
+    ('New Build', 'House', 'pir_tissue'): 37,
+    ('Refurbishment', 'Apartments', 'pir_tissue'): 46,
+    ('Refurbishment', 'Commercial', 'pir_tissue'): 24,
+    ('Refurbishment', 'Education', 'pir_prebonded'): 24,
+    ('Refurbishment', 'Education', 'pir_tissue'): 26,
+    ('Refurbishment', 'Education', 'pir_torchon'): 18,
+    ('Refurbishment', 'House', 'pir_tissue'): 55,
+    ('Refurbishment', 'Leisure', 'pir_tissue'): 14,
 }
 
 
@@ -722,36 +766,197 @@ GESTATION_BIAS_VALUE_BAND_SHRINKAGE = 20.0
 GESTATION_BIAS_BY_VALUE_BAND_SEGMENT = {
     ('New Build', 'Apartments', 'Large (40-100k)'): 163,
     ('New Build', 'Apartments', 'Medium (15-40k)'): 119,
-    ('New Build', 'Apartments', 'Small (<15k)'): 54,
-    ('New Build', 'Apartments', 'Zero'): 163,
-    ('New Build', 'Commercial', 'Small (<15k)'): -1,
+    ('New Build', 'Apartments', 'Small (<15k)'): 38,
+    ('New Build', 'Apartments', 'Zero'): 184,
+    ('New Build', 'Commercial', 'Small (<15k)'): 25,
     ('New Build', 'Education', 'Small (<15k)'): -15,
     ('New Build', 'Health', 'Small (<15k)'): 0,
-    ('New Build', 'House', 'Small (<15k)'): 42,
+    ('New Build', 'House', 'Small (<15k)'): 60,
     ('Refurbishment', 'Apartments', 'Small (<15k)'): 13,
     ('Refurbishment', 'Commercial', 'Small (<15k)'): 122,
     ('Refurbishment', 'Education', 'Large (40-100k)'): 127,
-    ('Refurbishment', 'Education', 'Medium (15-40k)'): 29,
+    ('Refurbishment', 'Education', 'Medium (15-40k)'): 57,
     ('Refurbishment', 'Education', 'Small (<15k)'): 13,
     ('Refurbishment', 'Health', 'Small (<15k)'): 54,
-    ('Refurbishment', 'House', 'Small (<15k)'): 25,
+    ('Refurbishment', 'House', 'Small (<15k)'): 42,
 }
 
 # Sample sizes for the above table (optional, used as fallback when live support unavailable).
 GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
     ('New Build', 'Apartments', 'Large (40-100k)'): 17,
     ('New Build', 'Apartments', 'Medium (15-40k)'): 32,
-    ('New Build', 'Apartments', 'Small (<15k)'): 102,
-    ('New Build', 'Apartments', 'Zero'): 31,
-    ('New Build', 'Commercial', 'Small (<15k)'): 23,
+    ('New Build', 'Apartments', 'Small (<15k)'): 111,
+    ('New Build', 'Apartments', 'Zero'): 30,
+    ('New Build', 'Commercial', 'Small (<15k)'): 25,
     ('New Build', 'Education', 'Small (<15k)'): 17,
     ('New Build', 'Health', 'Small (<15k)'): 18,
-    ('New Build', 'House', 'Small (<15k)'): 56,
+    ('New Build', 'House', 'Small (<15k)'): 64,
     ('Refurbishment', 'Apartments', 'Small (<15k)'): 54,
     ('Refurbishment', 'Commercial', 'Small (<15k)'): 38,
     ('Refurbishment', 'Education', 'Large (40-100k)'): 24,
-    ('Refurbishment', 'Education', 'Medium (15-40k)'): 28,
+    ('Refurbishment', 'Education', 'Medium (15-40k)'): 29,
     ('Refurbishment', 'Education', 'Small (<15k)'): 41,
     ('Refurbishment', 'Health', 'Small (<15k)'): 16,
-    ('Refurbishment', 'House', 'Small (<15k)'): 68,
+    ('Refurbishment', 'House', 'Small (<15k)'): 78,
+}
+
+# Most specific refinement: (type, category, product_key, value_band).
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED = True
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N = 15
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE = 24.0
+
+# Leave empty until refreshed by product-key-aware diagnostics.
+GESTATION_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = {
+    ('New Build', 'Apartments', 'pir_tissue', 'Small (<15k)'): 22,
+    ('New Build', 'House', 'pir_tissue', 'Small (<15k)'): 56,
+    ('Refurbishment', 'Commercial', 'pir_tissue', 'Small (<15k)'): 81,
+    ('Refurbishment', 'House', 'pir_tissue', 'Small (<15k)'): 38,
+}
+
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
+    ('New Build', 'Apartments', 'pir_tissue', 'Small (<15k)'): 61,
+    ('New Build', 'House', 'pir_tissue', 'Small (<15k)'): 35,
+    ('Refurbishment', 'Commercial', 'pir_tissue', 'Small (<15k)'): 19,
+    ('Refurbishment', 'House', 'pir_tissue', 'Small (<15k)'): 51,
+}
+
+
+# ---------------------------------------------------------------------------
+# Tail-aware gestation target
+# ---------------------------------------------------------------------------
+# Disabled by default in production code paths. Diagnostic scripts can
+# override this at runtime.
+GESTATION_TAIL_AWARE_TARGET_ENABLED = False
+
+# Profile options:
+# - "legacy": reproduces the broader p50 -> p60/p70 logic used in the first
+#   tail-aware experiment.
+# - "selective": current conservative logic with activation floors.
+GESTATION_TAIL_TARGET_PROFILE = "selective"
+
+# Global selective-profile defaults.
+GESTATION_TAIL_TARGET_CV_LOW = 1.05
+GESTATION_TAIL_TARGET_CV_HIGH = 1.45
+GESTATION_TAIL_TARGET_UPPER_TAIL_LOW = 140.0
+GESTATION_TAIL_TARGET_UPPER_TAIL_HIGH = 360.0
+GESTATION_TAIL_TARGET_SUPPORT_SHRINKAGE = 35.0
+GESTATION_TAIL_TARGET_MIN_BLEND = 0.12
+GESTATION_TAIL_TARGET_MIN_CV_SCORE = 0.35
+GESTATION_TAIL_TARGET_MIN_TAIL_SCORE = 0.50
+GESTATION_TAIL_TARGET_MIN_SUPPORT_SCORE = 0.30
+
+# Default selective target stays near p60. Segment overrides can increase this.
+GESTATION_TAIL_TARGET_MAX_QUANTILE = 0.60
+
+GESTATION_TAIL_TARGET_TIER_WEIGHTS = {
+    0: 0.55,
+    1: 0.75,
+    2: 0.90,
+    3: 1.00,
+    4: 0.90,
+    5: 0.80,
+}
+
+# Restrict selective tail-aware shifts to the segments that showed the clearest
+# benefit in the diagnostics. Leave empty to allow all segments.
+GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS = [
+    ("New Build", "Apartments"),
+    ("Refurbishment", "Commercial"),
+]
+
+# Per-segment overrides layered on top of the selective profile. These allow
+# modestly stronger moves for the segments that benefited without broadening
+# the shift to the rest of the population.
+GESTATION_TAIL_TARGET_SEGMENT_OVERRIDES = {
+    ("New Build", "Apartments"): {
+        "min_blend": 0.08,
+        "min_cv_score": 0.30,
+        "min_tail_score": 0.40,
+        "support_shrinkage": 24.0,
+        "max_target_quantile": 0.65,
+    },
+    ("Refurbishment", "Commercial"): {
+        "min_blend": 0.10,
+        "min_cv_score": 0.30,
+        "min_tail_score": 0.45,
+        "support_shrinkage": 28.0,
+        "max_target_quantile": 0.62,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Post-tail additive calibration
+# ---------------------------------------------------------------------------
+# This is a separate calibrator for residual bias *after* tuned tail-aware
+# targeting. Keep it disabled by default until diagnostic runs produce a stable
+# table from tuned residuals.
+GESTATION_POST_TAIL_BIAS_CORRECTION_ENABLED = False
+
+# Intentionally neutral by default. Post-tail calibration should be segment-led,
+# not a new broad global uplift.
+GESTATION_POST_TAIL_BIAS_GLOBAL_DAYS = 0
+GESTATION_POST_TAIL_BIAS_GLOBAL_FALLBACK_DAYS = 0
+
+# Conservative defaults for a second-stage additive correction.
+GESTATION_POST_TAIL_BIAS_DAMPING_FACTOR = 0.45
+GESTATION_POST_TAIL_BIAS_MAX_ABS_DAYS = 30
+GESTATION_POST_TAIL_BIAS_SUPPORT_SHRINKAGE = 20.0
+
+# Seeded from the tuned tail-aware residual diagnostics for the narrow segments
+# that still showed persistent underprediction after selective tail targeting.
+GESTATION_POST_TAIL_BIAS_ALLOWED_SEGMENTS = [
+    ("New Build", "Apartments"),
+    ("Refurbishment", "Commercial"),
+]
+GESTATION_POST_TAIL_BIAS_BY_SEGMENT = {
+    ("New Build", "Apartments"): 101,
+    ("Refurbishment", "Commercial"): 133,
+}
+GESTATION_POST_TAIL_BIAS_SEGMENT_SAMPLE_SIZES = {
+    ("New Build", "Apartments"): 206,
+    ("Refurbishment", "Commercial"): 57,
+}
+
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_ENABLED = True
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_MIN_N = 10
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SHRINKAGE = 18.0
+GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_SEGMENT = {
+}
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = {
+}
+
+GESTATION_POST_TAIL_BIAS_TIER_WEIGHTS = {
+    0: 0.50,
+    1: 0.75,
+    2: 0.90,
+    3: 1.00,
+    4: 0.90,
+    5: 0.80,
+}
+
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_ENABLED = True
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_MIN_N = 15
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_SHRINKAGE = 20.0
+GESTATION_POST_TAIL_BIAS_BY_VALUE_BAND_SEGMENT = {
+    ("New Build", "Apartments", "Large (40-100k)"): 187,
+    ("New Build", "Apartments", "Medium (15-40k)"): 117,
+    ("New Build", "Apartments", "Small (<15k)"): 34,
+    ("New Build", "Apartments", "Zero"): 179,
+    ("Refurbishment", "Commercial", "Small (<15k)"): 126,
+}
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
+    ("New Build", "Apartments", "Large (40-100k)"): 20,
+    ("New Build", "Apartments", "Medium (15-40k)"): 37,
+    ("New Build", "Apartments", "Small (<15k)"): 111,
+    ("New Build", "Apartments", "Zero"): 30,
+    ("Refurbishment", "Commercial", "Small (<15k)"): 43,
+}
+
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED = True
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N = 15
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE = 24.0
+GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = {
+}
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
 }

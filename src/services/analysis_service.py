@@ -9,6 +9,7 @@ from ..database.supabase_client import SupabaseClient
 from ..core.llm_analyzer import LLMAnalyzer
 from ..core.models import ProjectFeatures, NumericPredictions, SegmentStatistics
 from ..core.numeric_analyzer import NumericBaseline
+from ..core.normalization import compute_product_key, normalize_category_value
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,20 @@ class AnalysisService:
         return {
             'account': p.get('account') or None,
             'type': p.get('type') or None,
-            'category': p.get('category') or None,
-            'product_type': p.get('product_key') or p.get('product_type') or None,
+            'category': self._normalized_category(p.get('category')),
+            'product_type': self._normalized_product_key(p),
         }
+
+    def _normalized_category(self, raw_category: Any) -> Optional[str]:
+        normalized = normalize_category_value(raw_category)
+        return normalized or None
+
+    def _normalized_product_key(self, p: Dict[str, Any]) -> Optional[str]:
+        for raw_value in (p.get('product_key'), p.get('product_type')):
+            normalized = compute_product_key(raw_value)
+            if normalized and normalized != 'unknown':
+                return normalized
+        return None
 
     def _get_cluster_metrics(self, key: Dict[str, Any]) -> Dict[str, Any]:
         q = self.db.client.table('conversion_metrics').select('*')
@@ -126,11 +138,11 @@ class AnalysisService:
                     'gestation_median': preds.expected_gestation_days,
                     'gestation_p25': preds.gestation_range.get('p25'),
                     'gestation_p75': preds.gestation_range.get('p75'),
-                    'bias_correction_applied': True,
+                    'bias_correction_applied': False,
                 }
             },
             'llm_model': 'numeric-baseline',
-            'analysis_version': 'v0.2',
+            'analysis_version': 'v0.3',
             'processing_time_ms': 0
         }
 
@@ -140,8 +152,9 @@ class AnalysisService:
             name=p.get('project_name') or p.get('item_name') or '',
             account=p.get('account'),
             type=p.get('type'),
-            category=p.get('category'),
+            category=self._normalized_category(p.get('category')),
             product_type=p.get('product_type'),
+            product_key=self._normalized_product_key(p),
             new_enquiry_value=p.get('new_enquiry_value') or 0,
             gestation_period=p.get('gestation_period'),
             pipeline_stage=p.get('pipeline_stage'),
@@ -299,6 +312,7 @@ class AnalysisService:
                 'type': pf.type,
                 'category': pf.category,
                 'product_type': pf.product_type,
+                'product_key': pf.product_key,
                 'value': pf.new_enquiry_value,
                 'value_band': pf.value_band,
                 **base,
@@ -348,6 +362,7 @@ class AnalysisService:
             'type': pf.type,
             'category': pf.category,
             'product_type': pf.product_type,
+            'product_key': pf.product_key,
             'value': pf.new_enquiry_value,
             'value_band': pf.value_band,
             **stored,

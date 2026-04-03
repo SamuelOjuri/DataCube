@@ -85,6 +85,7 @@ class ProjectFeatures(BaseModel):
     type: Optional[str] = None
     category: Optional[str] = None
     product_type: Optional[str] = None
+    product_key: Optional[str] = None
     new_enquiry_value: float = Field(default=0.0, ge=0)
     gestation_period: Optional[int] = Field(default=None, ge=0)
     pipeline_stage: Optional[str] = None

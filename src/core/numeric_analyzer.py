@@ -92,6 +92,286 @@ GESTATION_BIAS_VALUE_BAND_MIN_N = int(getattr(_config, "GESTATION_BIAS_VALUE_BAN
 GESTATION_BIAS_VALUE_BAND_SHRINKAGE = float(getattr(_config, "GESTATION_BIAS_VALUE_BAND_SHRINKAGE", 20.0))
 GESTATION_BIAS_BY_VALUE_BAND_SEGMENT = getattr(_config, "GESTATION_BIAS_BY_VALUE_BAND_SEGMENT", {})
 GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = getattr(_config, "GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES", {})
+GESTATION_BIAS_PRODUCT_KEY_ENABLED = getattr(_config, "GESTATION_BIAS_PRODUCT_KEY_ENABLED", True)
+GESTATION_BIAS_PRODUCT_KEY_MIN_N = int(getattr(_config, "GESTATION_BIAS_PRODUCT_KEY_MIN_N", 10))
+GESTATION_BIAS_PRODUCT_KEY_SHRINKAGE = float(
+    getattr(_config, "GESTATION_BIAS_PRODUCT_KEY_SHRINKAGE", 18.0)
+)
+GESTATION_BIAS_BY_PRODUCT_KEY_SEGMENT = getattr(_config, "GESTATION_BIAS_BY_PRODUCT_KEY_SEGMENT", {})
+GESTATION_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = getattr(
+    _config,
+    "GESTATION_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES",
+    {},
+)
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED = getattr(
+    _config,
+    "GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED",
+    True,
+)
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N = int(
+    getattr(_config, "GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N", 15)
+)
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE = float(
+    getattr(_config, "GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE", 24.0)
+)
+GESTATION_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = getattr(
+    _config,
+    "GESTATION_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT",
+    {},
+)
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = getattr(
+    _config,
+    "GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES",
+    {},
+)
+
+GESTATION_TAIL_AWARE_TARGET_ENABLED = getattr(
+    _config,
+    "GESTATION_TAIL_AWARE_TARGET_ENABLED",
+    False,
+)
+GESTATION_TAIL_TARGET_CV_LOW = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_CV_LOW", 1.05)
+)
+GESTATION_TAIL_TARGET_CV_HIGH = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_CV_HIGH", 1.45)
+)
+GESTATION_TAIL_TARGET_UPPER_TAIL_LOW = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_UPPER_TAIL_LOW", 140.0)
+)
+GESTATION_TAIL_TARGET_UPPER_TAIL_HIGH = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_UPPER_TAIL_HIGH", 360.0)
+)
+GESTATION_TAIL_TARGET_SUPPORT_SHRINKAGE = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_SUPPORT_SHRINKAGE", 35.0)
+)
+GESTATION_TAIL_TARGET_MIN_BLEND = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_MIN_BLEND", 0.12)
+)
+GESTATION_TAIL_TARGET_MIN_CV_SCORE = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_MIN_CV_SCORE", 0.35)
+)
+GESTATION_TAIL_TARGET_MIN_TAIL_SCORE = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_MIN_TAIL_SCORE", 0.50)
+)
+GESTATION_TAIL_TARGET_MIN_SUPPORT_SCORE = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_MIN_SUPPORT_SCORE", 0.30)
+)
+GESTATION_TAIL_TARGET_PROFILE = str(
+    getattr(_config, "GESTATION_TAIL_TARGET_PROFILE", "selective")
+).strip().lower()
+GESTATION_TAIL_TARGET_MAX_QUANTILE = float(
+    getattr(_config, "GESTATION_TAIL_TARGET_MAX_QUANTILE", 0.60)
+)
+
+
+def _normalize_tail_segment_key(raw_key: Any) -> Optional[Tuple[Any, Any]]:
+    if isinstance(raw_key, (tuple, list)) and len(raw_key) >= 2:
+        return (raw_key[0], raw_key[1])
+    return None
+
+
+def _normalize_segment_key(raw_key: Any) -> Optional[Tuple[Any, Any]]:
+    return _normalize_tail_segment_key(raw_key)
+
+
+_raw_tail_target_allowed_segments = getattr(
+    _config,
+    "GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS",
+    (),
+)
+GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS = {
+    segment_key
+    for raw_key in (_raw_tail_target_allowed_segments or ())
+    for segment_key in [_normalize_tail_segment_key(raw_key)]
+    if segment_key is not None
+}
+
+_raw_tail_segment_overrides = getattr(
+    _config,
+    "GESTATION_TAIL_TARGET_SEGMENT_OVERRIDES",
+    {},
+)
+GESTATION_TAIL_TARGET_SEGMENT_OVERRIDES = {}
+if isinstance(_raw_tail_segment_overrides, dict):
+    for raw_key, raw_value in _raw_tail_segment_overrides.items():
+        segment_key = _normalize_tail_segment_key(raw_key)
+        if segment_key is None or not isinstance(raw_value, dict):
+            continue
+        GESTATION_TAIL_TARGET_SEGMENT_OVERRIDES[segment_key] = dict(raw_value)
+
+_DEFAULT_GESTATION_TAIL_TARGET_TIER_WEIGHTS = {
+    0: 0.55,
+    1: 0.75,
+    2: 0.90,
+    3: 1.00,
+    4: 0.90,
+    5: 0.80,
+}
+
+_raw_tail_target_tier_weights = getattr(
+    _config,
+    "GESTATION_TAIL_TARGET_TIER_WEIGHTS",
+    _DEFAULT_GESTATION_TAIL_TARGET_TIER_WEIGHTS,
+)
+
+try:
+    GESTATION_TAIL_TARGET_TIER_WEIGHTS = {
+        int(k): float(v) for k, v in dict(_raw_tail_target_tier_weights).items()
+    }
+except Exception:
+    GESTATION_TAIL_TARGET_TIER_WEIGHTS = (
+        _DEFAULT_GESTATION_TAIL_TARGET_TIER_WEIGHTS.copy()
+    )
+
+_DEFAULT_SELECTIVE_GESTATION_TAIL_TARGET_PROFILE = {
+    "profile": "selective",
+    "cv_low": GESTATION_TAIL_TARGET_CV_LOW,
+    "cv_high": GESTATION_TAIL_TARGET_CV_HIGH,
+    "upper_tail_low": GESTATION_TAIL_TARGET_UPPER_TAIL_LOW,
+    "upper_tail_high": GESTATION_TAIL_TARGET_UPPER_TAIL_HIGH,
+    "support_shrinkage": GESTATION_TAIL_TARGET_SUPPORT_SHRINKAGE,
+    "min_blend": GESTATION_TAIL_TARGET_MIN_BLEND,
+    "min_cv_score": GESTATION_TAIL_TARGET_MIN_CV_SCORE,
+    "min_tail_score": GESTATION_TAIL_TARGET_MIN_TAIL_SCORE,
+    "min_support_score": GESTATION_TAIL_TARGET_MIN_SUPPORT_SCORE,
+    "max_target_quantile": GESTATION_TAIL_TARGET_MAX_QUANTILE,
+}
+
+_LEGACY_GESTATION_TAIL_TARGET_PROFILE = {
+    "profile": "legacy",
+    "cv_low": 0.90,
+    "cv_high": 1.35,
+    "upper_tail_low": 75.0,
+    "upper_tail_high": 220.0,
+    "support_shrinkage": 20.0,
+    "min_blend": 0.0,
+    "min_cv_score": 0.0,
+    "min_tail_score": 0.0,
+    "min_support_score": 0.0,
+    "max_target_quantile": 0.70,
+}
+
+GESTATION_POST_TAIL_BIAS_CORRECTION_ENABLED = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_CORRECTION_ENABLED",
+    False,
+)
+GESTATION_POST_TAIL_BIAS_GLOBAL_DAYS = int(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_GLOBAL_DAYS", 0)
+)
+GESTATION_POST_TAIL_BIAS_GLOBAL_FALLBACK_DAYS = int(
+    getattr(
+        _config,
+        "GESTATION_POST_TAIL_BIAS_GLOBAL_FALLBACK_DAYS",
+        GESTATION_POST_TAIL_BIAS_GLOBAL_DAYS,
+    )
+)
+GESTATION_POST_TAIL_BIAS_DAMPING_FACTOR = float(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_DAMPING_FACTOR", 0.45)
+)
+GESTATION_POST_TAIL_BIAS_MAX_ABS_DAYS = int(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_MAX_ABS_DAYS", 35)
+)
+GESTATION_POST_TAIL_BIAS_SUPPORT_SHRINKAGE = float(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_SUPPORT_SHRINKAGE", 20.0)
+)
+GESTATION_POST_TAIL_BIAS_BY_SEGMENT = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_BY_SEGMENT",
+    {},
+)
+GESTATION_POST_TAIL_BIAS_SEGMENT_SAMPLE_SIZES = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_SEGMENT_SAMPLE_SIZES",
+    {},
+)
+_raw_post_tail_allowed_segments = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_ALLOWED_SEGMENTS",
+    (),
+)
+GESTATION_POST_TAIL_BIAS_ALLOWED_SEGMENTS = {
+    segment_key
+    for raw_key in (_raw_post_tail_allowed_segments or ())
+    for segment_key in [_normalize_segment_key(raw_key)]
+    if segment_key is not None
+}
+_raw_post_tail_tier_weights = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_TIER_WEIGHTS",
+    GESTATION_BIAS_TIER_WEIGHTS,
+)
+try:
+    GESTATION_POST_TAIL_BIAS_TIER_WEIGHTS = {
+        int(k): float(v) for k, v in dict(_raw_post_tail_tier_weights).items()
+    }
+except Exception:
+    GESTATION_POST_TAIL_BIAS_TIER_WEIGHTS = dict(GESTATION_BIAS_TIER_WEIGHTS)
+
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_ENABLED = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_VALUE_BAND_ENABLED",
+    False,
+)
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_MIN_N = int(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_VALUE_BAND_MIN_N", 15)
+)
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_SHRINKAGE = float(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_VALUE_BAND_SHRINKAGE", 20.0)
+)
+GESTATION_POST_TAIL_BIAS_BY_VALUE_BAND_SEGMENT = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_BY_VALUE_BAND_SEGMENT",
+    {},
+)
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES",
+    {},
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_ENABLED = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_ENABLED",
+    True,
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_MIN_N = int(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_MIN_N", 10)
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SHRINKAGE = float(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SHRINKAGE", 18.0)
+)
+GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_SEGMENT = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_SEGMENT",
+    {},
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES",
+    {},
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED",
+    True,
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N = int(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N", 15)
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE = float(
+    getattr(_config, "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE", 24.0)
+)
+GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT",
+    {},
+)
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = getattr(
+    _config,
+    "GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES",
+    {},
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +409,118 @@ class NumericBaseline:
                 t = (x - x0) / (x1 - x0)
                 return float(y0 + t * (y1 - y0))
         return float(pts[-1][1])
+
+    def _tail_target_profile(self, profile_name: Optional[str]) -> Dict[str, Any]:
+        normalized = str(profile_name or GESTATION_TAIL_TARGET_PROFILE or "selective").strip().lower()
+        if normalized == "legacy":
+            return _LEGACY_GESTATION_TAIL_TARGET_PROFILE.copy()
+        return _DEFAULT_SELECTIVE_GESTATION_TAIL_TARGET_PROFILE.copy()
+
+    def _resolve_tail_target_settings(
+        self,
+        segment_key: Optional[Tuple[Any, Any]],
+    ) -> Dict[str, Any]:
+        settings = self._tail_target_profile(GESTATION_TAIL_TARGET_PROFILE)
+        settings["enabled"] = bool(GESTATION_TAIL_AWARE_TARGET_ENABLED)
+        settings["segment_override"] = False
+
+        if (
+            GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS
+            and segment_key not in GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS
+        ):
+            settings["enabled"] = False
+
+        override = GESTATION_TAIL_TARGET_SEGMENT_OVERRIDES.get(segment_key)
+        if override:
+            override_profile = override.get("profile")
+            if override_profile is not None:
+                settings = self._tail_target_profile(str(override_profile))
+                settings["enabled"] = bool(GESTATION_TAIL_AWARE_TARGET_ENABLED)
+                if (
+                    GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS
+                    and segment_key not in GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS
+                ):
+                    settings["enabled"] = False
+
+            for key in (
+                "cv_low",
+                "cv_high",
+                "upper_tail_low",
+                "upper_tail_high",
+                "support_shrinkage",
+                "min_blend",
+                "min_cv_score",
+                "min_tail_score",
+                "min_support_score",
+                "max_target_quantile",
+            ):
+                if key in override and override[key] is not None:
+                    settings[key] = override[key]
+
+            if "enabled" in override:
+                settings["enabled"] = bool(override["enabled"])
+
+            settings["segment_override"] = True
+
+        return settings
+
+    def _standard_gestation_bias_settings(self) -> Dict[str, Any]:
+        return {
+            "stage_label": "bias",
+            "global_primary_bias": GESTATION_BIAS_GLOBAL_DAYS,
+            "global_fallback_bias": GESTATION_BIAS_GLOBAL_FALLBACK_DAYS,
+            "segment_bias_table": GESTATION_BIAS_BY_SEGMENT,
+            "segment_sample_sizes": GESTATION_BIAS_SEGMENT_SAMPLE_SIZES,
+            "support_shrinkage": GESTATION_BIAS_SUPPORT_SHRINKAGE,
+            "tier_weights": GESTATION_BIAS_TIER_WEIGHTS,
+            "damping_factor": GESTATION_BIAS_DAMPING_FACTOR,
+            "max_abs_days": GESTATION_BIAS_MAX_ABS_DAYS,
+            "allowed_segments": set(),
+            "product_key_enabled": GESTATION_BIAS_PRODUCT_KEY_ENABLED,
+            "product_key_min_n": GESTATION_BIAS_PRODUCT_KEY_MIN_N,
+            "product_key_shrinkage": GESTATION_BIAS_PRODUCT_KEY_SHRINKAGE,
+            "product_key_bias_table": GESTATION_BIAS_BY_PRODUCT_KEY_SEGMENT,
+            "product_key_sample_sizes": GESTATION_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES,
+            "value_band_enabled": GESTATION_BIAS_VALUE_BAND_ENABLED,
+            "value_band_min_n": GESTATION_BIAS_VALUE_BAND_MIN_N,
+            "value_band_shrinkage": GESTATION_BIAS_VALUE_BAND_SHRINKAGE,
+            "value_band_bias_table": GESTATION_BIAS_BY_VALUE_BAND_SEGMENT,
+            "value_band_sample_sizes": GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES,
+            "product_key_value_band_enabled": GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED,
+            "product_key_value_band_min_n": GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N,
+            "product_key_value_band_shrinkage": GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE,
+            "product_key_value_band_bias_table": GESTATION_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT,
+            "product_key_value_band_sample_sizes": GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES,
+        }
+
+    def _post_tail_gestation_bias_settings(self) -> Dict[str, Any]:
+        return {
+            "stage_label": "post_tail_bias",
+            "global_primary_bias": GESTATION_POST_TAIL_BIAS_GLOBAL_DAYS,
+            "global_fallback_bias": GESTATION_POST_TAIL_BIAS_GLOBAL_FALLBACK_DAYS,
+            "segment_bias_table": GESTATION_POST_TAIL_BIAS_BY_SEGMENT,
+            "segment_sample_sizes": GESTATION_POST_TAIL_BIAS_SEGMENT_SAMPLE_SIZES,
+            "support_shrinkage": GESTATION_POST_TAIL_BIAS_SUPPORT_SHRINKAGE,
+            "tier_weights": GESTATION_POST_TAIL_BIAS_TIER_WEIGHTS,
+            "damping_factor": GESTATION_POST_TAIL_BIAS_DAMPING_FACTOR,
+            "max_abs_days": GESTATION_POST_TAIL_BIAS_MAX_ABS_DAYS,
+            "allowed_segments": GESTATION_POST_TAIL_BIAS_ALLOWED_SEGMENTS,
+            "product_key_enabled": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_ENABLED,
+            "product_key_min_n": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_MIN_N,
+            "product_key_shrinkage": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SHRINKAGE,
+            "product_key_bias_table": GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_SEGMENT,
+            "product_key_sample_sizes": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES,
+            "value_band_enabled": GESTATION_POST_TAIL_BIAS_VALUE_BAND_ENABLED,
+            "value_band_min_n": GESTATION_POST_TAIL_BIAS_VALUE_BAND_MIN_N,
+            "value_band_shrinkage": GESTATION_POST_TAIL_BIAS_VALUE_BAND_SHRINKAGE,
+            "value_band_bias_table": GESTATION_POST_TAIL_BIAS_BY_VALUE_BAND_SEGMENT,
+            "value_band_sample_sizes": GESTATION_POST_TAIL_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES,
+            "product_key_value_band_enabled": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED,
+            "product_key_value_band_min_n": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N,
+            "product_key_value_band_shrinkage": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE,
+            "product_key_value_band_bias_table": GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT,
+            "product_key_value_band_sample_sizes": GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES,
+        }
 
     def _calculate_time_weights(
         self,
@@ -289,43 +681,184 @@ class NumericBaseline:
             "outliers_removed": outliers_removed,
         }
 
-    def _compute_gestation_bias_adjustment(
+    def _project_product_key(self, project: ProjectFeatures) -> Optional[str]:
+        product_key = getattr(project, "product_key", None)
+        if product_key not in (None, ""):
+            return str(product_key)
+
+        product_type = getattr(project, "product_type", None)
+        if product_type in (None, ""):
+            return None
+        return str(product_type)
+
+    def _bias_support_column(
+        self,
+        support_data: pd.DataFrame,
+        field_name: str,
+    ) -> Optional[str]:
+        if support_data is None or support_data.empty:
+            return None
+
+        if field_name == "product_key":
+            if "product_key" in support_data.columns:
+                return "product_key"
+            if "product_type" in support_data.columns:
+                return "product_type"
+            return None
+
+        return field_name if field_name in support_data.columns else None
+
+    def _slice_bias_support_data(
+        self,
+        support_data: pd.DataFrame,
+        filters: Dict[str, Any],
+    ) -> pd.DataFrame:
+        if support_data is None or support_data.empty:
+            return pd.DataFrame()
+
+        subset = support_data
+        for field_name, field_value in filters.items():
+            if field_value in (None, ""):
+                return pd.DataFrame()
+
+            column_name = self._bias_support_column(subset, field_name)
+            if column_name is None:
+                return pd.DataFrame()
+
+            subset = subset.loc[subset[column_name] == field_value]
+            if subset.empty:
+                return subset
+
+        return subset
+
+    def _compute_bias_support_signal(
+        self,
+        support_data: pd.DataFrame,
+        filters: Dict[str, Any],
+    ) -> float:
+        subset = self._slice_bias_support_data(support_data, filters)
+        if subset.empty:
+            return 0.0
+
+        support = self._gestation_support_stats(subset)
+        return float(support.get("effective_n") or support.get("count") or 0.0)
+
+    def _resolve_bias_candidate(
+        self,
+        *,
+        stage_label: str,
+        source_name: str,
+        display_name: str,
+        candidate_key: Optional[Tuple[Any, ...]],
+        support_filters: Dict[str, Any],
+        parent_bias: float,
+        support_data: pd.DataFrame,
+        bias_table: Dict[Tuple[Any, ...], Any],
+        sample_sizes: Dict[Tuple[Any, ...], Any],
+        min_n: float,
+        shrinkage: float,
+    ) -> Optional[Dict[str, Any]]:
+        if candidate_key is None or any(part in (None, "") for part in candidate_key):
+            return None
+
+        bias_value = bias_table.get(candidate_key)
+        if bias_value is None:
+            return None
+
+        live_support = self._compute_bias_support_signal(support_data, support_filters)
+        config_n = int(sample_sizes.get(candidate_key, 0) or 0)
+        support_signal = live_support if live_support > 0 else float(config_n)
+
+        if support_signal < float(min_n):
+            logger.info(
+                "%s %s candidate %s rejected: support=%.1f < min_n=%d",
+                stage_label,
+                display_name,
+                candidate_key,
+                support_signal,
+                int(min_n),
+            )
+            return None
+
+        trust = support_signal / (support_signal + max(1.0, float(shrinkage)))
+        blended_bias = trust * float(bias_value) + (1.0 - trust) * float(parent_bias)
+
+        logger.info(
+            "%s %s candidate applied: key=%s, bias=%d, support=%.1f, trust=%.2f, parent_bias=%.1f, blended_bias=%.1f",
+            stage_label,
+            display_name,
+            candidate_key,
+            int(round(float(bias_value))),
+            support_signal,
+            trust,
+            parent_bias,
+            blended_bias,
+        )
+
+        return {
+            "segment_key": candidate_key,
+            "segment_bias_days": int(round(float(bias_value))),
+            "config_segment_n": config_n,
+            "actual_support": float(live_support),
+            "support_signal": float(support_signal),
+            "segment_trust": float(trust),
+            "blended_bias": float(blended_bias),
+            "source": f"{source_name}_{'shrunk' if live_support > 0 else 'table'}",
+            "selected_level": source_name,
+            "value_band_key": candidate_key if "value_band" in source_name else None,
+            "value_band_support": float(live_support) if "value_band" in source_name else None,
+            "value_band_trust": float(trust) if "value_band" in source_name else None,
+        }
+
+    def _compute_configured_gestation_bias_adjustment(
         self,
         project: ProjectFeatures,
         support_data: pd.DataFrame,
         backoff_tier: int,
-        gest_stats: Optional[Dict[str, Any]] = None,
+        gest_stats: Optional[Dict[str, Any]],
+        settings: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Compute a shrunk, tier-aware gestation bias adjustment.
-
-        Key behaviours:
-        - continuous shrinkage instead of binary segment/global switching
-        - uses actual effective support from the current baseline data
-        - uses GESTATION_BIAS_GLOBAL_DAYS as the primary shrinkage anchor
-        - reserves GESTATION_BIAS_GLOBAL_FALLBACK_DAYS for global-only or zero-support cases
-        - attenuates broad type/category bias when the baseline came from a narrower tier
-        - optionally refines with (type, category, value_band) when support is sufficient
-        - scales damping inversely with segment CV when variance-aware damping is enabled
-        """
         seg_key = (
             getattr(project, "type", None),
             getattr(project, "category", None),
         )
-        seg_bias = GESTATION_BIAS_BY_SEGMENT.get(seg_key)
-        config_segment_n = int(GESTATION_BIAS_SEGMENT_SAMPLE_SIZES.get(seg_key, 0))
+        product_key = self._project_product_key(project)
+        value_band = getattr(project, "value_band", None)
+        stage_label = str(settings.get("stage_label", "bias"))
+        allowed_segments = settings.get("allowed_segments") or set()
 
-        # Primary shrinkage anchor for any row with usable segment support.
-        global_primary_bias = GESTATION_BIAS_GLOBAL_DAYS
-        if global_primary_bias is None:
-            global_primary_bias = GESTATION_BIAS_GLOBAL_FALLBACK_DAYS
-        global_primary_bias = int(global_primary_bias or 0)
-
-        # Conservative fallback reserved for global-only or truly zero-support cases.
-        global_fallback_bias = GESTATION_BIAS_GLOBAL_FALLBACK_DAYS
-        if global_fallback_bias is None:
-            global_fallback_bias = global_primary_bias
+        global_primary_bias = int(settings.get("global_primary_bias", 0) or 0)
+        global_fallback_bias = settings.get("global_fallback_bias", global_primary_bias)
         global_fallback_bias = int(global_fallback_bias or 0)
+
+        if allowed_segments and seg_key not in allowed_segments:
+            return {
+                "stage_label": stage_label,
+                "segment_key": seg_key,
+                "segment_bias_days": None,
+                "global_bias_days": int(global_fallback_bias),
+                "global_primary_bias_days": int(global_primary_bias),
+                "global_fallback_bias_days": int(global_fallback_bias),
+                "config_segment_n": 0,
+                "actual_support": 0.0,
+                "segment_trust": 0.0,
+                "tier_weight": 0.0,
+                "raw_bias_days": 0,
+                "adjustment_days": 0,
+                "cap_days": 0,
+                "source": "segment_not_allowed",
+                "segment_cv": None,
+                "variance_damping": 1.0,
+                "value_band_key": None,
+                "value_band_support": None,
+                "value_band_trust": None,
+                "damping_factor": float(settings.get("damping_factor", 0.0) or 0.0),
+            }
+
+        segment_bias_table = settings.get("segment_bias_table") or {}
+        segment_sample_sizes = settings.get("segment_sample_sizes") or {}
+        seg_bias = segment_bias_table.get(seg_key)
+        config_segment_n = int(segment_sample_sizes.get(seg_key, 0))
 
         actual_support = 0.0
         if gest_stats:
@@ -340,7 +873,7 @@ class NumericBaseline:
             )
 
         support_signal = actual_support if actual_support > 0 else float(config_segment_n)
-        shrinkage = max(1.0, float(GESTATION_BIAS_SUPPORT_SHRINKAGE))
+        shrinkage = max(1.0, float(settings.get("support_shrinkage", 1.0) or 1.0))
 
         if seg_bias is None:
             segment_trust = 0.0
@@ -361,64 +894,124 @@ class NumericBaseline:
             )
             source = "segment_shrunk" if actual_support > 0 else "segment_table"
 
-        # --- Value-band refinement (optional second-pass) ---
-        vb_key = None
-        vb_support = 0.0
-        vb_trust = None
-        if GESTATION_BIAS_VALUE_BAND_ENABLED:
-            vb = getattr(project, "value_band", None)
-            if vb:
-                vb_key = (seg_key[0], seg_key[1], vb)  # (type, category, value_band)
-                vb_bias = GESTATION_BIAS_BY_VALUE_BAND_SEGMENT.get(vb_key)
+        selected_meta = {
+            "segment_key": seg_key,
+            "segment_bias_days": int(seg_bias) if seg_bias is not None else None,
+            "config_segment_n": config_segment_n,
+            "actual_support": float(actual_support),
+            "support_signal": float(support_signal),
+            "segment_trust": float(segment_trust),
+            "blended_bias": float(blended_bias),
+            "source": source,
+            "selected_level": "segment" if seg_bias is not None else "global",
+            "value_band_key": None,
+            "value_band_support": None,
+            "value_band_trust": None,
+        }
 
-                if vb_bias is not None:
-                    # Compute value-band support from the live segment data
-                    if support_data is not None and not support_data.empty:
-                        vb_col = support_data.get("value_band")
-                        if vb_col is not None:
-                            vb_mask = vb_col == vb
-                            if vb_mask.any():
-                                vb_slice = support_data.loc[vb_mask]
-                                vb_stats = self._gestation_support_stats(vb_slice)
-                                vb_support = float(
-                                    vb_stats.get("effective_n") or vb_stats.get("count") or 0.0
-                                )
+        product_key_candidate = None
+        if bool(settings.get("product_key_enabled", False)) and product_key:
+            product_key_candidate = self._resolve_bias_candidate(
+                stage_label=stage_label,
+                source_name="product_key",
+                display_name="product-key",
+                candidate_key=(seg_key[0], seg_key[1], product_key),
+                support_filters={
+                    "type": seg_key[0],
+                    "category": seg_key[1],
+                    "product_key": product_key,
+                },
+                parent_bias=float(selected_meta["blended_bias"]),
+                support_data=support_data,
+                bias_table=settings.get("product_key_bias_table") or {},
+                sample_sizes=settings.get("product_key_sample_sizes") or {},
+                min_n=float(settings.get("product_key_min_n", 0) or 0),
+                shrinkage=float(
+                    settings.get("product_key_shrinkage", settings.get("support_shrinkage", 1.0)) or 1.0
+                ),
+            )
 
-                    # Fall back to config table if live support is zero
-                    if vb_support <= 0:
-                        vb_support = float(
-                            GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES.get(vb_key, 0)
-                        )
+        product_key_value_band_candidate = None
+        if (
+            bool(settings.get("product_key_value_band_enabled", False))
+            and product_key
+            and value_band
+        ):
+            product_key_parent = (
+                float(product_key_candidate["blended_bias"])
+                if product_key_candidate is not None
+                else float(selected_meta["blended_bias"])
+            )
+            product_key_value_band_candidate = self._resolve_bias_candidate(
+                stage_label=stage_label,
+                source_name="product_key_value_band",
+                display_name="product-key/value-band",
+                candidate_key=(seg_key[0], seg_key[1], product_key, value_band),
+                support_filters={
+                    "type": seg_key[0],
+                    "category": seg_key[1],
+                    "product_key": product_key,
+                    "value_band": value_band,
+                },
+                parent_bias=product_key_parent,
+                support_data=support_data,
+                bias_table=settings.get("product_key_value_band_bias_table") or {},
+                sample_sizes=settings.get("product_key_value_band_sample_sizes") or {},
+                min_n=float(settings.get("product_key_value_band_min_n", 0) or 0),
+                shrinkage=float(
+                    settings.get(
+                        "product_key_value_band_shrinkage",
+                        settings.get("value_band_shrinkage", 1.0),
+                    ) or 1.0
+                ),
+            )
 
-                    vb_min_n = float(GESTATION_BIAS_VALUE_BAND_MIN_N)
-                    vb_shrinkage = max(1.0, float(GESTATION_BIAS_VALUE_BAND_SHRINKAGE))
+        value_band_candidate = None
+        if bool(settings.get("value_band_enabled", False)) and value_band:
+            value_band_candidate = self._resolve_bias_candidate(
+                stage_label=stage_label,
+                source_name="value_band",
+                display_name="value-band",
+                candidate_key=(seg_key[0], seg_key[1], value_band),
+                support_filters={
+                    "type": seg_key[0],
+                    "category": seg_key[1],
+                    "value_band": value_band,
+                },
+                parent_bias=float(selected_meta["blended_bias"]),
+                support_data=support_data,
+                bias_table=settings.get("value_band_bias_table") or {},
+                sample_sizes=settings.get("value_band_sample_sizes") or {},
+                min_n=float(settings.get("value_band_min_n", 0) or 0),
+                shrinkage=float(settings.get("value_band_shrinkage", 1.0) or 1.0),
+            )
 
-                    if vb_support >= vb_min_n:
-                        # Enough events — shrink toward the coarser bias already selected above.
-                        vb_trust = vb_support / (vb_support + vb_shrinkage)
-                        blended_bias = (
-                            vb_trust * float(vb_bias)
-                            + (1.0 - vb_trust) * blended_bias
-                        )
-                        source = "value_band_shrunk"
-                        logger.info(
-                            "Value-band refinement applied: vb_key=%s, vb_bias=%d, "
-                            "vb_support=%.1f, vb_trust=%.2f, blended_bias=%.1f",
-                            vb_key, vb_bias, vb_support, vb_trust, blended_bias,
-                        )
-                    else:
-                        logger.info(
-                            "Value-band segment %s rejected: support=%.1f < min_n=%d; "
-                            "keeping (type,category) bias=%.1f",
-                            vb_key, vb_support, int(vb_min_n), blended_bias,
-                        )
+        selected_candidate = (
+            product_key_value_band_candidate
+            or product_key_candidate
+            or value_band_candidate
+        )
+        if selected_candidate is not None:
+            selected_meta.update(selected_candidate)
 
-        tier_weight = float(GESTATION_BIAS_TIER_WEIGHTS.get(int(backoff_tier), 1.0))
+        vb_key = selected_meta.get("value_band_key")
+        vb_support = selected_meta.get("value_band_support")
+        vb_trust = selected_meta.get("value_band_trust")
+        actual_support = float(selected_meta.get("actual_support", 0.0) or 0.0)
+        config_segment_n = int(selected_meta.get("config_segment_n", 0) or 0)
+        segment_trust = float(selected_meta.get("segment_trust", 0.0) or 0.0)
+        seg_key = selected_meta.get("segment_key")
+        seg_bias = selected_meta.get("segment_bias_days")
+        source = str(selected_meta.get("source", source))
+        blended_bias = float(selected_meta.get("blended_bias", blended_bias))
+
+        tier_weights = settings.get("tier_weights") or {}
+        tier_weight = float(tier_weights.get(int(backoff_tier), 1.0))
         tier_adjusted_bias = blended_bias * tier_weight
-
         raw_bias_days = int(round(tier_adjusted_bias))
 
-        k = max(0.0, float(GESTATION_BIAS_DAMPING_FACTOR))
+        damping_factor = max(0.0, float(settings.get("damping_factor", 0.0) or 0.0))
+        k = damping_factor
         segment_cv = None
         variance_damping = 1.0
         if GESTATION_VARIANCE_AWARE_DAMPING_ENABLED and gest_stats:
@@ -432,11 +1025,12 @@ class NumericBaseline:
 
         adjustment_days = int(round(raw_bias_days * k))
 
-        cap_days = abs(int(GESTATION_BIAS_MAX_ABS_DAYS)) if GESTATION_BIAS_MAX_ABS_DAYS else 0
+        cap_days = abs(int(settings.get("max_abs_days", 0) or 0))
         if cap_days > 0:
             adjustment_days = max(-cap_days, min(cap_days, adjustment_days))
 
         return {
+            "stage_label": stage_label,
             "segment_key": seg_key,
             "segment_bias_days": int(seg_bias) if seg_bias is not None else None,
             "global_bias_days": int(global_bias),
@@ -450,11 +1044,206 @@ class NumericBaseline:
             "adjustment_days": int(adjustment_days),
             "cap_days": int(cap_days),
             "source": source,
+            "selected_level": str(selected_meta.get("selected_level", "segment")),
             "segment_cv": round(segment_cv, 4) if segment_cv is not None else None,
             "variance_damping": round(variance_damping, 4),
             "value_band_key": vb_key,
-            "value_band_support": round(vb_support, 2) if vb_key else None,
-            "value_band_trust": round(vb_trust, 4) if vb_trust is not None else None,
+            "value_band_support": round(float(vb_support), 2) if vb_key and vb_support is not None else None,
+            "value_band_trust": round(float(vb_trust), 4) if vb_trust is not None else None,
+            "damping_factor": float(damping_factor),
+        }
+
+    def _compute_gestation_bias_adjustment(
+        self,
+        project: ProjectFeatures,
+        support_data: pd.DataFrame,
+        backoff_tier: int,
+        gest_stats: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self._compute_configured_gestation_bias_adjustment(
+            project=project,
+            support_data=support_data,
+            backoff_tier=backoff_tier,
+            gest_stats=gest_stats,
+            settings=self._standard_gestation_bias_settings(),
+        )
+
+    def _compute_post_tail_gestation_bias_adjustment(
+        self,
+        project: ProjectFeatures,
+        support_data: pd.DataFrame,
+        backoff_tier: int,
+        gest_stats: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self._compute_configured_gestation_bias_adjustment(
+            project=project,
+            support_data=support_data,
+            backoff_tier=backoff_tier,
+            gest_stats=gest_stats,
+            settings=self._post_tail_gestation_bias_settings(),
+        )
+
+    def _apply_gestation_adjustment(
+        self,
+        predictions: NumericPredictions,
+        base_days: int,
+        adjustment_days: int,
+    ) -> int:
+        corrected = max(1, int(base_days) + int(adjustment_days))
+        predictions.expected_gestation_days = corrected
+        if predictions.gestation_range.get("p25") is not None:
+            predictions.gestation_range["p25"] = max(
+                1,
+                int(predictions.gestation_range["p25"]) + adjustment_days,
+            )
+        if predictions.gestation_range.get("p75") is not None:
+            predictions.gestation_range["p75"] = max(
+                1,
+                int(predictions.gestation_range["p75"]) + adjustment_days,
+            )
+        if (
+            hasattr(predictions, "gestation_prediction_interval")
+            and predictions.gestation_prediction_interval is not None
+        ):
+            for key in ("p10", "p50", "p60", "p70", "p90"):
+                if predictions.gestation_prediction_interval.get(key) is not None:
+                    predictions.gestation_prediction_interval[key] = max(
+                        1,
+                        int(predictions.gestation_prediction_interval[key]) + adjustment_days,
+                    )
+        return corrected
+
+    def _compute_tail_aware_gestation_target(
+        self,
+        gest_stats: Optional[Dict[str, Any]],
+        backoff_tier: int,
+        segment_key: Optional[Tuple[Any, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Move the point target upward within the empirical interval for noisy,
+        right-skewed segments without translating the full interval.
+        """
+        settings = self._resolve_tail_target_settings(segment_key)
+        tier_weight = float(
+            GESTATION_TAIL_TARGET_TIER_WEIGHTS.get(int(backoff_tier), 1.0)
+        )
+
+        if not gest_stats:
+            return {
+                "base_days": 0,
+                "target_days": 0,
+                "target_quantile": 0.50,
+                "activated": False,
+                "blend_strength": 0.0,
+                "raw_blend_strength": 0.0,
+                "upper_tail_days": 0,
+                "cv": None,
+                "support": 0.0,
+                "cv_score": 0.0,
+                "tail_score": 0.0,
+                "support_score": 0.0,
+                "tier_weight": round(tier_weight, 4),
+                "profile": settings.get("profile", "selective"),
+                "max_target_quantile": round(
+                    max(0.50, min(0.70, float(settings.get("max_target_quantile", 0.60)))),
+                    3,
+                ),
+                "segment_override": bool(settings.get("segment_override", False)),
+            }
+
+        pi = gest_stats.get("prediction_interval") or {}
+        p50 = float(pi.get("p50") or gest_stats.get("median") or 0)
+        p60 = float(pi.get("p60") or p50)
+        p70 = float(pi.get("p70") or p60)
+        p90 = float(pi.get("p90") or p70)
+
+        cv = gest_stats.get("cv")
+        cv = float(cv) if cv is not None else None
+        support = float(gest_stats.get("effective_n") or gest_stats.get("count") or 0.0)
+        upper_tail_days = max(0.0, p90 - p50)
+
+        cv_low = float(settings.get("cv_low", GESTATION_TAIL_TARGET_CV_LOW))
+        cv_high = float(settings.get("cv_high", GESTATION_TAIL_TARGET_CV_HIGH))
+        upper_tail_low = float(settings.get("upper_tail_low", GESTATION_TAIL_TARGET_UPPER_TAIL_LOW))
+        upper_tail_high = float(settings.get("upper_tail_high", GESTATION_TAIL_TARGET_UPPER_TAIL_HIGH))
+
+        cv_score = (
+            0.0
+            if cv is None
+            else self._piecewise_scale(
+                cv,
+                [
+                    (cv_low, 0.0),
+                    (cv_high, 1.0),
+                ],
+            )
+        )
+        tail_score = self._piecewise_scale(
+            upper_tail_days,
+            [
+                (upper_tail_low, 0.0),
+                (upper_tail_high, 1.0),
+            ],
+        )
+
+        support_shrinkage = max(1.0, float(settings.get("support_shrinkage", GESTATION_TAIL_TARGET_SUPPORT_SHRINKAGE)))
+        support_score = support / (support + support_shrinkage) if support > 0 else 0.0
+
+        raw_blend_strength = max(
+            0.0,
+            min(1.0, cv_score * tail_score * support_score * tier_weight),
+        )
+
+        min_blend = max(0.0, min(0.99, float(settings.get("min_blend", GESTATION_TAIL_TARGET_MIN_BLEND))))
+        max_target_quantile = max(
+            0.50,
+            min(0.70, float(settings.get("max_target_quantile", GESTATION_TAIL_TARGET_MAX_QUANTILE))),
+        )
+        activated = (
+            bool(settings.get("enabled", True))
+            and
+            p60 > p50
+            and cv_score >= float(settings.get("min_cv_score", GESTATION_TAIL_TARGET_MIN_CV_SCORE))
+            and tail_score >= float(settings.get("min_tail_score", GESTATION_TAIL_TARGET_MIN_TAIL_SCORE))
+            and support_score >= float(settings.get("min_support_score", GESTATION_TAIL_TARGET_MIN_SUPPORT_SCORE))
+            and raw_blend_strength > min_blend
+        )
+
+        if activated:
+            blend_strength = (raw_blend_strength - min_blend) / (1.0 - min_blend)
+            blend_strength = max(0.0, min(1.0, blend_strength))
+            target_quantile = 0.50 + (max_target_quantile - 0.50) * blend_strength
+            if target_quantile <= 0.60 or max_target_quantile <= 0.60 or p70 <= p60:
+                stage_alpha = max(0.0, min(1.0, (target_quantile - 0.50) / 0.10))
+                target_days = (1.0 - stage_alpha) * p50 + stage_alpha * p60
+            else:
+                stage_alpha = max(
+                    0.0,
+                    min(1.0, (target_quantile - 0.60) / max(0.01, max_target_quantile - 0.60)),
+                )
+                target_days = (1.0 - stage_alpha) * p60 + stage_alpha * p70
+        else:
+            blend_strength = 0.0
+            target_days = p50
+            target_quantile = 0.50
+
+        return {
+            "base_days": int(round(p50)),
+            "target_days": max(1, int(round(target_days))),
+            "target_quantile": round(target_quantile, 3),
+            "activated": activated,
+            "blend_strength": round(blend_strength, 4),
+            "raw_blend_strength": round(raw_blend_strength, 4),
+            "upper_tail_days": int(round(upper_tail_days)),
+            "cv": round(cv, 4) if cv is not None else None,
+            "support": round(support, 2),
+            "cv_score": round(cv_score, 4),
+            "tail_score": round(tail_score, 4),
+            "support_score": round(support_score, 4),
+            "tier_weight": round(tier_weight, 4),
+            "profile": settings.get("profile", "selective"),
+            "max_target_quantile": round(max_target_quantile, 3),
+            "segment_override": bool(settings.get("segment_override", False)),
         }
     
     def _compute_global_closed_prior(self, df: pd.DataFrame) -> Tuple[Optional[float], int]:
@@ -524,6 +1313,8 @@ class NumericBaseline:
         std_val = float(gestation_values.std())
         median_val = float(gestation_values.median())
         p25 = float(gestation_values.quantile(0.25))
+        p60 = float(gestation_values.quantile(0.60))
+        p70 = float(gestation_values.quantile(0.70))
         p75 = float(gestation_values.quantile(0.75))
         p10 = float(gestation_values.quantile(0.10))
         p90 = float(gestation_values.quantile(0.90))
@@ -537,6 +1328,8 @@ class NumericBaseline:
                 cumulative /= cumulative[-1]
                 median_val = float(np.interp(0.5, cumulative, sorted_values))
                 p25 = float(np.interp(0.25, cumulative, sorted_values))
+                p60 = float(np.interp(0.60, cumulative, sorted_values))
+                p70 = float(np.interp(0.70, cumulative, sorted_values))
                 p75 = float(np.interp(0.75, cumulative, sorted_values))
                 p10 = float(np.interp(0.10, cumulative, sorted_values))
                 p90 = float(np.interp(0.90, cumulative, sorted_values))
@@ -560,6 +1353,8 @@ class NumericBaseline:
         statistics = {
             "median": int(round(median_val)),
             "p25": int(round(p25)),
+            "p60": int(round(p60)),
+            "p70": int(round(p70)),
             "p75": int(round(p75)),
             "p10": max(1, int(round(p10))),
             "p90": int(round(p90)),
@@ -575,6 +1370,8 @@ class NumericBaseline:
             "prediction_interval": {
                 "p10": max(1, int(round(p10))),
                 "p50": int(round(median_val)),
+                "p60": int(round(p60)),
+                "p70": int(round(p70)),
                 "p90": int(round(p90)),
             },
         }
@@ -1037,7 +1834,8 @@ class NumericBaseline:
                 gestation_days, gest_stats = (None, {"confidence": 0, "effective_n": 0.0})
 
         if gestation_days:
-            predictions.expected_gestation_days = gestation_days
+            base_gestation_days = int(gestation_days)
+            predictions.expected_gestation_days = base_gestation_days
             predictions.gestation_confidence = gest_stats["confidence"]
             predictions.gestation_range = {
                 "p25": gest_stats.get("p25"),
@@ -1049,28 +1847,88 @@ class NumericBaseline:
                 predictions.gestation_prediction_interval = {
                     "p10": pi.get("p10"),
                     "p50": pi.get("p50"),
+                    "p60": pi.get("p60"),
+                    "p70": pi.get("p70"),
                     "p90": pi.get("p90"),
                 }
 
-            if GESTATION_BIAS_CORRECTION_ENABLED:
-                bias_meta = self._compute_gestation_bias_adjustment(
-                    project=project,
-                    support_data=gestation_source_data,
-                    backoff_tier=gestation_bias_tier,
+            if GESTATION_TAIL_AWARE_TARGET_ENABLED:
+                tail_meta = self._compute_tail_aware_gestation_target(
                     gest_stats=gest_stats,
+                    backoff_tier=gestation_bias_tier,
+                    segment_key=(getattr(project, "type", None), getattr(project, "category", None)),
                 )
-                adjustment_days = int(bias_meta["adjustment_days"])
-                if adjustment_days != 0:
-                    corrected = max(1, int(gestation_days) + adjustment_days)
+                tail_target = int(tail_meta["target_days"])
+                if tail_meta["activated"] and tail_target != base_gestation_days:
                     logger.info(
                         (
-                            "Bias correction: %d -> %d days "
+                            "Tail-aware target [%s]: %d -> %d days "
+                            "(quantile=%.3f, max_q=%.2f, blend=%.2f, raw_blend=%.2f, cv=%s, "
+                            "upper_tail=%d, support=%.1f, cv_score=%.2f, tail_score=%.2f, "
+                            "support_score=%.2f, tier=%d, tier_w=%.2f, segment_override=%s)"
+                        ),
+                        tail_meta["profile"],
+                        base_gestation_days,
+                        tail_target,
+                        tail_meta["target_quantile"],
+                        tail_meta["max_target_quantile"],
+                        tail_meta["blend_strength"],
+                        tail_meta["raw_blend_strength"],
+                        tail_meta["cv"],
+                        tail_meta["upper_tail_days"],
+                        tail_meta["support"],
+                        tail_meta["cv_score"],
+                        tail_meta["tail_score"],
+                        tail_meta["support_score"],
+                        gestation_bias_tier,
+                        tail_meta["tier_weight"],
+                        tail_meta["segment_override"],
+                    )
+                predictions.expected_gestation_days = tail_target
+
+            use_post_tail_bias = bool(
+                GESTATION_TAIL_AWARE_TARGET_ENABLED
+                and GESTATION_POST_TAIL_BIAS_CORRECTION_ENABLED
+            )
+
+            if use_post_tail_bias or GESTATION_BIAS_CORRECTION_ENABLED:
+                if use_post_tail_bias:
+                    bias_meta = self._compute_post_tail_gestation_bias_adjustment(
+                        project=project,
+                        support_data=gestation_source_data,
+                        backoff_tier=gestation_bias_tier,
+                        gest_stats=gest_stats,
+                    )
+                    log_prefix = "Post-tail bias correction"
+                else:
+                    bias_meta = self._compute_gestation_bias_adjustment(
+                        project=project,
+                        support_data=gestation_source_data,
+                        backoff_tier=gestation_bias_tier,
+                        gest_stats=gest_stats,
+                    )
+                    log_prefix = "Bias correction"
+
+                adjustment_days = int(bias_meta["adjustment_days"])
+                if adjustment_days != 0:
+                    bias_input_days = int(
+                        predictions.expected_gestation_days or base_gestation_days
+                    )
+                    corrected = self._apply_gestation_adjustment(
+                        predictions=predictions,
+                        base_days=bias_input_days,
+                        adjustment_days=adjustment_days,
+                    )
+                    logger.info(
+                        (
+                            "%s: %d -> %d days "
                             "(segment=%s, seg_bias=%s, global=%+d, global_primary=%+d, "
                             "global_fallback=%+d, support=%.1f, config_n=%d, trust=%.2f, "
                             "tier=%d, tier_w=%.2f, raw=%+d, k=%.2f, var_damp=%.2f, "
                             "cv=%s, adj=%+d, cap=%d, source=%s)"
                         ),
-                        gestation_days,
+                        log_prefix,
+                        bias_input_days,
                         corrected,
                         bias_meta["segment_key"],
                         bias_meta["segment_bias_days"],
@@ -1083,38 +1941,13 @@ class NumericBaseline:
                         gestation_bias_tier,
                         bias_meta["tier_weight"],
                         bias_meta["raw_bias_days"],
-                        GESTATION_BIAS_DAMPING_FACTOR,
+                        bias_meta["damping_factor"],
                         bias_meta["variance_damping"],
                         bias_meta["segment_cv"],
                         adjustment_days,
                         bias_meta["cap_days"],
                         bias_meta["source"],
                     )
-                    predictions.expected_gestation_days = corrected
-                    if predictions.gestation_range.get("p25") is not None:
-                        predictions.gestation_range["p25"] = max(
-                            1, int(predictions.gestation_range["p25"]) + adjustment_days
-                        )
-                    if predictions.gestation_range.get("p75") is not None:
-                        predictions.gestation_range["p75"] = max(
-                            1, int(predictions.gestation_range["p75"]) + adjustment_days
-                        )
-                    if (
-                        hasattr(predictions, "gestation_prediction_interval")
-                        and predictions.gestation_prediction_interval is not None
-                    ):
-                        if predictions.gestation_prediction_interval.get("p10") is not None:
-                            predictions.gestation_prediction_interval["p10"] = max(
-                                1, int(predictions.gestation_prediction_interval["p10"]) + adjustment_days
-                            )
-                        if predictions.gestation_prediction_interval.get("p50") is not None:
-                            predictions.gestation_prediction_interval["p50"] = max(
-                                1, int(predictions.gestation_prediction_interval["p50"]) + adjustment_days
-                            )
-                        if predictions.gestation_prediction_interval.get("p90") is not None:
-                            predictions.gestation_prediction_interval["p90"] = max(
-                                1, int(predictions.gestation_prediction_interval["p90"]) + adjustment_days
-                            )
 
         # Conversion: inclusive (closed-won / all) is the main signal; closed-only retained as reference
         conv_rate_incl, conv_stats_incl = self.calculate_conversion_rate(segment_data, method="inclusive")
@@ -1132,7 +1965,8 @@ class NumericBaseline:
             "expected_gestation_days": predictions.expected_gestation_days,
             "new_enquiry_value": project.new_enquiry_value,
             "account": project.account,
-            "product_type": project.product_type,
+            "product_type": project.product_key or project.product_type,
+            "product_key": project.product_key,
             "value_band": project.value_band
         }
         rating, rating_components = self.calculate_rating_score(project_metrics, segment_data)

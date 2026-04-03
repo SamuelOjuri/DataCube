@@ -26,6 +26,13 @@ from ..config import (
 )
 from ..core.monday_client import MondayClient
 from ..core.data_processor import LabelNormalizer, EnhancedMirrorResolver, HierarchicalSegmentation
+from ..core.normalization import (
+    compute_product_key,
+    get_category_alias_map,
+    get_product_alias_map,
+    normalize_category_value,
+    normalize_text_key,
+)
 from .supabase_client import SupabaseClient
 from ..core.enhanced_extractor import EnhancedColumnExtractor, EnhancedMondayExtractor
 
@@ -59,6 +66,7 @@ class DataSyncService:
         self.max_duplicate_chunks = 10
         # Lazy-built alias map cache
         self._product_alias_map: Optional[Dict[str, str]] = None
+        self._category_alias_map: Optional[Dict[str, str]] = None
 
     def _normalize_hidden_name_key(self, value: Any) -> str:
         if value is None:
@@ -563,79 +571,22 @@ class DataSyncService:
     # -----------------------------------------------------------------
 
     def _normalize_text_key(self, value: Any) -> str:
-        """
-        Segmentation-key normaliser:
-        - stringify, lowercase, trim
-        - collapse slash spacing: 'EPS / PIR' -> 'eps/pir'
-        - collapse hyphen spacing: 'multi - fix' -> 'multi-fix'
-        - normalise parentheses spacing
-        - collapse whitespace
-        """
-        if value is None:
-            return ""
-        s = str(value).strip().lower()
-        if not s:
-            return ""
-        s = _RE_SLASH.sub("/", s)
-        s = _RE_HYPHEN.sub("-", s)
-        s = _RE_LPAREN.sub("(", s)
-        s = _RE_RPAREN.sub(")", s)
-        s = _RE_PAREN_SP.sub(" (", s)
-        s = _RE_WS.sub(" ", s)
-        return s
+        return normalize_text_key(value)
 
     def _get_product_alias_map(self) -> Dict[str, str]:
-        """Build alias lookup once per service instance, validating against canonical keys."""
         if self._product_alias_map is not None:
             return self._product_alias_map
-        m: Dict[str, str] = {}
-        for raw_k, raw_v in PRODUCT_TYPE_ALIASES.items():
-            nk = self._normalize_text_key(raw_k)
-            nv = self._normalize_text_key(raw_v)
-            if not nk or not nv:
-                continue
-            if nv not in CANONICAL_PRODUCT_KEYS:
-                logger.warning(
-                    f"Alias value '{raw_v}' (normalised: '{nv}') is not in "
-                    f"CANONICAL_PRODUCT_KEYS — skipping alias '{raw_k}'"
-                )
-                continue
-            m[nk] = nv
-        self._product_alias_map = m
-        return m
+        self._product_alias_map = dict(get_product_alias_map())
+        return self._product_alias_map
+
+    def _get_category_alias_map(self) -> Dict[str, str]:
+        if self._category_alias_map is not None:
+            return self._category_alias_map
+        self._category_alias_map = dict(get_category_alias_map())
+        return self._category_alias_map
 
     def _compute_product_key(self, product_type_raw: Any) -> str:
-        """
-        Derive a canonical product_key from a raw product_type string.
-        - Splits CSV tokens
-        - Normalises each token (lowercase, slash/hyphen/paren collapse)
-        - Maps via alias table → canonical key
-        - Deduplicates, sorts, joins
-        - Unmapped tokens are silently dropped
-        - Returns 'unknown' when product_type is non-empty but nothing maps
-        - Returns '' (empty) when product_type is empty/None
-        """
-        if product_type_raw is None:
-            return ""
-        raw = str(product_type_raw).strip()
-        if not raw:
-            return ""
-        alias_map = self._get_product_alias_map()
-        keys: Set[str] = set()
-        for part in _RE_CSV.split(raw):
-            if not part:
-                continue
-            token = self._normalize_text_key(part)
-            if not token:
-                continue
-            canonical = alias_map.get(token)
-            if canonical:
-                keys.add(canonical)
-            # Unmapped tokens are dropped to prevent combinatorial explosion
-        if not keys:
-            return "unknown"
-        return ", ".join(sorted(keys))
-
+        return compute_product_key(product_type_raw)
 
     async def perform_full_sync(self) -> Dict[str, Any]:
         logger.info("Starting full sync from Monday to Supabase")
@@ -1675,9 +1626,7 @@ class DataSyncService:
         return str(type_value) if type_value else ""
 
     def _normalize_category(self, category_value: Any) -> str:
-        if isinstance(category_value, str) and category_value.isdigit():
-            return CATEGORY_LABELS.get(category_value, category_value)
-        return str(category_value) if category_value else ""
+        return normalize_category_value(category_value)
 
     def _parse_numeric_value(self, value: Any) -> Optional[float]:
         if value is None:

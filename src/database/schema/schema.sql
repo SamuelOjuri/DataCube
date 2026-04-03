@@ -741,63 +741,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pipeline_forecast_monthly_12m_v1_unique
 
 CREATE INDEX IF NOT EXISTS idx_mv_pipeline_forecast_monthly_12m_v1_forecast_month
     ON mv_pipeline_forecast_monthly_12m_v1 (forecast_month);
-
-
--- ============================================================
--- Bookings(Contracted Value) Chart Views
--- ============================================================
-
--- Actual Bookings Monthly View: Uses total_order_value and date_order_received from the projects table
-
-CREATE OR REPLACE VIEW vw_actual_bookings_monthly_v1 AS
-WITH booking_actuals AS (
-    SELECT
-        DATE_TRUNC('month', p.date_order_received)::DATE AS booking_month,
-        COUNT(*) AS project_count,
-        SUM(p.total_order_value)::NUMERIC(14,2) AS actual_bookings
-    FROM projects p
-    WHERE p.date_order_received IS NOT NULL
-      AND COALESCE(p.total_order_value, 0) > 0
-      AND p.pipeline_stage IN (
-          'Won - Open (Order Received)',
-          'Won - Closed (Invoiced)',
-          'Won Via Other Ref'
-      )
-    GROUP BY 1
-),
-bounds AS (
-    SELECT
-        COALESCE(
-            (SELECT MIN(booking_month) FROM booking_actuals),
-            DATE_TRUNC('month', CURRENT_DATE)::DATE
-        ) AS min_month,
-        (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month')::DATE AS max_month
-),
-months AS (
-    SELECT
-        GENERATE_SERIES(
-            DATE_TRUNC('month', (SELECT min_month FROM bounds))::DATE,
-            (SELECT max_month FROM bounds),
-            INTERVAL '1 month'
-        )::DATE AS month_start
-)
-SELECT
-    m.month_start AS booking_month,
-    COALESCE(a.project_count, 0)::BIGINT AS project_count,
-    COALESCE(a.actual_bookings, 0)::NUMERIC(14,2) AS actual_bookings
-FROM months m
-LEFT JOIN booking_actuals a
-    ON a.booking_month = m.month_start
-ORDER BY m.month_start;
-
-
-CREATE OR REPLACE VIEW vw_bookings_forecast_chart_v1 AS
-SELECT
-    booking_month AS month_start,
-    actual_bookings
-FROM vw_actual_bookings_monthly_v1
-ORDER BY month_start;
-
+    
 
 -- ============================================================
 -- Enquiry Value Forecast Views (Power BI built-in forecasting)
@@ -864,6 +808,61 @@ SELECT
     actual_pipeline_value AS actual_enquiry_value,
     actual_enquiry_value AS gross_enquiry_value
 FROM vw_actual_enquiry_monthly_v1
+ORDER BY month_start;
+
+-- ============================================================
+-- Bookings(Contracted Value) Chart Views
+-- ============================================================
+
+-- Actual Bookings Monthly View: Uses total_order_value and date_order_received from the projects table
+
+CREATE OR REPLACE VIEW vw_actual_bookings_monthly_v1 AS
+WITH booking_actuals AS (
+    SELECT
+        DATE_TRUNC('month', p.date_order_received)::DATE AS booking_month,
+        COUNT(*) AS project_count,
+        SUM(p.total_order_value)::NUMERIC(14,2) AS actual_bookings
+    FROM projects p
+    WHERE p.date_order_received IS NOT NULL
+      AND COALESCE(p.total_order_value, 0) > 0
+      AND p.pipeline_stage IN (
+          'Won - Open (Order Received)',
+          'Won - Closed (Invoiced)',
+          'Won Via Other Ref'
+      )
+    GROUP BY 1
+),
+bounds AS (
+    SELECT
+        COALESCE(
+            (SELECT MIN(booking_month) FROM booking_actuals),
+            DATE_TRUNC('month', CURRENT_DATE)::DATE
+        ) AS min_month,
+        (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month')::DATE AS max_month
+),
+months AS (
+    SELECT
+        GENERATE_SERIES(
+            DATE_TRUNC('month', (SELECT min_month FROM bounds))::DATE,
+            (SELECT max_month FROM bounds),
+            INTERVAL '1 month'
+        )::DATE AS month_start
+)
+SELECT
+    m.month_start AS booking_month,
+    COALESCE(a.project_count, 0)::BIGINT AS project_count,
+    COALESCE(a.actual_bookings, 0)::NUMERIC(14,2) AS actual_bookings
+FROM months m
+LEFT JOIN booking_actuals a
+    ON a.booking_month = m.month_start
+ORDER BY m.month_start;
+
+
+CREATE OR REPLACE VIEW vw_bookings_forecast_chart_v1 AS
+SELECT
+    booking_month AS month_start,
+    actual_bookings
+FROM vw_actual_bookings_monthly_v1
 ORDER BY month_start;
 
 -- ==========================================================
