@@ -11,6 +11,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.database.supabase_client import SupabaseClient
+from src.database.sync_service import DataSyncService
 from src.core.monday_client import MondayClient
 from src.config import PARENT_COLUMNS, CATEGORY_LABELS
 
@@ -75,6 +76,7 @@ def main() -> None:
 
     supabase = SupabaseClient()
     monday = MondayClient()
+    normalizer = DataSyncService()
 
     # Limit scope to projects that already exist in Supabase
     existing_ids = supabase.get_existing_project_ids()
@@ -92,9 +94,12 @@ def main() -> None:
     now_iso = datetime.now().isoformat()
     updates: List[Dict] = []
     for mid, cat in monday_map.items():
+        normalized_cat = None
+        if cat not in (None, ""):
+            normalized_cat = normalizer._normalize_category(cat) or None
         updates.append({
             "monday_id": mid,
-            "category": cat,  # None -> NULL in DB if unset
+            "category": normalized_cat,  # None -> NULL in DB if unset
             "last_synced_at": now_iso,
         })
 

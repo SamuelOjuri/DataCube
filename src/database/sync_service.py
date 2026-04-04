@@ -14,15 +14,25 @@ from ..config import (
     PARENT_COLUMNS,
     SUBITEM_COLUMNS,
     HIDDEN_ITEMS_COLUMNS,
+    get_hidden_items_extraction_columns,
+    get_subitems_extraction_columns,
     SYNC_BATCH_SIZE,
     PIPELINE_STAGE_LABELS,
     TYPE_LABELS,
     CATEGORY_LABELS,
     CANONICAL_PRODUCT_KEYS,
     PRODUCT_TYPE_ALIASES,
+    validate_invoice_rollup_contract,
 )
 from ..core.monday_client import MondayClient
 from ..core.data_processor import LabelNormalizer, EnhancedMirrorResolver, HierarchicalSegmentation
+from ..core.normalization import (
+    compute_product_key,
+    get_category_alias_map,
+    get_product_alias_map,
+    normalize_category_value,
+    normalize_text_key,
+)
 from .supabase_client import SupabaseClient
 from ..core.enhanced_extractor import EnhancedColumnExtractor, EnhancedMondayExtractor
 
@@ -42,6 +52,7 @@ class DataSyncService:
     """Enhanced service for syncing data between Monday and Supabase"""
 
     def __init__(self):
+        validate_invoice_rollup_contract()
         self.monday_client = MondayClient()
         self.supabase_client = SupabaseClient()
         self.label_normalizer = LabelNormalizer()
@@ -49,89 +60,533 @@ class DataSyncService:
         self.segmentation = HierarchicalSegmentation()
         self.enhanced_extractor = EnhancedMondayExtractor(self.monday_client)
         self._hidden_lookup_by_id: Dict[str, Dict] = {}
-        self._hidden_lookup_by_name: Dict[str, Dict] = {}
+        self._hidden_lookup_by_name: Dict[str, List[Dict]] = {}
+        self._hidden_lookup_by_normalized_name: Dict[str, List[Dict]] = {}
+        self._hidden_lookup_by_prefix: Dict[str, List[Dict]] = {}
         self.max_duplicate_chunks = 10
         # Lazy-built alias map cache
         self._product_alias_map: Optional[Dict[str, str]] = None
+        self._category_alias_map: Optional[Dict[str, str]] = None
+
+    def _normalize_hidden_name_key(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return _RE_WS.sub(" ", str(value).strip().lower())
+
+    def _leading_digits_from_name(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        match = re.match(r"^(\d+)", str(value).strip())
+        return match.group(1) if match else None
+
+    def _has_transactional_hidden_values(self, row: Dict[str, Any]) -> bool:
+        return (
+            row.get("cust_order_value_material") is not None
+            or bool(row.get("date_order_received"))
+            or row.get("amount_invoiced") is not None
+        )
+
+    def _non_transactional_hidden_score(self, row: Dict[str, Any]) -> int:
+        score = 0
+
+        reason = (row.get("reason_for_change") or "").strip()
+        if reason:
+            score += 3
+            if reason == "New Enquiry":
+                score += 3
+
+        quote_amount = self._parse_numeric_value(row.get("quote_amount"))
+        if quote_amount is not None:
+            score += 1
+            if quote_amount > 0:
+                score += 5
+
+        if row.get("date_design_completed"):
+            score += 1
+        if row.get("invoice_date"):
+            score += 1
+
+        return score
+
+    def _pick_best_scored_hidden_candidate(
+        self,
+        candidates: List[Dict[str, Any]],
+        score_fn,
+    ) -> Optional[Dict[str, Any]]:
+        if not candidates:
+            return None
+
+        scored: List[Tuple[int, Dict[str, Any]]] = []
+        for row in candidates:
+            try:
+                score = int(score_fn(row))
+            except Exception:
+                score = 0
+            if score > 0:
+                scored.append((score, row))
+
+        if not scored:
+            return None
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        best_score = scored[0][0]
+        best_rows = [row for score, row in scored if score == best_score]
+
+        if len(best_rows) == 1:
+            return best_rows[0]
+
+        return None
+
+    def _get_hidden_match_context(self, subitem: Dict[str, Any]) -> Dict[str, Any]:
+        hidden_id = str(subitem.get("hidden_item_id") or "").strip()
+        if hidden_id and hidden_id in self._hidden_lookup_by_id:
+            return {
+                "resolved": self._hidden_lookup_by_id[hidden_id],
+                "item_name": str(subitem.get("item_name") or subitem.get("name") or "").strip(),
+                "exact_matches": [],
+                "normalized_matches": [],
+                "prefix_matches": [],
+                "candidates": [],
+            }
+
+        item_name = str(subitem.get("item_name") or subitem.get("name") or "").strip()
+        exact_matches = list(self._hidden_lookup_by_name.get(item_name, []))
+        if len(exact_matches) == 1:
+            return {
+                "resolved": exact_matches[0],
+                "item_name": item_name,
+                "exact_matches": exact_matches,
+                "normalized_matches": [],
+                "prefix_matches": [],
+                "candidates": exact_matches,
+            }
+
+        normalized_name = self._normalize_hidden_name_key(item_name)
+        normalized_matches = list(
+            self._hidden_lookup_by_normalized_name.get(normalized_name, [])
+        )
+        if len(normalized_matches) == 1:
+            return {
+                "resolved": normalized_matches[0],
+                "item_name": item_name,
+                "exact_matches": exact_matches,
+                "normalized_matches": normalized_matches,
+                "prefix_matches": [],
+                "candidates": normalized_matches,
+            }
+
+        prefix = self._leading_digits_from_name(item_name)
+        prefix_matches = list(self._hidden_lookup_by_prefix.get(prefix, [])) if prefix else []
+
+        if exact_matches:
+            candidates = exact_matches
+        elif normalized_matches:
+            candidates = normalized_matches
+        else:
+            candidates = prefix_matches
+
+        return {
+            "resolved": None,
+            "item_name": item_name,
+            "exact_matches": exact_matches,
+            "normalized_matches": normalized_matches,
+            "prefix_matches": prefix_matches,
+            "candidates": candidates,
+        }
+
+    def _resolve_hidden_for_subitem(self, subitem: Dict[str, Any]) -> Optional[Dict]:
+        context = self._get_hidden_match_context(subitem)
+        if context["resolved"] is not None:
+            item_name = context["item_name"]
+            if item_name:
+                logger.info("Hidden lookup matched subitem %s by strong match", item_name)
+            return context["resolved"]
+
+        item_name = context["item_name"]
+        exact_matches = context["exact_matches"]
+        prefix_matches = context["prefix_matches"]
+        candidates = context["candidates"]
+
+        exact_tx_matches = [
+            row for row in exact_matches
+            if self._has_transactional_hidden_values(row)
+        ]
+        if len(exact_tx_matches) == 1:
+            logger.info(
+                "Hidden lookup matched subitem %s by exact-name transactional candidate",
+                item_name,
+            )
+            return exact_tx_matches[0]
+
+        candidates_with_rollup_values = [
+            row for row in candidates
+            if self._has_transactional_hidden_values(row)
+        ]
+        if len(candidates_with_rollup_values) == 1:
+            logger.info("Hidden lookup matched subitem %s by fallback candidate", item_name)
+            return candidates_with_rollup_values[0]
+
+        if len(prefix_matches) == 1:
+            logger.info("Hidden lookup matched subitem %s by prefix", item_name)
+            return prefix_matches[0]
+
+        return None
+
+    def _resolve_hidden_for_subitem_non_transactional(
+        self,
+        subitem: Dict[str, Any]
+    ) -> Optional[Dict]:
+        context = self._get_hidden_match_context(subitem)
+        if context["resolved"] is not None:
+            item_name = context["item_name"]
+            if item_name:
+                logger.info(
+                    "Hidden lookup matched subitem %s by strong non-transactional match",
+                    item_name,
+                )
+            return context["resolved"]
+
+        item_name = context["item_name"]
+        exact_matches = context["exact_matches"]
+        prefix_matches = context["prefix_matches"]
+        candidates = context["candidates"]
+
+        best_exact = self._pick_best_scored_hidden_candidate(
+            exact_matches,
+            self._non_transactional_hidden_score,
+        )
+        if best_exact is not None:
+            logger.info(
+                "Hidden lookup matched subitem %s by exact-name non-transactional candidate",
+                item_name,
+            )
+            return best_exact
+
+        candidates_with_non_tx_values = [
+            row for row in candidates
+            if row.get("reason_for_change")
+            or row.get("quote_amount") is not None
+            or row.get("invoice_date")
+            or row.get("date_design_completed")
+        ]
+        if len(candidates_with_non_tx_values) == 1:
+            logger.info(
+                "Hidden lookup matched subitem %s by non-transactional fallback candidate",
+                item_name,
+            )
+            return candidates_with_non_tx_values[0]
+
+        best_candidate = self._pick_best_scored_hidden_candidate(
+            candidates_with_non_tx_values,
+            self._non_transactional_hidden_score,
+        )
+        if best_candidate is not None:
+            logger.info(
+                "Hidden lookup matched subitem %s by scored non-transactional candidate",
+                item_name,
+            )
+            return best_candidate
+
+        if len(prefix_matches) == 1:
+            logger.info(
+                "Hidden lookup matched subitem %s by non-transactional prefix",
+                item_name,
+            )
+            return prefix_matches[0]
+
+        return None
+
+    def _collect_parent_ids(self, subitems_data: List[Dict]) -> List[str]:
+        return sorted(
+            {
+                str(row.get("parent_monday_id") or "").strip()
+                for row in (subitems_data or [])
+                if str(row.get("parent_monday_id") or "").strip()
+            }
+        )
+
+    def _collect_rollup_parent_ids(
+        self,
+        project_rows: Optional[List[Dict]] = None,
+        subitems_data: Optional[List[Dict]] = None,
+    ) -> List[str]:
+        project_ids = {
+            str(row.get("monday_id") or row.get("id") or "").strip()
+            for row in (project_rows or [])
+            if str(row.get("monday_id") or row.get("id") or "").strip()
+        }
+        subitem_parent_ids = set(self._collect_parent_ids(subitems_data or []))
+        return sorted(project_ids | subitem_parent_ids)
+
+    def _load_persisted_subitems_for_rollups(self, parent_ids: List[str]) -> List[Dict]:
+        rows: List[Dict] = []
+        if not parent_ids:
+            return rows
+
+        batch_size = 500
+        for start in range(0, len(parent_ids), batch_size):
+            batch = parent_ids[start : start + batch_size]
+            result = (
+                self.supabase_client.client.table("subitems")
+                .select(
+                    "parent_monday_id, item_name, "
+                    "cust_order_value_material, date_order_received, amount_invoiced, "
+                    "new_enquiry_value, reason_for_change, quote_amount, "
+                    "date_design_completed, invoice_date"
+                )
+                .in_("parent_monday_id", batch)
+                .execute()
+            )
+            rows.extend(result.data or [])
+
+        return rows
+
+    def _compute_project_rollups_from_persisted_subitems(
+        self,
+        parent_ids: List[str],
+    ) -> Tuple[Dict[str, float], Dict[str, str], Dict[str, float], Dict[str, float], Dict[str, int]]:
+        persisted_rows = self._load_persisted_subitems_for_rollups(parent_ids)
+
+        order_total_map, order_date_map = self._rollup_order_values_from_subitems(
+            persisted_rows
+        )
+        invoice_total_map = self._rollup_invoice_totals_from_subitems(persisted_rows)
+        new_enquiry_map = self._rollup_new_enquiry_from_subitems(persisted_rows)
+        gestation_map = self._compute_persisted_gestation_rollup_from_subitems(
+            persisted_rows
+        )
+
+        logger.info(
+            (
+                "Persisted subitem rollups computed | parents=%d subitems=%d "
+                "order_totals=%d order_dates=%d invoice_totals=%d new_enquiry=%d gestation=%d"
+            ),
+            len(parent_ids),
+            len(persisted_rows),
+            len(order_total_map),
+            len(order_date_map),
+            len(invoice_total_map),
+            len(new_enquiry_map),
+            len(gestation_map),
+        )
+
+        return (
+            order_total_map,
+            order_date_map,
+            invoice_total_map,
+            new_enquiry_map,
+            gestation_map,
+        )
+
+    def _compute_persisted_gestation_rollup_from_subitems(self, subitems_data: List[Dict]) -> Dict[str, int]:
+        design_date_map, invoice_date_map = self._rollup_design_invoice_dates_from_subitems(
+            subitems_data
+        )
+
+        gestation_map: Dict[str, int] = {}
+
+        for pid, design_date in design_date_map.items():
+            invoice_date = invoice_date_map.get(pid)
+            if not invoice_date:
+                continue
+
+            try:
+                design_dt = datetime.strptime(design_date, "%Y-%m-%d")
+                invoice_dt = datetime.strptime(invoice_date, "%Y-%m-%d")
+            except Exception:
+                continue
+
+            days = (invoice_dt - design_dt).days
+            if 0 < days <= 500000:
+                gestation_map[pid] = int(days)
+
+        return gestation_map
+
+    async def _batch_fill_missing_numeric_rollup_column(
+        self,
+        column: str,
+        values: Dict[str, Any],
+    ) -> int:
+        """Fill a numeric project column only when the current DB value is missing or <= 0."""
+        if not values:
+            return 0
+
+        updated = 0
+        batch_size = 500
+        parent_ids = [str(pid).strip() for pid in values.keys() if str(pid).strip()]
+
+        for start in range(0, len(parent_ids), batch_size):
+            batch = parent_ids[start : start + batch_size]
+            try:
+                result = (
+                    self.supabase_client.client.table("projects")
+                    .select(f"monday_id, {column}")
+                    .in_("monday_id", batch)
+                    .execute()
+                )
+                existing_rows = result.data or []
+            except Exception as e:
+                logger.error(f"Rollup fill read [{column}] failed for batch starting {start}: {e}")
+                continue
+
+            current_by_id = {
+                str(row.get("monday_id") or "").strip(): row.get(column)
+                for row in existing_rows
+                if str(row.get("monday_id") or "").strip()
+            }
+
+            for pid in batch:
+                new_val = self._parse_numeric_value(values.get(pid))
+                if new_val is None or float(new_val) <= 0:
+                    continue
+
+                current_val = self._parse_numeric_value(current_by_id.get(pid))
+                if current_val is not None and float(current_val) > 0:
+                    continue
+
+                try:
+                    self.supabase_client.client.table("projects") \
+                        .update(
+                            {
+                                column: float(new_val),
+                                "last_synced_at": datetime.now().isoformat(),
+                            }
+                        ) \
+                        .eq("monday_id", pid) \
+                        .execute()
+                    updated += 1
+                except Exception as e:
+                    logger.error(f"Rollup fill update [{column}] failed for {pid}: {e}")
+
+        if updated:
+            logger.info(f"Rollup fill [{column}]: {updated} projects updated")
+        return updated
+
+    async def _batch_fill_missing_gestation_rollup_column(
+        self,
+        values: Dict[str, Any],
+    ) -> int:
+        """Fill gestation_period only when the current DB value is missing or <= 0."""
+        if not values:
+            return 0
+
+        updated = 0
+        batch_size = 500
+        parent_ids = [str(pid).strip() for pid in values.keys() if str(pid).strip()]
+
+        for start in range(0, len(parent_ids), batch_size):
+            batch = parent_ids[start : start + batch_size]
+            try:
+                result = (
+                    self.supabase_client.client.table("projects")
+                    .select("monday_id, gestation_period")
+                    .in_("monday_id", batch)
+                    .execute()
+                )
+                existing_rows = result.data or []
+            except Exception as e:
+                logger.error(f"Rollup fill [gestation_period] read failed for batch starting {start}: {e}")
+                continue
+
+            current_by_id = {
+                str(row.get("monday_id") or "").strip(): row.get("gestation_period")
+                for row in existing_rows
+                if str(row.get("monday_id") or "").strip()
+            }
+
+            for pid in batch:
+                new_val = self._parse_gestation_period(values.get(pid))
+                if new_val is None or int(new_val) <= 0:
+                    continue
+
+                current_val = self._parse_gestation_period(current_by_id.get(pid))
+                if current_val is not None and int(current_val) > 0:
+                    continue
+
+                try:
+                    self.supabase_client.client.table("projects") \
+                        .update(
+                            {
+                                "gestation_period": int(new_val),
+                                "last_synced_at": datetime.now().isoformat(),
+                            }
+                        ) \
+                        .eq("monday_id", pid) \
+                        .execute()
+                    updated += 1
+                except Exception as e:
+                    logger.error(f"Rollup fill [gestation_period] update failed for {pid}: {e}")
+
+        if updated:
+            logger.info(f"Rollup fill [gestation_period]: {updated} projects updated")
+        return updated
+
+    async def _refresh_project_order_invoice_rollups(self, parent_ids: List[str]) -> int:
+        cleaned_parent_ids = sorted({pid for pid in parent_ids if pid})
+        if not cleaned_parent_ids:
+            return 0
+
+        (
+            order_total_map,
+            order_date_map,
+            invoice_total_map,
+            new_enquiry_map,
+            gestation_map,
+        ) = self._compute_project_rollups_from_persisted_subitems(cleaned_parent_ids)
+
+        updated = 0
+        for col, src_map in [
+            ("total_order_value", order_total_map),
+            ("total_amount_invoiced", invoice_total_map),
+            ("date_order_received", order_date_map),
+        ]:
+            updated += await self._batch_update_rollup_column(col, src_map)
+
+        updated += await self._batch_fill_missing_numeric_rollup_column(
+            "new_enquiry_value",
+            {
+                pid: val
+                for pid, val in new_enquiry_map.items()
+                if val is not None and float(val) > 0
+            },
+        )
+
+        updated += await self._batch_fill_missing_gestation_rollup_column(
+            {
+                pid: days
+                for pid, days in gestation_map.items()
+                if days is not None and int(days) > 0
+            }
+        )
+
+        logger.info(
+            "Persisted project rollup refresh complete | parents=%d field_updates=%d",
+            len(cleaned_parent_ids),
+            updated,
+        )
+        return updated
 
     # -----------------------------------------------------------------
     # Product-key normalisation helpers
     # -----------------------------------------------------------------
 
     def _normalize_text_key(self, value: Any) -> str:
-        """
-        Segmentation-key normaliser:
-        - stringify, lowercase, trim
-        - collapse slash spacing: 'EPS / PIR' -> 'eps/pir'
-        - collapse hyphen spacing: 'multi - fix' -> 'multi-fix'
-        - normalise parentheses spacing
-        - collapse whitespace
-        """
-        if value is None:
-            return ""
-        s = str(value).strip().lower()
-        if not s:
-            return ""
-        s = _RE_SLASH.sub("/", s)
-        s = _RE_HYPHEN.sub("-", s)
-        s = _RE_LPAREN.sub("(", s)
-        s = _RE_RPAREN.sub(")", s)
-        s = _RE_PAREN_SP.sub(" (", s)
-        s = _RE_WS.sub(" ", s)
-        return s
+        return normalize_text_key(value)
 
     def _get_product_alias_map(self) -> Dict[str, str]:
-        """Build alias lookup once per service instance, validating against canonical keys."""
         if self._product_alias_map is not None:
             return self._product_alias_map
-        m: Dict[str, str] = {}
-        for raw_k, raw_v in PRODUCT_TYPE_ALIASES.items():
-            nk = self._normalize_text_key(raw_k)
-            nv = self._normalize_text_key(raw_v)
-            if not nk or not nv:
-                continue
-            if nv not in CANONICAL_PRODUCT_KEYS:
-                logger.warning(
-                    f"Alias value '{raw_v}' (normalised: '{nv}') is not in "
-                    f"CANONICAL_PRODUCT_KEYS — skipping alias '{raw_k}'"
-                )
-                continue
-            m[nk] = nv
-        self._product_alias_map = m
-        return m
+        self._product_alias_map = dict(get_product_alias_map())
+        return self._product_alias_map
+
+    def _get_category_alias_map(self) -> Dict[str, str]:
+        if self._category_alias_map is not None:
+            return self._category_alias_map
+        self._category_alias_map = dict(get_category_alias_map())
+        return self._category_alias_map
 
     def _compute_product_key(self, product_type_raw: Any) -> str:
-        """
-        Derive a canonical product_key from a raw product_type string.
-        - Splits CSV tokens
-        - Normalises each token (lowercase, slash/hyphen/paren collapse)
-        - Maps via alias table → canonical key
-        - Deduplicates, sorts, joins
-        - Unmapped tokens are silently dropped
-        - Returns 'unknown' when product_type is non-empty but nothing maps
-        - Returns '' (empty) when product_type is empty/None
-        """
-        if product_type_raw is None:
-            return ""
-        raw = str(product_type_raw).strip()
-        if not raw:
-            return ""
-        alias_map = self._get_product_alias_map()
-        keys: Set[str] = set()
-        for part in _RE_CSV.split(raw):
-            if not part:
-                continue
-            token = self._normalize_text_key(part)
-            if not token:
-                continue
-            canonical = alias_map.get(token)
-            if canonical:
-                keys.add(canonical)
-            # Unmapped tokens are dropped to prevent combinatorial explosion
-        if not keys:
-            return "unknown"
-        return ", ".join(sorted(keys))
-
+        return compute_product_key(product_type_raw)
 
     async def perform_full_sync(self) -> Dict[str, Any]:
         logger.info("Starting full sync from Monday to Supabase")
@@ -142,9 +597,11 @@ class DataSyncService:
             parent_info = self.monday_client.get_board_info(PARENT_BOARD_ID)
             subitem_info = self.monday_client.get_board_info(SUBITEM_BOARD_ID)
             hidden_info = self.monday_client.get_board_info(HIDDEN_ITEMS_BOARD_ID)
-            logger.info(f"Boards to sync - Parent: {parent_info['items_count']}, "
-                        f"Subitems: {subitem_info['items_count']}, "
-                        f"Hidden: {hidden_info['items_count']}")
+            logger.info(
+                f"Boards to sync - Parent: {parent_info['items_count']}, "
+                f"Subitems: {subitem_info['items_count']}, "
+                f"Hidden: {hidden_info['items_count']}"
+            )
             parent_items = await self._extract_all_items(
                 PARENT_BOARD_ID,
                 list(PARENT_COLUMNS.values()),
@@ -152,12 +609,12 @@ class DataSyncService:
             )
             subitems = await self._extract_all_items(
                 SUBITEM_BOARD_ID,
-                list(SUBITEM_COLUMNS.values()),
+                get_subitems_extraction_columns(),
                 subitem_info['items_count']
             )
             hidden_items = await self._extract_all_items(
                 HIDDEN_ITEMS_BOARD_ID,
-                list(HIDDEN_ITEMS_COLUMNS.values()),
+                get_hidden_items_extraction_columns(),
                 hidden_info['items_count']
             )
             processed_data = self._process_and_resolve_mirrors(
@@ -167,17 +624,21 @@ class DataSyncService:
             subitems_data = self._transform_for_subitems_table(processed_data['subitems'])
             rollup_map = self._rollup_new_enquiry_from_subitems(subitems_data)
             gmap = self._compute_gestation_fallback_from_subitems(subitems_data)
-            order_total_map, order_date_map = self._rollup_order_values_from_subitems(subitems_data)
             design_date_map, invoice_date_map = self._rollup_design_invoice_dates_from_subitems(
                 subitems_data
             )
+            parent_ids_for_rollups = self._collect_rollup_parent_ids(
+                project_rows=processed_data["projects"],
+                subitems_data=subitems_data,
+            )
+
             projects_data = self._transform_for_projects_table(processed_data['projects'])
             self._apply_project_new_enquiry_rollup(projects_data, rollup_map)
             self._apply_project_gestation_fallback(projects_data, gmap)
-            self._apply_project_order_rollup(projects_data, order_total_map, order_date_map)
             self._apply_project_design_invoice_rollup(
                 projects_data, design_date_map, invoice_date_map
             )
+
             stats = {
                 'processed': len(projects_data) + len(subitems_data) + len(hidden_data),
                 'created': 0,
@@ -185,8 +646,11 @@ class DataSyncService:
                 'errors': 0
             }
             stats['updated'] += await self._batch_upsert_hidden_items(hidden_data)
-            stats['updated'] += await self._batch_upsert_projects(projects_data)
             stats['updated'] += await self._batch_upsert_subitems(subitems_data)
+            stats['updated'] += await self._batch_upsert_projects(projects_data)
+            stats['updated'] += await self._refresh_project_order_invoice_rollups(
+                parent_ids_for_rollups
+            )
             self.supabase_client.update_sync_log(parent_log_id, 'completed', stats)
             logger.info(f"Full sync completed. Stats: {stats}")
             return {"success": True, "stats": stats}
@@ -206,17 +670,33 @@ class DataSyncService:
         for item in projects:
             try:
                 # Fallbacks from hidden-items cache by project prefix (e.g., "17403")
-                prefix = (item.get('name') or item.get('item_name') or '').strip()
-                hidden_vals = list(self._hidden_lookup_by_name.values()) if hasattr(self, '_hidden_lookup_by_name') else []
-                related_hidden = [h for h in hidden_vals if isinstance(h.get('item_name'), str) and h.get('item_name', '').startswith(prefix + '_')] if prefix else []
+                prefix = (item.get("name") or item.get("item_name") or "").strip()
+
+                hidden_vals: List[Dict[str, Any]] = []
+                if hasattr(self, "_hidden_lookup_by_name"):
+                    seen_hidden_ids: Set[str] = set()
+                    for bucket in self._hidden_lookup_by_name.values():
+                        for hidden in bucket or []:
+                            hid = str(hidden.get("monday_id") or "").strip()
+                            if hid and hid in seen_hidden_ids:
+                                continue
+                            if hid:
+                                seen_hidden_ids.add(hid)
+                            hidden_vals.append(hidden)
+
+                related_hidden = [
+                    h for h in hidden_vals
+                    if isinstance(h.get("item_name"), str)
+                    and h.get("item_name", "").startswith(prefix + "_")
+                ] if prefix else []
 
                 # Compute fallback new_enquiry_value (sum of quotes with "New Enquiry")
                 fallback_nev = None
                 if related_hidden:
                     total = 0.0
                     for h in related_hidden:
-                        if (h.get('reason_for_change') or '').strip() == 'New Enquiry':
-                            qa = self._parse_numeric_value(h.get('quote_amount'))
+                        if (h.get("reason_for_change") or "").strip() == "New Enquiry":
+                            qa = self._parse_numeric_value(h.get("quote_amount"))
                             if qa:
                                 total += qa
                     fallback_nev = total if total > 0 else None
@@ -225,8 +705,8 @@ class DataSyncService:
                 fallback_gestation = None
                 if related_hidden:
                     try:
-                        design_dates = [d for d in (h.get('date_design_completed') for h in related_hidden) if d]
-                        invoice_dates = [d for d in (h.get('invoice_date') for h in related_hidden) if d]
+                        design_dates = [d for d in (h.get("date_design_completed") for h in related_hidden) if d]
+                        invoice_dates = [d for d in (h.get("invoice_date") for h in related_hidden) if d]
                         if design_dates and invoice_dates:
                             earliest_design = min(design_dates)
                             earliest_invoice = min(invoice_dates)
@@ -307,6 +787,11 @@ class DataSyncService:
                     'first_date_designed': self._parse_date_value(item.get('first_date_designed')),
                     'last_date_designed': self._parse_date_value(item.get('last_date_designed')),
                     'first_date_invoiced': self._parse_date_value(item.get('first_date_invoiced')),
+                    # NOTE: total_order_value, total_amount_invoiced, date_order_received
+                    # are NOT included here. They are purely subitem-derived rollups with
+                    # no parent-level source. Including them as None would overwrite existing
+                    # DB values via PostgREST batch key-union behaviour.
+                    # They are written in separate per-column upserts by the caller.
                     # Metadata
                     'last_synced_at': datetime.now().isoformat()
                 }
@@ -384,14 +869,14 @@ class DataSyncService:
 
             subitems = await self._extract_recent_items(
                 SUBITEM_BOARD_ID,
-                list(SUBITEM_COLUMNS.values()),
+                get_subitems_extraction_columns(),
                 limit=1000,
             )
             updated_items["subitems"] = self._filter_items_by_update_time(subitems, last_sync)
 
             hidden_items = await self._extract_recent_items(
                 HIDDEN_ITEMS_BOARD_ID,
-                list(HIDDEN_ITEMS_COLUMNS.values()),
+                get_hidden_items_extraction_columns(),
                 limit=1000,
             )
             updated_items["hidden"] = self._filter_items_by_update_time(hidden_items, last_sync)
@@ -507,10 +992,9 @@ class DataSyncService:
 
                 rollup_map: Dict[str, float] = {}
                 gmap: Dict[str, int] = {}
-                order_total_map: Dict[str, float] = {}
-                order_date_map: Dict[str, str] = {}
                 design_date_map: Dict[str, str] = {}
                 invoice_date_map: Dict[str, str] = {}
+                parent_ids_for_rollups: List[str] = []
 
                 if processed_data["hidden"]:
                     hidden_data = self._transform_for_hidden_table(processed_data["hidden"])
@@ -521,24 +1005,39 @@ class DataSyncService:
                     subitems_data = self._transform_for_subitems_table(processed_data["subitems"])
                     rollup_map = self._rollup_new_enquiry_from_subitems(subitems_data)
                     gmap = self._compute_gestation_fallback_from_subitems(subitems_data)
-                    order_total_map, order_date_map = self._rollup_order_values_from_subitems(subitems_data)
                     design_date_map, invoice_date_map = self._rollup_design_invoice_dates_from_subitems(
                         subitems_data
                     )
                     stats["updated"] += await self._batch_upsert_subitems(subitems_data)
                     stats["processed"] += len(subitems_data)
 
+                parent_ids_for_rollups = self._collect_rollup_parent_ids(
+                    project_rows=processed_data["projects"],
+                    subitems_data=subitems_data,
+                )
+
                 if processed_data["projects"]:
                     projects_data = self._transform_for_projects_table(processed_data["projects"])
                     self._apply_project_new_enquiry_rollup(projects_data, rollup_map)
                     self._apply_project_gestation_fallback(projects_data, gmap)
-                    self._apply_project_order_rollup(projects_data, order_total_map, order_date_map)
                     self._apply_project_design_invoice_rollup(
                         projects_data, design_date_map, invoice_date_map
                     )
                     stats["updated"] += await self._batch_upsert_projects(projects_data)
                     stats["processed"] += len(projects_data)
-                elif rollup_map or gmap or order_total_map or order_date_map or design_date_map or invoice_date_map:
+                    stats["updated"] += await self._refresh_project_order_invoice_rollups(
+                        parent_ids_for_rollups
+                    )
+                elif (
+                    rollup_map
+                    or gmap
+                    or design_date_map
+                    or invoice_date_map
+                    or parent_ids_for_rollups
+                ):
+                    stats["updated"] += await self._refresh_project_order_invoice_rollups(
+                        parent_ids_for_rollups
+                    )
                     patch = []
                     if rollup_map:
                         patch.extend(
@@ -559,26 +1058,6 @@ class DataSyncService:
                             }
                             for pid, val in gmap.items()
                             if val is not None and val > 0
-                        )
-                    if order_total_map:
-                        patch.extend(
-                            {
-                                "monday_id": pid,
-                                "total_order_value": val,
-                                "last_synced_at": datetime.now().isoformat(),
-                            }
-                            for pid, val in order_total_map.items()
-                            if val is not None
-                        )
-                    if order_date_map:
-                        patch.extend(
-                            {
-                                "monday_id": pid,
-                                "date_order_received": val,
-                                "last_synced_at": datetime.now().isoformat(),
-                            }
-                            for pid, val in order_date_map.items()
-                            if val
                         )
                     if design_date_map:
                         patch.extend(
@@ -613,6 +1092,7 @@ class DataSyncService:
                                     if k in (
                                         "new_enquiry_value",
                                         "gestation_period",
+                                        "total_amount_invoiced",
                                         "total_order_value",
                                         "date_order_received",
                                         "first_date_designed",
@@ -838,14 +1318,25 @@ class DataSyncService:
                     skipped_count += 1
                     continue
 
+                resolved_hidden_tx = self._resolve_hidden_for_subitem(normalized)
+                resolved_hidden_non_tx = self._resolve_hidden_for_subitem_non_transactional(
+                    normalized
+                )
+
+                resolved_hidden_id = str(
+                    (resolved_hidden_tx or {}).get("monday_id") or ""
+                ).strip()
+
                 reason = (normalized.get("reason_for_change") or "").strip()
-                if not reason and nm and nm in self._hidden_lookup_by_name:
-                    r = self._hidden_lookup_by_name[nm].get("reason_for_change")
+                if not reason and resolved_hidden_non_tx:
+                    r = resolved_hidden_non_tx.get("reason_for_change")
                     reason = (r or "").strip() if r is not None else ""
 
                 quote_val = self._parse_numeric_value(normalized.get("quote_amount"))
-                if quote_val is None and nm and nm in self._hidden_lookup_by_name:
-                    quote_val = self._hidden_lookup_by_name[nm].get("quote_amount")
+                if quote_val is None and resolved_hidden_non_tx:
+                    quote_val = self._parse_numeric_value(
+                        resolved_hidden_non_tx.get("quote_amount")
+                    )
                     if quote_val is not None:
                         logger.info(f"Enriched {nm} quote_amount: {quote_val}")
 
@@ -863,11 +1354,11 @@ class DataSyncService:
                         else:
                             new_enq_val = 0.0
 
-                hidden_id = normalized.get("hidden_item_id")
-                if not hidden_id and nm and nm in self._hidden_lookup_by_name:
-                    candidate = self._hidden_lookup_by_name[nm].get("monday_id")
-                    if candidate:
-                        hidden_id = candidate
+                hidden_id = (
+                    str(normalized.get("hidden_item_id") or "").strip()
+                    or resolved_hidden_id
+                    or None
+                )
 
                 if (not reason) and hidden_id:
                     hid = str(hidden_id)
@@ -876,43 +1367,51 @@ class DataSyncService:
                         reason = (r or "").strip() if r is not None else reason
 
                 date_design_completed = self._parse_date_value(
-                    normalized.get("date_design_completed_mirror") or normalized.get("date_design_completed")
+                    normalized.get("date_design_completed_mirror")
+                    or normalized.get("date_design_completed")
                 )
-                if not date_design_completed and nm and nm in self._hidden_lookup_by_name:
-                    date_design_completed = self._hidden_lookup_by_name[nm].get("date_design_completed")
-                if not date_design_completed and hidden_id:
-                    hid = str(hidden_id)
-                    if hid in self._hidden_lookup_by_id:
-                        date_design_completed = self._hidden_lookup_by_id[hid].get("date_design_completed")
-                date_design_completed = self._parse_date_value(date_design_completed)
+                if not date_design_completed and resolved_hidden_tx:
+                    date_design_completed = self._parse_date_value(
+                        resolved_hidden_tx.get("date_design_completed")
+                    )
 
                 invoice_date = self._parse_date_value(normalized.get("invoice_date"))
-                if not invoice_date and nm and nm in self._hidden_lookup_by_name:
-                    invoice_date = self._hidden_lookup_by_name[nm].get("invoice_date")
-                if not invoice_date and hidden_id:
-                    hid = str(hidden_id)
-                    if hid in self._hidden_lookup_by_id:
-                        invoice_date = self._hidden_lookup_by_id[hid].get("invoice_date")
-                invoice_date = self._parse_date_value(invoice_date)
+                if not invoice_date and resolved_hidden_tx:
+                    invoice_date = self._parse_date_value(
+                        resolved_hidden_tx.get("invoice_date")
+                    )
+
+                invoice_number = (normalized.get("invoice_number") or "").strip()
+                if not invoice_number and resolved_hidden_tx:
+                    invoice_number = str(
+                        resolved_hidden_tx.get("invoice_number") or ""
+                    ).strip()
+
+                amount_invoiced = self._parse_numeric_value(normalized.get("amount_invoiced"))
+                if amount_invoiced is None and resolved_hidden_tx:
+                    amount_invoiced = self._parse_numeric_value(
+                        resolved_hidden_tx.get("amount_invoiced")
+                    )
+                    if amount_invoiced is not None:
+                        logger.info(f"Enriched {nm} amount_invoiced: {amount_invoiced}")
 
                 date_order_received = self._parse_date_value(normalized.get("date_order_received"))
-                if not date_order_received and nm and nm in self._hidden_lookup_by_name:
-                    date_order_received = self._hidden_lookup_by_name[nm].get("date_order_received")
-                if not date_order_received and hidden_id:
-                    hid = str(hidden_id)
-                    if hid in self._hidden_lookup_by_id:
-                        date_order_received = self._hidden_lookup_by_id[hid].get("date_order_received")
-                date_order_received = self._parse_date_value(date_order_received)
+                if not date_order_received and resolved_hidden_tx:
+                    date_order_received = self._parse_date_value(
+                        resolved_hidden_tx.get("date_order_received")
+                    )
 
                 cust_order_value_material = self._parse_numeric_value(
                     normalized.get("cust_order_value_material")
                 )
-                if cust_order_value_material is None and nm and nm in self._hidden_lookup_by_name:
-                    cust_order_value_material = self._hidden_lookup_by_name[nm].get("cust_order_value_material")
-                if cust_order_value_material is None and hidden_id:
-                    hid = str(hidden_id)
-                    if hid in self._hidden_lookup_by_id:
-                        cust_order_value_material = self._hidden_lookup_by_id[hid].get("cust_order_value_material")
+                if cust_order_value_material is None and resolved_hidden_tx:
+                    cust_order_value_material = self._parse_numeric_value(
+                        resolved_hidden_tx.get("cust_order_value_material")
+                    )
+                    if cust_order_value_material is not None:
+                        logger.info(
+                            f"Enriched {nm} cust_order_value_material: {cust_order_value_material}"
+                        )
 
                 subitem = {
                     "monday_id": normalized.get("monday_id") or normalized.get("id") or item.get("id"),
@@ -947,12 +1446,36 @@ class DataSyncService:
                     "delivery_address": normalized.get("delivery_address", ""),
                     "date_received": self._parse_date_value(normalized.get("date_received")),
                     "date_design_completed": date_design_completed,
-                    "invoice_number": normalized.get("invoice_number", ""),
+                    "invoice_number": invoice_number,
                     "invoice_date": invoice_date,
                     "quote_amount": quote_val,
-                    "amount_invoiced": self._parse_numeric_value(normalized.get("amount_invoiced")),
+                    "amount_invoiced": amount_invoiced,
                     "last_synced_at": datetime.now().isoformat(),
                 }
+
+                if amount_invoiced is not None:
+                    logger.info(
+                        "Transformed %s amount_invoiced: %s (parent=%s)",
+                        nm,
+                        amount_invoiced,
+                        parent_id,
+                    )
+
+                if cust_order_value_material is not None:
+                    logger.info(
+                        "Transformed %s cust_order_value_material: %s (parent=%s)",
+                        nm,
+                        cust_order_value_material,
+                        parent_id,
+                    )
+
+                if date_order_received:
+                    logger.info(
+                        "Transformed %s date_order_received: %s (parent=%s)",
+                        nm,
+                        date_order_received,
+                        parent_id,
+                    )
 
                 transformed.append(subitem)
 
@@ -1021,10 +1544,34 @@ class DataSyncService:
                 }
 
                 try:
-                    if hidden.get("monday_id") is not None:
-                        self._hidden_lookup_by_id[str(hidden["monday_id"])] = hidden
-                    if hidden.get("item_name"):
-                        self._hidden_lookup_by_name[hidden["item_name"]] = hidden
+                    hidden_id = str(hidden.get("monday_id") or "").strip()
+                    item_name = str(hidden.get("item_name") or "").strip()
+                    normalized_name = self._normalize_hidden_name_key(item_name)
+                    prefix = (
+                        str(hidden.get("prefix") or "").strip()
+                        or self._leading_digits_from_name(item_name)
+                        or ""
+                    )
+
+                    if hidden_id:
+                        self._hidden_lookup_by_id[hidden_id] = hidden
+
+                    if item_name:
+                        bucket = self._hidden_lookup_by_name.setdefault(item_name, [])
+                        if hidden not in bucket:
+                            bucket.append(hidden)
+
+                    if normalized_name:
+                        bucket = self._hidden_lookup_by_normalized_name.setdefault(
+                            normalized_name, []
+                        )
+                        if hidden not in bucket:
+                            bucket.append(hidden)
+
+                    if prefix:
+                        bucket = self._hidden_lookup_by_prefix.setdefault(prefix, [])
+                        if hidden not in bucket:
+                            bucket.append(hidden)
                 except Exception as e:
                     logger.warning(f"Failed to update hidden lookup: {e}")
 
@@ -1079,19 +1626,72 @@ class DataSyncService:
         return str(type_value) if type_value else ""
 
     def _normalize_category(self, category_value: Any) -> str:
-        if isinstance(category_value, str) and category_value.isdigit():
-            return CATEGORY_LABELS.get(category_value, category_value)
-        return str(category_value) if category_value else ""
+        return normalize_category_value(category_value)
 
     def _parse_numeric_value(self, value: Any) -> Optional[float]:
-        if value is None or value == "":
+        if value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        if isinstance(value, dict):
+            for key in ("value", "text", "display_value", "amount", "numeric"):
+                parsed = self._parse_numeric_value(value.get(key))
+                if parsed is not None:
+                    return parsed
+            return None
+
+        if not isinstance(value, str):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        raw = value.strip()
+        if not raw:
+            return None
+
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+            raw = raw[1:-1].strip()
+            if not raw:
+                return None
+
+        if raw.startswith("{") and raw.endswith("}"):
+            try:
+                obj = json.loads(raw)
+                parsed = self._parse_numeric_value(obj)
+                if parsed is not None:
+                    return parsed
+            except Exception:
+                pass
+
+        clean = (
+            raw.replace("£", "")
+            .replace("$", "")
+            .replace("€", "")
+            .replace(",", "")
+            .strip()
+        )
+
+        if not clean:
+            return None
+
+        try:
+            return float(clean)
+        except (TypeError, ValueError):
+            pass
+
+        import re
+        match = re.search(r"-?\d+(?:\.\d+)?", clean)
+        if not match:
             return None
         try:
-            if isinstance(value, str):
-                clean_value = value.replace("£", "").replace(",", "").strip()
-                return float(clean_value) if clean_value else None
-            return float(value)
-        except (ValueError, TypeError):
+            return float(match.group(0))
+        except (TypeError, ValueError):
             return None
 
     def _parse_gestation_period(self, value: Any) -> Optional[int]:
@@ -1192,16 +1792,84 @@ class DataSyncService:
             if not pid:
                 continue
 
+            item_name = s.get("item_name") or s.get("name") or s.get("monday_id")
+
             val = self._parse_numeric_value(s.get("cust_order_value_material"))
             if val is not None:
                 totals[pid] = round(totals.get(pid, 0.0) + float(val), 2)
+                logger.info(
+                    "Order rollup input | parent=%s subitem=%s cust_order_value_material=%s running_total=%s",
+                    pid,
+                    item_name,
+                    val,
+                    totals[pid],
+                )
 
             d_dt = _to_dt(s.get("date_order_received"))
             if d_dt and (pid not in min_dates or d_dt < min_dates[pid]):
                 min_dates[pid] = d_dt
+                logger.info(
+                    "Order rollup input | parent=%s subitem=%s date_order_received=%s earliest=%s",
+                    pid,
+                    item_name,
+                    d_dt.date().isoformat(),
+                    min_dates[pid].date().isoformat(),
+                )
 
         min_date_map = {pid: dt.date().isoformat() for pid, dt in min_dates.items()}
+
+        for pid in sorted(set(totals) | set(min_date_map)):
+            logger.info(
+                "Order rollup output | parent=%s total_order_value=%s date_order_received=%s",
+                pid,
+                totals.get(pid),
+                min_date_map.get(pid),
+            )
+
+        logger.info(
+            "Order rollup computed: %d parents with order totals, %d with order dates (from %d subitems)",
+            len(totals), len(min_date_map), len(subitems_data or []),
+        )
         return totals, min_date_map
+    
+    def _rollup_invoice_totals_from_subitems(
+        self,
+        subitems_data: List[Dict]
+    ) -> Dict[str, float]:
+        totals: Dict[str, float] = {}
+
+        for s in subitems_data or []:
+            pid = s.get("parent_monday_id")
+            if not pid:
+                continue
+
+            item_name = s.get("item_name") or s.get("name") or s.get("monday_id")
+
+            val = self._parse_numeric_value(s.get("amount_invoiced"))
+            if val is None:
+                continue
+
+            totals[pid] = round(totals.get(pid, 0.0) + float(val), 2)
+            logger.info(
+                "Invoice rollup input | parent=%s subitem=%s amount_invoiced=%s running_total=%s",
+                pid,
+                item_name,
+                val,
+                totals[pid],
+            )
+
+        for pid in sorted(totals):
+            logger.info(
+                "Invoice rollup output | parent=%s total_amount_invoiced=%s",
+                pid,
+                totals[pid],
+            )
+
+        logger.info(
+            "Invoice rollup computed: %d parents with invoice totals (from %d subitems)",
+            len(totals), len(subitems_data or []),
+        )
+        return totals
 
     def _rollup_design_invoice_dates_from_subitems(
         self,
@@ -1278,6 +1946,34 @@ class DataSyncService:
                     except Exception:
                         p["first_date_invoiced"] = rolled_invoice
 
+    def _apply_project_invoice_total_rollup(
+        self,
+        projects_data: List[Dict],
+        total_map: Dict[str, float]
+    ) -> None:
+        if not projects_data or not total_map:
+            return
+
+        applied = 0
+        for p in projects_data:
+            pid = str(p.get("monday_id") or p.get("id") or "")
+            if not pid:
+                continue
+
+            rolled_total = total_map.get(pid)
+            if rolled_total is not None:
+                p["total_amount_invoiced"] = rolled_total
+                applied += 1
+                logger.info(
+                    "Rolled-up total_amount_invoiced for project %s: %.2f",
+                    pid, rolled_total,
+                )
+
+        logger.info(
+            "Invoice rollup applied: %d/%d projects received total_amount_invoiced",
+            applied, len(projects_data),
+        )
+    
     def _apply_project_order_rollup(
         self,
         projects_data: List[Dict],
@@ -1287,6 +1983,7 @@ class DataSyncService:
         if not projects_data or (not total_map and not min_date_map):
             return
 
+        applied = 0
         for p in projects_data:
             pid = str(p.get("monday_id") or p.get("id") or "")
             if not pid:
@@ -1294,23 +1991,27 @@ class DataSyncService:
 
             rolled_total = total_map.get(pid)
             if rolled_total is not None:
-                current_total = self._parse_numeric_value(p.get("total_order_value"))
-                if current_total is None or float(current_total) <= 0:
-                    p["total_order_value"] = rolled_total
+                p["total_order_value"] = rolled_total
+                applied += 1
+                logger.info(
+                    "Rolled-up total_order_value for project %s: %.2f",
+                    pid, rolled_total,
+                )
 
             rolled_date = min_date_map.get(pid)
             if rolled_date:
                 current_date = self._parse_date_value(p.get("date_order_received"))
-                if not current_date:
+                if not current_date or rolled_date < current_date:
                     p["date_order_received"] = rolled_date
-                else:
-                    try:
-                        cur_dt = datetime.strptime(current_date, "%Y-%m-%d")
-                        new_dt = datetime.strptime(rolled_date, "%Y-%m-%d")
-                        if new_dt < cur_dt:
-                            p["date_order_received"] = rolled_date
-                    except Exception:
-                        p["date_order_received"] = rolled_date
+                    logger.info(
+                        "Rolled-up date_order_received for project %s: %s",
+                        pid, rolled_date,
+                    )
+
+        logger.info(
+            "Order rollup applied: %d/%d projects received total_order_value",
+            applied, len(projects_data),
+        )
 
     def _apply_project_new_enquiry_rollup(self, projects_data: List[Dict], rollup_map: Dict[str, float]) -> None:
         if not projects_data or not rollup_map:
@@ -1329,13 +2030,7 @@ class DataSyncService:
         earliest_invoice: Dict[str, datetime] = {}
 
         def _get_hidden_for_sub(s: Dict) -> Optional[Dict]:
-            hid = s.get("hidden_item_id")
-            if hid and str(hid) in self._hidden_lookup_by_id:
-                return self._hidden_lookup_by_id[str(hid)]
-            nm = s.get("item_name") or s.get("name")
-            if nm and nm in self._hidden_lookup_by_name:
-                return self._hidden_lookup_by_name[nm]
-            return None
+            return self._resolve_hidden_for_subitem_non_transactional(s)
 
         for s in subitems_data or []:
             pid = s.get("parent_monday_id")
@@ -1404,6 +2099,30 @@ class DataSyncService:
                 logger.error(f"Error upserting projects batch: {e}")
 
         return total_updated
+    
+    async def _batch_update_rollup_column(
+        self, column: str, values: Dict[str, Any]
+    ) -> int:
+        """Update a single rollup column for existing projects using UPDATE (not upsert).
+
+        Uses .update().eq() to avoid NOT NULL constraint violations that occur
+        when upsert attempts an INSERT with only monday_id + one column.
+        """
+        updated = 0
+        for pid, val in values.items():
+            if val is None:
+                continue
+            try:
+                self.supabase_client.client.table("projects") \
+                    .update({column: val}) \
+                    .eq("monday_id", pid) \
+                    .execute()
+                updated += 1
+            except Exception as e:
+                logger.error(f"Rollup update [{column}] failed for {pid}: {e}")
+        if updated:
+            logger.info(f"Rollup update [{column}]: {updated} projects updated")
+        return updated
 
     async def _batch_upsert_subitems(self, subitems_data: List[Dict]) -> int:
         total_updated = 0

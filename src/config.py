@@ -6,7 +6,7 @@ Contains all board IDs, column mappings, and API settings.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, Dict, List
 
 # Load environment variables
 load_dotenv()
@@ -34,6 +34,10 @@ PARENT_BOARD_BATCH_SIZE = 100  # Reduced for complex main board
 SUBITEM_BOARD_BATCH_SIZE = 100  # Moderate for subitems
 HIDDEN_ITEMS_BATCH_SIZE = 100  # Keep high for simple hidden items board
 
+
+REHYDRATE_BATCH_PREFIX_LIMIT = 40 # Max batch size for prefix-based rehydration queries (keep small to avoid timeouts)
+REHYDRATE_CHUNK_SIZE = 40 # Chunk size for rehydration queries
+
 RATE_LIMIT_DELAY = 0.5  # Seconds between batches
 CACHE_EXPIRY_HOURS = 24  # Cache duration for label mappings
 MAX_RETRIES = 5  # Maximum number of retry attempts for API calls
@@ -43,7 +47,7 @@ MIN_SAMPLE_SIZE = 15  # Minimum sample size for statistical analysis
 
 # Numeric baseline weighting configuration
 TIME_WEIGHTING_ENABLED = True  # Prioritise recent projects in baseline stats
-TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay
+TIME_WEIGHTING_HALF_LIFE_DAYS = 730  # Two-year half-life for exponential decay (730)
 
 # =============================================================================
 # Product Type Segmentation Taxonomy
@@ -252,6 +256,8 @@ HIDDEN_ITEMS_COLUMNS = {
     'reason_for_change': 'dropdown2__1',
     'date_design_completed': 'date__1',
     'invoice_date': 'date42__1',
+    'invoice_number': 'invoice_number_mkm2nq6s',
+    'amount_invoiced': 'numbers56__1',
     'date_received': 'date4__1',
     'status': 'status__1',
     'project_attachments': 'files__1',
@@ -326,7 +332,8 @@ CATEGORY_LABELS = {
     "9": "Military",
     "10": "Mixed Use",
     "11": "Student Accommodation",
-    "12": "Consultancy"
+    "12": "Consultancy",
+    "13": "Datacentre",
 }
 
 
@@ -380,19 +387,210 @@ def get_lookback_days(preset: str = '5_years') -> Optional[int]:
 
 
 # ---------------------------------------------------------------------------
+# Invoice roll-up field contract utilities
+# ---------------------------------------------------------------------------
+
+INVOICE_ROLLUP_CONTRACT = {
+    "hidden_items": {
+        "item_id": "id",
+        "item_name": "name",
+        "amount_invoiced": "numbers56__1",
+        "invoice_date": "date42__1",
+        "invoice_number": "invoice_number_mkm2nq6s",
+    },
+    "subitems": {
+        "parent_project_id": "parent_item.id",
+        "hidden_item_link": "connect_boards8__1",
+        "item_name": "name",
+        "amount_invoiced": "mirror5__1",
+        "invoice_date": "mirror082__1",
+        "invoice_number": "mirror682__1",
+    },
+    "projects": {
+        "rollup_target": "total_amount_invoiced",
+    },
+}
+
+# Column IDs that exist on multiple boards but mean different things.
+# mirror5__1:
+#   - Parent board  -> total_order_value
+#   - Subitems board -> amount_invoiced
+AMBIGUOUS_CROSS_BOARD_COLUMN_IDS = frozenset({"mirror5__1"})
+
+
+def _build_board_scoped_column_to_field() -> Dict[str, Dict[str, str]]:
+    return {
+        PARENT_BOARD_ID: {column_id: field for field, column_id in PARENT_COLUMNS.items()},
+        SUBITEM_BOARD_ID: {column_id: field for field, column_id in SUBITEM_COLUMNS.items()},
+        HIDDEN_ITEMS_BOARD_ID: {column_id: field for field, column_id in HIDDEN_ITEMS_COLUMNS.items()},
+    }
+
+
+BOARD_SCOPED_COLUMN_TO_FIELD = _build_board_scoped_column_to_field()
+
+
+def resolve_board_scoped_field_name(board_id: Optional[str], column_id: str) -> Optional[str]:
+    """Resolve a Monday column ID to an internal field name with board scope."""
+    if not column_id:
+        return None
+
+    normalized_board_id = str(board_id) if board_id is not None else None
+
+    if normalized_board_id:
+        board_map = BOARD_SCOPED_COLUMN_TO_FIELD.get(normalized_board_id)
+        if board_map is not None:
+            return board_map.get(column_id)
+
+    # If board scope is unknown, never guess ambiguous IDs.
+    if column_id in AMBIGUOUS_CROSS_BOARD_COLUMN_IDS:
+        return None
+
+    # Safe fallback for non-ambiguous IDs only.
+    for candidate_board_id in (SUBITEM_BOARD_ID, PARENT_BOARD_ID, HIDDEN_ITEMS_BOARD_ID):
+        field_name = BOARD_SCOPED_COLUMN_TO_FIELD[candidate_board_id].get(column_id)
+        if field_name:
+            return field_name
+
+    return None
+
+
+def get_hidden_items_extraction_columns() -> List[str]:
+    """Columns that must always be requested for hidden-items extraction."""
+    columns = list(HIDDEN_ITEMS_COLUMNS.values())
+
+    required_hidden_invoice_columns = [
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["amount_invoiced"],
+    ]
+
+    for column_id in required_hidden_invoice_columns:
+        if column_id and column_id not in columns:
+            columns.append(column_id)
+
+    return columns
+
+def get_subitems_extraction_columns() -> List[str]:
+    """Columns that must always be requested for subitems extraction."""
+    columns = list(SUBITEM_COLUMNS.values())
+
+    required_subitem_invoice_columns = [
+        INVOICE_ROLLUP_CONTRACT["subitems"]["hidden_item_link"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["amount_invoiced"],
+    ]
+
+    for column_id in required_subitem_invoice_columns:
+        if column_id and column_id not in columns:
+            columns.append(column_id)
+
+    return columns
+
+def validate_invoice_rollup_contract() -> None:
+    """Fail-fast validation to lock invoice rollup semantics."""
+
+    required_sections = {"hidden_items", "subitems", "projects"}
+    missing_sections = required_sections - set(INVOICE_ROLLUP_CONTRACT.keys())
+    if missing_sections:
+        raise ValueError(
+            f"INVOICE_ROLLUP_CONTRACT missing sections: {sorted(missing_sections)}"
+        )
+
+    hidden_required = {"item_id", "item_name", "amount_invoiced", "invoice_date", "invoice_number"}
+    subitem_required = {
+        "parent_project_id",
+        "hidden_item_link",
+        "item_name",
+        "amount_invoiced",
+        "invoice_date",
+        "invoice_number",
+    }
+    project_required = {"rollup_target"}
+
+    missing_hidden = hidden_required - set(INVOICE_ROLLUP_CONTRACT["hidden_items"].keys())
+    missing_subitems = subitem_required - set(INVOICE_ROLLUP_CONTRACT["subitems"].keys())
+    missing_projects = project_required - set(INVOICE_ROLLUP_CONTRACT["projects"].keys())
+
+    if missing_hidden:
+        raise ValueError(f"INVOICE_ROLLUP_CONTRACT.hidden_items missing keys: {sorted(missing_hidden)}")
+    if missing_subitems:
+        raise ValueError(f"INVOICE_ROLLUP_CONTRACT.subitems missing keys: {sorted(missing_subitems)}")
+    if missing_projects:
+        raise ValueError(f"INVOICE_ROLLUP_CONTRACT.projects missing keys: {sorted(missing_projects)}")
+
+    parent_mirror5 = resolve_board_scoped_field_name(PARENT_BOARD_ID, "mirror5__1")
+    subitem_mirror5 = resolve_board_scoped_field_name(SUBITEM_BOARD_ID, "mirror5__1")
+
+    if parent_mirror5 != "total_order_value":
+        raise ValueError(
+            f"Parent mirror5__1 must map to total_order_value (got: {parent_mirror5})"
+        )
+
+    if subitem_mirror5 != "amount_invoiced":
+        raise ValueError(
+            f"Subitem mirror5__1 must map to amount_invoiced (got: {subitem_mirror5})"
+        )
+
+    expected_hidden_mappings = {
+        "invoice_date": INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_date"],
+        "invoice_number": INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_number"],
+        "amount_invoiced": INVOICE_ROLLUP_CONTRACT["hidden_items"]["amount_invoiced"],
+    }
+
+    for field_name, expected_column_id in expected_hidden_mappings.items():
+        actual_column_id = HIDDEN_ITEMS_COLUMNS.get(field_name)
+        if actual_column_id != expected_column_id:
+            raise ValueError(
+                f"HIDDEN_ITEMS_COLUMNS['{field_name}'] must be '{expected_column_id}' "
+                f"(got: {actual_column_id})"
+            )
+
+    hidden_extract_cols = set(get_hidden_items_extraction_columns())
+    subitem_extract_cols = set(get_subitems_extraction_columns())
+
+    required_hidden_extract = {
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["hidden_items"]["amount_invoiced"],
+    }
+
+    required_subitem_extract = {
+        INVOICE_ROLLUP_CONTRACT["subitems"]["hidden_item_link"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_date"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["invoice_number"],
+        INVOICE_ROLLUP_CONTRACT["subitems"]["amount_invoiced"],
+    }
+
+    missing_hidden_extract = required_hidden_extract - hidden_extract_cols
+    missing_subitem_extract = required_subitem_extract - subitem_extract_cols
+
+    if missing_hidden_extract:
+        raise ValueError(
+            f"Hidden extraction columns missing required IDs: {sorted(missing_hidden_extract)}"
+        )
+
+    if missing_subitem_extract:
+        raise ValueError(
+            f"Subitem extraction columns missing required IDs: {sorted(missing_subitem_extract)}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Gestation bias correction tuning
 # Support-aware, tier-aware shrinkage instead of flat additive uplift.
 # ---------------------------------------------------------------------------
 
-GESTATION_BIAS_CORRECTION_ENABLED = True
+GESTATION_BIAS_CORRECTION_ENABLED = False
 
 # Raw global weighted bias from historical diagnostics: (actual - expected).
 # Keep this as the uncapped historical signal.
-GESTATION_BIAS_GLOBAL_DAYS = 105
+# GESTATION_BIAS_GLOBAL_DAYS is the primary shrinkage anchor for supported segment and value-band corrections
+GESTATION_BIAS_GLOBAL_DAYS = 85
 
-# Conservative fallback used when segment support is weak.
-# This is the anchor that low-support segments shrink toward.
-GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 80
+# Conservative fallback used only for global-only or truly zero-support cases.
+# Supported low-support segments shrink toward GESTATION_BIAS_GLOBAL_DAYS; this fallback is reserved for global-only or zero-support cases.
+GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 72
 
 # Final adjustment formula still uses damping and a hard cap, but the raw bias
 # is now blended/shrunk first in numeric_analyzer.py.
@@ -402,7 +600,7 @@ GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = 80
 # - Slightly reduce cap from 60 -> 55
 # These are a bit more conservative and should help median error while still
 # correcting the strong underprediction bias.
-GESTATION_BIAS_DAMPING_FACTOR = 0.43
+GESTATION_BIAS_DAMPING_FACTOR = 0.62
 GESTATION_BIAS_MAX_ABS_DAYS = 55
 
 # Legacy threshold kept for compatibility / fallback defaults.
@@ -414,11 +612,11 @@ GESTATION_BIAS_MIN_SEGMENT_N = 20
 #
 # Higher values:
 # - trust segment bias less
-# - pull more strongly toward global fallback
+# - pull more strongly toward the primary global bias anchor for supported rows
 # - reduce overcorrection on sparse/noisy segments
 #
 # Recommended starting value: 30.0
-GESTATION_BIAS_SUPPORT_SHRINKAGE = 30.0
+GESTATION_BIAS_SUPPORT_SHRINKAGE = 14.0
 
 # Tier weights applied after segment/global blending and before damping.
 # These reduce broad type/category bias when the baseline came from a narrower
@@ -433,54 +631,332 @@ GESTATION_BIAS_SUPPORT_SHRINKAGE = 30.0
 #   5: global
 GESTATION_BIAS_TIER_WEIGHTS = {
     0: 0.50,
-    1: 0.65,
-    2: 0.85,
+    1: 0.75,
+    2: 0.90,
     3: 1.00,
     4: 0.90,
-    5: 0.75,
+    5: 0.80,
 }
 
 # Segment mean bias (days): actual_days - expected_days
 # These remain the historical raw segment signals before shrinkage.
 GESTATION_BIAS_BY_SEGMENT = {
-    ("Refurbishment", "Commercial"): 152,
-    ("New Build", "Health"): 150,
-    ("New Build", "Mixed Use"): 146,
-    ("New Build", "Apartments"): 138,
-    ("New Build", "Leisure"): 128,
-    ("Refurbishment", "Leisure"): 118,
-    ("New Build", "Industrial"): 112,
-    ("New Build", "Commercial"): 105,
-    ("New Build", "Education"): 105,
-    ("Refurbishment", "Apartments"): 95,
-    ("New Build", "Datacentre"): 89,
-    ("Refurbishment", "Health"): 88,
-    ("New Build", "House"): 82,
-    ("Refurbishment", "Education"): 82,
-    ("Refurbishment", "Industrial"): 51,
-    ("Refurbishment", "House"): 44,
-    ("New Build", "Consultancy"): 35,
+    ('New Build', 'Apartments'): 108,
+    ('New Build', 'Commercial'): 116,
+    ('New Build', 'Datacentre'): 65,
+    ('New Build', 'Education'): 92,
+    ('New Build', 'Health'): 69,
+    ('New Build', 'House'): 63,
+    ('New Build', 'Industrial'): 73,
+    ('New Build', 'Leisure'): 131,
+    ('New Build', 'Mixed Use'): 27,
+    ('Refurbishment', 'Apartments'): 58,
+    ('Refurbishment', 'Commercial'): 138,
+    ('Refurbishment', 'Education'): 62,
+    ('Refurbishment', 'Health'): 62,
+    ('Refurbishment', 'House'): 45,
+    ('Refurbishment', 'Leisure'): 80,
 }
 
 # Historical support counts for the segment-bias table above.
 # The new code prefers actual effective support from the live segment when
 # available, and falls back to these values when it is not.
 GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = {
-    ("Refurbishment", "Commercial"): 51,
-    ("New Build", "Health"): 38,
-    ("New Build", "Mixed Use"): 6,
-    ("New Build", "Apartments"): 186,
-    ("New Build", "Leisure"): 22,
-    ("Refurbishment", "Leisure"): 23,
-    ("New Build", "Industrial"): 9,
-    ("New Build", "Commercial"): 43,
-    ("New Build", "Education"): 39,
-    ("Refurbishment", "Apartments"): 78,
-    ("New Build", "Datacentre"): 8,
-    ("Refurbishment", "Health"): 27,
-    ("New Build", "House"): 68,
-    ("Refurbishment", "Education"): 109,
-    ("Refurbishment", "Industrial"): 6,
-    ("Refurbishment", "House"): 77,
-    ("New Build", "Consultancy"): 6,
+    ('New Build', 'Apartments'): 190,
+    ('New Build', 'Commercial'): 45,
+    ('New Build', 'Datacentre'): 8,
+    ('New Build', 'Education'): 46,
+    ('New Build', 'Health'): 39,
+    ('New Build', 'House'): 76,
+    ('New Build', 'Industrial'): 10,
+    ('New Build', 'Leisure'): 26,
+    ('New Build', 'Mixed Use'): 8,
+    ('Refurbishment', 'Apartments'): 79,
+    ('Refurbishment', 'Commercial'): 57,
+    ('Refurbishment', 'Education'): 110,
+    ('Refurbishment', 'Health'): 28,
+    ('Refurbishment', 'House'): 88,
+    ('Refurbishment', 'Leisure'): 23,
+}
+
+# Product-key refinement sits above coarse type×category correction in the
+# fallback chain and below the most specific product-key + value-band cells.
+GESTATION_BIAS_PRODUCT_KEY_ENABLED = True
+GESTATION_BIAS_PRODUCT_KEY_MIN_N = 10
+GESTATION_BIAS_PRODUCT_KEY_SHRINKAGE = 18.0
+
+# Static product-key bias table: (type, category, product_key) -> days.
+# Leave empty until refreshed by product-key-aware diagnostics.
+GESTATION_BIAS_BY_PRODUCT_KEY_SEGMENT = {
+    ('New Build', 'Apartments', 'hardrock'): 146,
+    ('New Build', 'Apartments', 'pir_tissue'): 55,
+    ('New Build', 'Commercial', 'pir_tissue'): 36,
+    ('New Build', 'Education', 'hardrock'): 123,
+    ('New Build', 'Education', 'pir_tissue'): 74,
+    ('New Build', 'Health', 'pir_tissue'): 75,
+    ('New Build', 'House', 'pir_tissue'): 57,
+    ('Refurbishment', 'Apartments', 'pir_tissue'): 22,
+    ('Refurbishment', 'Commercial', 'pir_tissue'): 85,
+    ('Refurbishment', 'Education', 'pir_prebonded'): 65,
+    ('Refurbishment', 'Education', 'pir_tissue'): 28,
+    ('Refurbishment', 'Education', 'pir_torchon'): 49,
+    ('Refurbishment', 'House', 'pir_tissue'): 34,
+    ('Refurbishment', 'Leisure', 'pir_tissue'): 50,
+}
+
+# Optional support counts for the table above.
+GESTATION_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = {
+    ('New Build', 'Apartments', 'hardrock'): 34,
+    ('New Build', 'Apartments', 'pir_tissue'): 81,
+    ('New Build', 'Commercial', 'pir_tissue'): 13,
+    ('New Build', 'Education', 'hardrock'): 19,
+    ('New Build', 'Education', 'pir_tissue'): 13,
+    ('New Build', 'Health', 'pir_tissue'): 13,
+    ('New Build', 'House', 'pir_tissue'): 37,
+    ('Refurbishment', 'Apartments', 'pir_tissue'): 46,
+    ('Refurbishment', 'Commercial', 'pir_tissue'): 24,
+    ('Refurbishment', 'Education', 'pir_prebonded'): 24,
+    ('Refurbishment', 'Education', 'pir_tissue'): 26,
+    ('Refurbishment', 'Education', 'pir_torchon'): 18,
+    ('Refurbishment', 'House', 'pir_tissue'): 55,
+    ('Refurbishment', 'Leisure', 'pir_tissue'): 14,
+}
+
+
+# ---------------------------------------------------------------------------
+# Per-segment outlier filtering (Tukey fences)
+# ---------------------------------------------------------------------------
+GESTATION_OUTLIER_FILTERING_ENABLED = True
+
+# Tukey fence multiplier: values beyond p75 + k*IQR (or below p25 - k*IQR)
+# are excluded before computing the baseline median.
+# 1.5 is the standard Tukey fence; use 2.0 for a more permissive filter.
+GESTATION_OUTLIER_IQR_MULTIPLIER = 3.0
+
+# Minimum raw samples required before IQR-based filtering is applied.
+# Below this threshold, the global (0, 1460) cap remains the only filter
+# to avoid discarding too much data from tiny segments.
+GESTATION_OUTLIER_MIN_SAMPLES = 12
+
+# ---------------------------------------------------------------------------
+# Variance-aware bias damping
+# ---------------------------------------------------------------------------
+GESTATION_VARIANCE_AWARE_DAMPING_ENABLED = True
+
+# Floor for the variance damping multiplier.  Even the noisiest segments
+# still receive at least this fraction of the configured damping factor.
+GESTATION_VARIANCE_DAMPING_FLOOR = 0.45
+
+
+# ---------------------------------------------------------------------------
+# Value-band segment bias correction (additive refinement on top of type×category)
+# ---------------------------------------------------------------------------
+GESTATION_BIAS_VALUE_BAND_ENABLED = True
+
+# Minimum closed-project events in a (type, category, value_band) cell before
+# its segment calibrator is trusted.  Below this, falls back to (type, category).
+GESTATION_BIAS_VALUE_BAND_MIN_N = 15
+
+# Shrinkage constant for value-band segments (higher = more conservative).
+# Works identically to GESTATION_BIAS_SUPPORT_SHRINKAGE but for the finer grain.
+GESTATION_BIAS_VALUE_BAND_SHRINKAGE = 20.0
+
+# Static value-band segment bias table: (type, category, value_band) -> days
+# Populated from historical diagnostics, same convention as GESTATION_BIAS_BY_SEGMENT.
+GESTATION_BIAS_BY_VALUE_BAND_SEGMENT = {
+    ('New Build', 'Apartments', 'Large (40-100k)'): 163,
+    ('New Build', 'Apartments', 'Medium (15-40k)'): 119,
+    ('New Build', 'Apartments', 'Small (<15k)'): 38,
+    ('New Build', 'Apartments', 'Zero'): 184,
+    ('New Build', 'Commercial', 'Small (<15k)'): 25,
+    ('New Build', 'Education', 'Small (<15k)'): -15,
+    ('New Build', 'Health', 'Small (<15k)'): 0,
+    ('New Build', 'House', 'Small (<15k)'): 60,
+    ('Refurbishment', 'Apartments', 'Small (<15k)'): 13,
+    ('Refurbishment', 'Commercial', 'Small (<15k)'): 122,
+    ('Refurbishment', 'Education', 'Large (40-100k)'): 127,
+    ('Refurbishment', 'Education', 'Medium (15-40k)'): 57,
+    ('Refurbishment', 'Education', 'Small (<15k)'): 13,
+    ('Refurbishment', 'Health', 'Small (<15k)'): 54,
+    ('Refurbishment', 'House', 'Small (<15k)'): 42,
+}
+
+# Sample sizes for the above table (optional, used as fallback when live support unavailable).
+GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
+    ('New Build', 'Apartments', 'Large (40-100k)'): 17,
+    ('New Build', 'Apartments', 'Medium (15-40k)'): 32,
+    ('New Build', 'Apartments', 'Small (<15k)'): 111,
+    ('New Build', 'Apartments', 'Zero'): 30,
+    ('New Build', 'Commercial', 'Small (<15k)'): 25,
+    ('New Build', 'Education', 'Small (<15k)'): 17,
+    ('New Build', 'Health', 'Small (<15k)'): 18,
+    ('New Build', 'House', 'Small (<15k)'): 64,
+    ('Refurbishment', 'Apartments', 'Small (<15k)'): 54,
+    ('Refurbishment', 'Commercial', 'Small (<15k)'): 38,
+    ('Refurbishment', 'Education', 'Large (40-100k)'): 24,
+    ('Refurbishment', 'Education', 'Medium (15-40k)'): 29,
+    ('Refurbishment', 'Education', 'Small (<15k)'): 41,
+    ('Refurbishment', 'Health', 'Small (<15k)'): 16,
+    ('Refurbishment', 'House', 'Small (<15k)'): 78,
+}
+
+# Most specific refinement: (type, category, product_key, value_band).
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED = True
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N = 15
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE = 24.0
+
+# Leave empty until refreshed by product-key-aware diagnostics.
+GESTATION_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = {
+    ('New Build', 'Apartments', 'pir_tissue', 'Small (<15k)'): 22,
+    ('New Build', 'House', 'pir_tissue', 'Small (<15k)'): 56,
+    ('Refurbishment', 'Commercial', 'pir_tissue', 'Small (<15k)'): 81,
+    ('Refurbishment', 'House', 'pir_tissue', 'Small (<15k)'): 38,
+}
+
+GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
+    ('New Build', 'Apartments', 'pir_tissue', 'Small (<15k)'): 61,
+    ('New Build', 'House', 'pir_tissue', 'Small (<15k)'): 35,
+    ('Refurbishment', 'Commercial', 'pir_tissue', 'Small (<15k)'): 19,
+    ('Refurbishment', 'House', 'pir_tissue', 'Small (<15k)'): 51,
+}
+
+
+# ---------------------------------------------------------------------------
+# Tail-aware gestation target
+# ---------------------------------------------------------------------------
+# Disabled by default in production code paths. Diagnostic scripts can
+# override this at runtime.
+GESTATION_TAIL_AWARE_TARGET_ENABLED = False
+
+# Profile options:
+# - "legacy": reproduces the broader p50 -> p60/p70 logic used in the first
+#   tail-aware experiment.
+# - "selective": current conservative logic with activation floors.
+GESTATION_TAIL_TARGET_PROFILE = "selective"
+
+# Global selective-profile defaults.
+GESTATION_TAIL_TARGET_CV_LOW = 1.05
+GESTATION_TAIL_TARGET_CV_HIGH = 1.45
+GESTATION_TAIL_TARGET_UPPER_TAIL_LOW = 140.0
+GESTATION_TAIL_TARGET_UPPER_TAIL_HIGH = 360.0
+GESTATION_TAIL_TARGET_SUPPORT_SHRINKAGE = 35.0
+GESTATION_TAIL_TARGET_MIN_BLEND = 0.12
+GESTATION_TAIL_TARGET_MIN_CV_SCORE = 0.35
+GESTATION_TAIL_TARGET_MIN_TAIL_SCORE = 0.50
+GESTATION_TAIL_TARGET_MIN_SUPPORT_SCORE = 0.30
+
+# Default selective target stays near p60. Segment overrides can increase this.
+GESTATION_TAIL_TARGET_MAX_QUANTILE = 0.60
+
+GESTATION_TAIL_TARGET_TIER_WEIGHTS = {
+    0: 0.55,
+    1: 0.75,
+    2: 0.90,
+    3: 1.00,
+    4: 0.90,
+    5: 0.80,
+}
+
+# Restrict selective tail-aware shifts to the segments that showed the clearest
+# benefit in the diagnostics. Leave empty to allow all segments.
+GESTATION_TAIL_TARGET_ALLOWED_SEGMENTS = [
+    ("New Build", "Apartments"),
+    ("Refurbishment", "Commercial"),
+]
+
+# Per-segment overrides layered on top of the selective profile. These allow
+# modestly stronger moves for the segments that benefited without broadening
+# the shift to the rest of the population.
+GESTATION_TAIL_TARGET_SEGMENT_OVERRIDES = {
+    ("New Build", "Apartments"): {
+        "min_blend": 0.08,
+        "min_cv_score": 0.30,
+        "min_tail_score": 0.40,
+        "support_shrinkage": 24.0,
+        "max_target_quantile": 0.65,
+    },
+    ("Refurbishment", "Commercial"): {
+        "min_blend": 0.10,
+        "min_cv_score": 0.30,
+        "min_tail_score": 0.45,
+        "support_shrinkage": 28.0,
+        "max_target_quantile": 0.62,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Post-tail additive calibration
+# ---------------------------------------------------------------------------
+# This is a separate calibrator for residual bias *after* tuned tail-aware
+# targeting. Keep it disabled by default until diagnostic runs produce a stable
+# table from tuned residuals.
+GESTATION_POST_TAIL_BIAS_CORRECTION_ENABLED = False
+
+# Intentionally neutral by default. Post-tail calibration should be segment-led,
+# not a new broad global uplift.
+GESTATION_POST_TAIL_BIAS_GLOBAL_DAYS = 0
+GESTATION_POST_TAIL_BIAS_GLOBAL_FALLBACK_DAYS = 0
+
+# Conservative defaults for a second-stage additive correction.
+GESTATION_POST_TAIL_BIAS_DAMPING_FACTOR = 0.45
+GESTATION_POST_TAIL_BIAS_MAX_ABS_DAYS = 30
+GESTATION_POST_TAIL_BIAS_SUPPORT_SHRINKAGE = 20.0
+
+# Seeded from the tuned tail-aware residual diagnostics for the narrow segments
+# that still showed persistent underprediction after selective tail targeting.
+GESTATION_POST_TAIL_BIAS_ALLOWED_SEGMENTS = [
+    ("New Build", "Apartments"),
+    ("Refurbishment", "Commercial"),
+]
+GESTATION_POST_TAIL_BIAS_BY_SEGMENT = {
+    ("New Build", "Apartments"): 101,
+    ("Refurbishment", "Commercial"): 133,
+}
+GESTATION_POST_TAIL_BIAS_SEGMENT_SAMPLE_SIZES = {
+    ("New Build", "Apartments"): 206,
+    ("Refurbishment", "Commercial"): 57,
+}
+
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_ENABLED = True
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_MIN_N = 10
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SHRINKAGE = 18.0
+GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_SEGMENT = {
+}
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = {
+}
+
+GESTATION_POST_TAIL_BIAS_TIER_WEIGHTS = {
+    0: 0.50,
+    1: 0.75,
+    2: 0.90,
+    3: 1.00,
+    4: 0.90,
+    5: 0.80,
+}
+
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_ENABLED = True
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_MIN_N = 15
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_SHRINKAGE = 20.0
+GESTATION_POST_TAIL_BIAS_BY_VALUE_BAND_SEGMENT = {
+    ("New Build", "Apartments", "Large (40-100k)"): 187,
+    ("New Build", "Apartments", "Medium (15-40k)"): 117,
+    ("New Build", "Apartments", "Small (<15k)"): 34,
+    ("New Build", "Apartments", "Zero"): 179,
+    ("Refurbishment", "Commercial", "Small (<15k)"): 126,
+}
+GESTATION_POST_TAIL_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
+    ("New Build", "Apartments", "Large (40-100k)"): 20,
+    ("New Build", "Apartments", "Medium (15-40k)"): 37,
+    ("New Build", "Apartments", "Small (<15k)"): 111,
+    ("New Build", "Apartments", "Zero"): 30,
+    ("Refurbishment", "Commercial", "Small (<15k)"): 43,
+}
+
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_ENABLED = True
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_MIN_N = 15
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SHRINKAGE = 24.0
+GESTATION_POST_TAIL_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = {
+}
+GESTATION_POST_TAIL_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {
 }

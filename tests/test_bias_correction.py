@@ -1,15 +1,25 @@
 """
-Test bias-corrected numeric baseline on closed projects (no LLM).
+Test numeric gestation bias correction on closed projects (no LLM adjustments).
 
-Runs AnalysisService.analyze_and_store(with_llm=False) for Won/Lost projects
-since a configurable cutoff, then prints before/after error metrics so you can
-verify the bias correction is working without waiting for an LLM backfill.
+For Won/Lost projects since a configurable cutoff, this script computes:
+- the raw pre-correction numeric gestation prediction
+- the bias-corrected numeric gestation prediction
+- the currently stored prediction in analysis_results for before/after comparison
+
+It then prints:
+- stored-vs-current paired metrics
+- raw-vs-corrected metrics for the current run
+- raw pre-correction bias tables suitable as calibration inputs
+- residual post-correction bias tables for monitoring only
+
+In live mode, the corrected numeric result is persisted to analysis_results.
+In dry-run mode, predictions are computed but not stored.
 
 Usage:
     python tests/test_bias_correction.py --dry-run --cutoff 2023-01-01
-    python tests/test_bias_correction.py                 # default: all eligible
-    python tests/test_bias_correction.py --limit 200     # quick spot-check
-    python tests/test_bias_correction.py --dry-run       # compute but don't persist
+    python tests/test_bias_correction.py
+    python tests/test_bias_correction.py --limit 200
+    python tests/test_bias_correction.py --dry-run
     python tests/test_bias_correction.py --cutoff 2024-01-01
 """
 
@@ -18,13 +28,17 @@ import logging
 import math
 import sys
 import time
+from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from collections import defaultdict
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+import src.core.numeric_analyzer as numeric_analyzer_module
+from src.core.normalization import compute_product_key, normalize_category_value
 from src.database.supabase_client import SupabaseClient
 from src.services.analysis_service import AnalysisService
 
@@ -39,6 +53,45 @@ logger = logging.getLogger("test_bias_correction")
 PAGE_SIZE = 500
 
 
+@contextmanager
+def temporary_gestation_bias_correction(enabled: bool):
+    """Temporarily toggle gestation bias correction for this single-threaded diagnostic."""
+    previous = numeric_analyzer_module.GESTATION_BIAS_CORRECTION_ENABLED
+    numeric_analyzer_module.GESTATION_BIAS_CORRECTION_ENABLED = enabled
+    try:
+        yield
+    finally:
+        numeric_analyzer_module.GESTATION_BIAS_CORRECTION_ENABLED = previous
+
+def analyze_raw_and_corrected(
+    svc: AnalysisService,
+    project: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Return both pre-correction and post-correction numeric outputs."""
+    with temporary_gestation_bias_correction(False):
+        raw_result = svc.analyze_project(project)
+
+    with temporary_gestation_bias_correction(True):
+        corrected_result = svc.analyze_project(project)
+
+    return {
+        "raw": raw_result,
+        "corrected": corrected_result,
+    }
+
+
+def normalized_project_category(project: Dict[str, Any]) -> str:
+    return normalize_category_value(project.get("category")) or project.get("category") or "?"
+
+
+def normalized_project_product_key(project: Dict[str, Any]) -> Optional[str]:
+    for raw_value in (project.get("product_key"), project.get("product_type")):
+        normalized = compute_product_key(raw_value)
+        if normalized and normalized != "unknown":
+            return normalized
+    return None
+
+
 def fetch_eligible_projects(
     db: SupabaseClient,
     cutoff: str,
@@ -51,7 +104,7 @@ def fetch_eligible_projects(
     while True:
         q = (
             db.client.table("projects")
-            .select("monday_id, type, category, gestation_period, status_category")
+            .select("monday_id, type, category, product_key, gestation_period, status_category, value_band")
             .gte("date_created", cutoff)
             .in_("status_category", ["Won", "Lost"])
             .gt("gestation_period", 0)
@@ -151,10 +204,102 @@ def compute_metrics(errors: List[float]) -> Dict[str, float]:
     }
 
 
+def _build_bias_tables_from_key(rows, key_builder, error_key="new_err", min_n=8):
+    buckets = defaultdict(list)
+    all_err = []
+
+    for r in rows:
+        err = r.get(error_key)
+        if err is None:
+            continue
+
+        key = key_builder(r)
+        if key is None:
+            continue
+
+        err_value = float(err)
+        buckets[key].append(err_value)
+        all_err.append(err_value)
+
+    seg_bias = {}
+    seg_n = {}
+
+    for seg, errs in buckets.items():
+        n = len(errs)
+        if n < min_n:
+            continue
+        seg_n[seg] = n
+        seg_bias[seg] = int(round(sum(errs) / n))
+
+    global_bias = int(round(sum(all_err) / len(all_err))) if all_err else 0
+    global_fallback = int(round(global_bias * 0.85))
+
+    return seg_bias, seg_n, global_bias, global_fallback
+
+
+def build_bias_tables(rows, error_key="new_err", min_n=8):
+    return _build_bias_tables_from_key(
+        rows,
+        key_builder=lambda row: (row.get("type") or "?", row.get("category") or "?"),
+        error_key=error_key,
+        min_n=min_n,
+    )
+
+
+def build_value_band_bias_tables(rows, error_key="new_err", min_n=15):
+    """Compute bias tables keyed on (type, category, value_band)."""
+    seg_bias, seg_n, _, _ = _build_bias_tables_from_key(
+        rows,
+        key_builder=lambda row: (
+            (row.get("type") or "?"),
+            (row.get("category") or "?"),
+            row.get("value_band"),
+        ) if row.get("value_band") else None,
+        error_key=error_key,
+        min_n=min_n,
+    )
+    return seg_bias, seg_n
+
+
+def build_product_key_bias_tables(rows, error_key="new_err", min_n=10):
+    """Compute bias tables keyed on (type, category, product_key)."""
+    seg_bias, seg_n, _, _ = _build_bias_tables_from_key(
+        rows,
+        key_builder=lambda row: (
+            (row.get("type") or "?"),
+            (row.get("category") or "?"),
+            row.get("product_key"),
+        ) if row.get("product_key") else None,
+        error_key=error_key,
+        min_n=min_n,
+    )
+    return seg_bias, seg_n
+
+
+def build_product_key_value_band_bias_tables(rows, error_key="new_err", min_n=15):
+    """Compute bias tables keyed on (type, category, product_key, value_band)."""
+    seg_bias, seg_n, _, _ = _build_bias_tables_from_key(
+        rows,
+        key_builder=lambda row: (
+            (row.get("type") or "?"),
+            (row.get("category") or "?"),
+            row.get("product_key"),
+            row.get("value_band"),
+        ) if row.get("product_key") and row.get("value_band") else None,
+        error_key=error_key,
+        min_n=min_n,
+    )
+    return seg_bias, seg_n
+
+
+
+
 def main():
     parser = argparse.ArgumentParser(description="Test bias-corrected analysis (numeric-only, no LLM)")
     parser.add_argument("--cutoff", default="2023-01-01", help="Earliest date_created (YYYY-MM-DD)")
     parser.add_argument("--limit", type=int, default=None, help="Max projects to process")
+    parser.add_argument("--product-key-min-n", type=int, default=10, help="Minimum rows for (type, category, product_key) calibration cells")
+    parser.add_argument("--product-key-value-band-min-n", type=int, default=15, help="Minimum rows for (type, category, product_key, value_band) calibration cells")
     parser.add_argument("--dry-run", action="store_true", help="Compute predictions but do not persist to analysis_results")
     parser.add_argument("--throttle", type=float, default=0.0, help="Seconds to sleep between projects")
     args = parser.parse_args()
@@ -180,6 +325,7 @@ def main():
     failed_ids: List[str] = []
     paired_old_errors: List[float] = []
     paired_new_errors: List[float] = []
+    all_raw_errors: List[float] = []
     all_new_errors: List[float] = []
     paired_improved = 0
     paired_worsened = 0
@@ -194,31 +340,41 @@ def main():
         proj_cat = proj.get("category", "?")
 
         try:
-            if args.dry_run:
-                full_proj = (
-                    db.client.table("projects")
-                    .select("*")
-                    .eq("monday_id", monday_id)
-                    .single()
-                    .execute()
-                    .data
-                )
-                if not full_proj:
-                    errs += 1
-                    failed_ids.append(monday_id)
-                    continue
-                result_data = svc.analyze_project(full_proj)
-                new_expected = result_data.get("expected_gestation_days")
-                success = new_expected is not None
-            else:
-                result = svc.analyze_and_store(monday_id, with_llm=False)
-                success = result.get("success", False)
-                new_expected = result.get("result", {}).get("expected_gestation_days") if success else None
+            full_proj = (
+                db.client.table("projects")
+                .select("*")
+                .eq("monday_id", monday_id)
+                .single()
+                .execute()
+                .data
+            )
+            if not full_proj:
+                errs += 1
+                failed_ids.append(monday_id)
+                continue
+
+            proj_type = full_proj.get("type") or proj_type
+            proj_cat = normalized_project_category(full_proj)
+            proj_product_key = normalized_project_product_key(full_proj)
+
+            run_pair = analyze_raw_and_corrected(svc, full_proj)
+            raw_result = run_pair["raw"]
+            corrected_result = run_pair["corrected"]
+
+            raw_expected = raw_result.get("expected_gestation_days")
+            new_expected = corrected_result.get("expected_gestation_days")
+            success = new_expected is not None
+
+            if success and not args.dry_run:
+                db.store_analysis_result(monday_id, corrected_result)
 
             if success and new_expected is not None:
                 ok += 1
                 old_expected = old_predictions.get(monday_id)
+                raw_err = actual - raw_expected if raw_expected is not None else None
                 new_err = actual - new_expected
+                if raw_err is not None:
+                    all_raw_errors.append(raw_err)
                 all_new_errors.append(new_err)
                 old_err = None
 
@@ -239,7 +395,11 @@ def main():
                     "monday_id": monday_id,
                     "type": proj_type,
                     "category": proj_cat,
+                    "product_key": proj_product_key,
+                    "value_band": proj.get("value_band"),
                     "actual": actual,
+                    "raw_expected": raw_expected,
+                    "raw_err": raw_err,
                     "old_expected": old_expected,
                     "new_expected": new_expected,
                     "old_err": old_err,
@@ -269,6 +429,7 @@ def main():
             time.sleep(args.throttle)
 
     paired_old_metrics = compute_metrics(paired_old_errors)
+    raw_metrics = compute_metrics(all_raw_errors)
     paired_new_metrics = compute_metrics(paired_new_errors)
     all_new_metrics = compute_metrics(all_new_errors)
 
@@ -312,7 +473,6 @@ def main():
                 f"{new_val:>16.1f} "
                 f"{delta:>+14.1f}"
             )
-
     print(f"  {'Paired sample size':<24} {paired_old_metrics['n']:>16} {paired_new_metrics['n']:>16}")
     print()
 
@@ -323,6 +483,29 @@ def main():
         print(f"  Paired rows unchanged: {paired_unchanged}/{paired_n} ({paired_unchanged/paired_n*100:.1f}%)")
         print()
 
+    print("  CURRENT RUN: RAW BASELINE VS BIAS-CORRECTED")
+    print(f"  {'Metric':<24} {'RAW':>16} {'CORRECTED':>16} {'Change':>14}")
+    print(f"  {'-'*24} {'-'*16} {'-'*16} {'-'*14}")
+    for label, key, is_pct in paired_metric_rows:
+        raw_val = raw_metrics.get(key, 0.0)
+        corrected_val = all_new_metrics.get(key, 0.0)
+        delta = corrected_val - raw_val
+        if is_pct:
+            print(
+                f"  {label:<24} "
+                f"{raw_val * 100:>15.1f}% "
+                f"{corrected_val * 100:>15.1f}% "
+                f"{delta * 100:>+13.1f}pp"
+            )
+        else:
+            print(
+                f"  {label:<24} "
+                f"{raw_val:>16.1f} "
+                f"{corrected_val:>16.1f} "
+                f"{delta:>+14.1f}"
+            )
+    print(f"  {'Sample size':<24} {raw_metrics['n']:>16} {all_new_metrics['n']:>16}")
+    print()
     print("  ALL NEW PREDICTIONS (coverage snapshot)")
     print(f"  Sample size:               {all_new_metrics['n']}")
     print(f"  MAE (days):                {all_new_metrics['mae']:.1f}")
@@ -344,16 +527,155 @@ def main():
 
     print()
     print("  TOP 10 LARGEST REMAINING ERRORS (after correction):")
-    print(f"  {'monday_id':<14} {'type':<16} {'category':<14} {'actual':>7} {'old':>7} {'new':>7} {'new_err':>8}")
-    print(f"  {'-'*14} {'-'*16} {'-'*14} {'-'*7} {'-'*7} {'-'*7} {'-'*8}")
+    print(f"  {'monday_id':<14} {'type':<16} {'category':<14} {'actual':>7} {'raw':>7} {'old':>7} {'new':>7} {'new_err':>8}")
+    print(f"  {'-'*14} {'-'*16} {'-'*14} {'-'*7} {'-'*7} {'-'*7} {'-'*7} {'-'*8}")
     sorted_rows = sorted(comparison_rows, key=lambda r: abs(r["new_err"]), reverse=True)
     for row in sorted_rows[:10]:
+        raw_str = str(row["raw_expected"]) if row["raw_expected"] is not None else "n/a"
         old_str = str(row["old_expected"]) if row["old_expected"] is not None else "n/a"
         print(
             f"  {row['monday_id']:<14} {row['type']:<16} {row['category']:<14} "
-            f"{row['actual']:>7} {old_str:>7} {row['new_expected']:>7} {row['new_err']:>+8}"
+            f"{row['actual']:>7} {raw_str:>7} {old_str:>7} {row['new_expected']:>7} {row['new_err']:>+8}"
         )
 
+    print("=" * 78)
+
+    # --- Raw pre-correction calibration tables ---
+    raw_seg_bias, raw_seg_n, raw_global_bias, raw_global_fallback = build_bias_tables(
+        comparison_rows,
+        error_key="raw_err",
+        min_n=8,
+    )
+    raw_vb_bias, raw_vb_n = build_value_band_bias_tables(
+        comparison_rows,
+        error_key="raw_err",
+        min_n=15,
+    )
+    raw_pk_bias, raw_pk_n = build_product_key_bias_tables(
+        comparison_rows,
+        error_key="raw_err",
+        min_n=max(1, args.product_key_min_n),
+    )
+    raw_pk_vb_bias, raw_pk_vb_n = build_product_key_value_band_bias_tables(
+        comparison_rows,
+        error_key="raw_err",
+        min_n=max(1, args.product_key_value_band_min_n),
+    )
+
+    print("\n" + "=" * 78)
+    print("RAW PRE-CORRECTION BIAS TABLES (paste into src/config.py)")
+    print("=" * 78)
+    print(f"GESTATION_BIAS_GLOBAL_DAYS = {raw_global_bias}")
+    print(f"GESTATION_BIAS_GLOBAL_FALLBACK_DAYS = {raw_global_fallback}")
+    print()
+    print("GESTATION_BIAS_BY_SEGMENT = {")
+    for (t, c), v in sorted(raw_seg_bias.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        print(f"    ({t!r}, {c!r}): {v},")
+    print("}")
+    print()
+    print("GESTATION_BIAS_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c), n in sorted(raw_seg_n.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        print(f"    ({t!r}, {c!r}): {n},")
+    print("}")
+    print()
+    print("GESTATION_BIAS_BY_PRODUCT_KEY_SEGMENT = {")
+    for (t, c, pk), v in sorted(raw_pk_bias.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}): {v},")
+    print("}")
+    print()
+    print("GESTATION_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c, pk), n in sorted(raw_pk_n.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}): {n},")
+    print("}")
+    print()
+    print("GESTATION_BIAS_BY_VALUE_BAND_SEGMENT = {")
+    for (t, c, vb), v in sorted(raw_vb_bias.items()):
+        print(f"    ({t!r}, {c!r}, {vb!r}): {v},")
+    print("}")
+    print()
+    print("GESTATION_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c, vb), n in sorted(raw_vb_n.items()):
+        print(f"    ({t!r}, {c!r}, {vb!r}): {n},")
+    print("}")
+    print()
+    print("GESTATION_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = {")
+    for (t, c, pk, vb), v in sorted(raw_pk_vb_bias.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}, {vb!r}): {v},")
+    print("}")
+    print()
+    print("GESTATION_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c, pk, vb), n in sorted(raw_pk_vb_n.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}, {vb!r}): {n},")
+    print("}")
+    print("=" * 78)
+
+    # --- Post-correction residual monitoring tables ---
+    residual_seg_bias, residual_seg_n, residual_global_bias, residual_global_fallback = build_bias_tables(
+        comparison_rows,
+        error_key="new_err",
+        min_n=8,
+    )
+    residual_vb_bias, residual_vb_n = build_value_band_bias_tables(
+        comparison_rows,
+        error_key="new_err",
+        min_n=15,
+    )
+    residual_pk_bias, residual_pk_n = build_product_key_bias_tables(
+        comparison_rows,
+        error_key="new_err",
+        min_n=max(1, args.product_key_min_n),
+    )
+    residual_pk_vb_bias, residual_pk_vb_n = build_product_key_value_band_bias_tables(
+        comparison_rows,
+        error_key="new_err",
+        min_n=max(1, args.product_key_value_band_min_n),
+    )
+
+    print("\n" + "=" * 78)
+    print("RESIDUAL BIAS AFTER CORRECTION (monitor only)")
+    print("=" * 78)
+    print(f"Residual global bias days:          {residual_global_bias}")
+    print(f"Residual global fallback days:      {residual_global_fallback}")
+    print()
+    print("RESIDUAL_BIAS_BY_SEGMENT = {")
+    for (t, c), v in sorted(residual_seg_bias.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        print(f"    ({t!r}, {c!r}): {v},")
+    print("}")
+    print()
+    print("RESIDUAL_BIAS_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c), n in sorted(residual_seg_n.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        print(f"    ({t!r}, {c!r}): {n},")
+    print("}")
+    print()
+    print("RESIDUAL_BIAS_BY_PRODUCT_KEY_SEGMENT = {")
+    for (t, c, pk), v in sorted(residual_pk_bias.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}): {v},")
+    print("}")
+    print()
+    print("RESIDUAL_BIAS_PRODUCT_KEY_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c, pk), n in sorted(residual_pk_n.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}): {n},")
+    print("}")
+    print()
+    print("RESIDUAL_BIAS_BY_VALUE_BAND_SEGMENT = {")
+    for (t, c, vb), v in sorted(residual_vb_bias.items()):
+        print(f"    ({t!r}, {c!r}, {vb!r}): {v},")
+    print("}")
+    print()
+    print("RESIDUAL_BIAS_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c, vb), n in sorted(residual_vb_n.items()):
+        print(f"    ({t!r}, {c!r}, {vb!r}): {n},")
+    print("}")
+    print()
+    print("RESIDUAL_BIAS_BY_PRODUCT_KEY_VALUE_BAND_SEGMENT = {")
+    for (t, c, pk, vb), v in sorted(residual_pk_vb_bias.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}, {vb!r}): {v},")
+    print("}")
+    print()
+    print("RESIDUAL_BIAS_PRODUCT_KEY_VALUE_BAND_SEGMENT_SAMPLE_SIZES = {")
+    for (t, c, pk, vb), n in sorted(residual_pk_vb_n.items()):
+        print(f"    ({t!r}, {c!r}, {pk!r}, {vb!r}): {n},")
+    print("}")
     print("=" * 78)
 
     if failed_ids:

@@ -48,6 +48,7 @@ CREATE TABLE projects (
 
     -- Order fields
     total_order_value NUMERIC(12, 2),
+    total_amount_invoiced NUMERIC(12, 2),
     date_order_received DATE,
     
     -- Feedback fields
@@ -147,6 +148,7 @@ CREATE TABLE hidden_items (
     date_project_won DATE,
     date_project_closed DATE,
     invoice_date DATE,
+    
     quote_amount NUMERIC(12, 2),
     material_value NUMERIC(12, 2),
     transport_cost NUMERIC(10, 2),
@@ -238,6 +240,10 @@ CREATE INDEX IF NOT EXISTS idx_projects_status_category ON projects (status_cate
 CREATE INDEX IF NOT EXISTS idx_projects_date_created ON projects (date_created);
 CREATE INDEX IF NOT EXISTS idx_projects_monday_id ON projects (monday_id);
 CREATE INDEX IF NOT EXISTS idx_projects_pipeline_stage ON projects (pipeline_stage);
+CREATE INDEX IF NOT EXISTS idx_projects_total_order_value ON projects (total_order_value);
+CREATE INDEX IF NOT EXISTS idx_projects_total_amount_invoiced ON projects (total_amount_invoiced);
+
+
 
 -- Subitems table indexes
 CREATE INDEX IF NOT EXISTS idx_subitems_parent ON subitems (parent_monday_id);
@@ -247,6 +253,7 @@ CREATE INDEX IF NOT EXISTS idx_subitems_hidden_item ON subitems (hidden_item_id)
 CREATE INDEX IF NOT EXISTS idx_hidden_items_monday_id ON hidden_items (monday_id);
 CREATE INDEX IF NOT EXISTS idx_hidden_items_date_received ON hidden_items (date_received);
 CREATE INDEX IF NOT EXISTS idx_hidden_items_invoice_date ON hidden_items (invoice_date);
+CREATE INDEX IF NOT EXISTS idx_hidden_items_invoice_number ON hidden_items (invoice_number);
 
 -- Analysis results indexes
 CREATE INDEX IF NOT EXISTS idx_analysis_project_id ON analysis_results (project_id);
@@ -555,14 +562,20 @@ project_base AS (
             ELSE 'Open'
         END AS stage_bucket,
 
-        COALESCE(NULLIF(p.total_order_value, 0), NULLIF(p.new_enquiry_value, 0), 0)::NUMERIC(12,2) AS contract_value,
+        CASE
+            WHEN p.pipeline_stage IN ('Won - Closed (Invoiced)', 'Won - Open (Order Received)', 'Won Via Other Ref')
+                THEN COALESCE(NULLIF(p.total_order_value, 0), NULLIF(p.new_enquiry_value, 0), 0)
+            WHEN p.pipeline_stage = 'Lost'
+                THEN COALESCE(NULLIF(p.new_enquiry_value, 0), NULLIF(p.total_order_value, 0), 0)
+            ELSE
+                COALESCE(NULLIF(p.new_enquiry_value, 0), NULLIF(p.total_order_value, 0), 0)
+        END::NUMERIC(12,2) AS contract_value,
 
         p.total_order_value,
         p.new_enquiry_value,
         p.probability_percent,
         p.date_order_received,
         p.expected_start_date,
-        p.follow_up_date,
         p.date_created,
 
         la.analysis_timestamp,
@@ -573,19 +586,17 @@ project_base AS (
 
         CASE
             WHEN p.date_order_received IS NOT NULL THEN p.date_order_received
-            WHEN p.expected_start_date IS NOT NULL THEN p.expected_start_date
-            WHEN p.follow_up_date IS NOT NULL THEN p.follow_up_date
             WHEN p.date_created IS NOT NULL AND la.expected_gestation_days IS NOT NULL
                 THEN (p.date_created + GREATEST(la.expected_gestation_days, 0))
+            WHEN p.expected_start_date IS NOT NULL THEN p.expected_start_date
             WHEN p.date_created IS NOT NULL THEN p.date_created
             ELSE CURRENT_DATE
         END AS forecast_date,
 
         CASE
             WHEN p.date_order_received IS NOT NULL THEN 'date_order_received'
-            WHEN p.expected_start_date IS NOT NULL THEN 'expected_start_date'
-            WHEN p.follow_up_date IS NOT NULL THEN 'follow_up_date'
             WHEN p.date_created IS NOT NULL AND la.expected_gestation_days IS NOT NULL THEN 'date_created_plus_expected_gestation_days'
+            WHEN p.expected_start_date IS NOT NULL THEN 'expected_start_date'
             WHEN p.date_created IS NOT NULL THEN 'date_created'
             ELSE 'current_date_default'
         END AS forecast_date_source
@@ -730,3 +741,180 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pipeline_forecast_monthly_12m_v1_unique
 
 CREATE INDEX IF NOT EXISTS idx_mv_pipeline_forecast_monthly_12m_v1_forecast_month
     ON mv_pipeline_forecast_monthly_12m_v1 (forecast_month);
+    
+
+-- ============================================================
+-- Enquiry Value Forecast Views (Power BI built-in forecasting)
+-- ============================================================
+
+CREATE OR REPLACE VIEW vw_actual_enquiry_monthly_v1 AS
+WITH latest_analysis AS (
+    SELECT
+        ar.project_id,
+        ar.expected_conversion_rate,
+        ROW_NUMBER() OVER (
+            PARTITION BY ar.project_id
+            ORDER BY ar.analysis_timestamp DESC NULLS LAST, ar.id DESC
+        ) AS rn
+    FROM analysis_results ar
+),
+enquiry_actuals AS (
+    SELECT
+        DATE_TRUNC('month', p.date_created)::DATE AS enquiry_month,
+        COUNT(*) AS project_count,
+        SUM(p.new_enquiry_value)::NUMERIC(14,2) AS actual_enquiry_value,
+        SUM(
+            p.new_enquiry_value *
+            GREATEST(0::NUMERIC, LEAST(1::NUMERIC, COALESCE(la.expected_conversion_rate, 0::NUMERIC)))
+        )::NUMERIC(14,2) AS actual_pipeline_value
+    FROM projects p
+    LEFT JOIN latest_analysis la
+        ON la.project_id = p.monday_id
+       AND la.rn = 1
+    WHERE p.date_created IS NOT NULL
+      AND COALESCE(p.new_enquiry_value, 0) > 0
+    GROUP BY 1
+),
+bounds AS (
+    SELECT
+        COALESCE(
+            (SELECT MIN(enquiry_month) FROM enquiry_actuals),
+            DATE_TRUNC('month', CURRENT_DATE)::DATE
+        ) AS min_month,
+        (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month')::DATE AS max_month
+),
+months AS (
+    SELECT
+        GENERATE_SERIES(
+            DATE_TRUNC('month', (SELECT min_month FROM bounds))::DATE,
+            (SELECT max_month FROM bounds),
+            INTERVAL '1 month'
+        )::DATE AS month_start
+)
+SELECT
+    m.month_start AS enquiry_month,
+    COALESCE(a.project_count, 0)::INTEGER AS project_count,
+    COALESCE(a.actual_enquiry_value, 0)::NUMERIC(14,2) AS actual_enquiry_value,
+    COALESCE(a.actual_pipeline_value, 0)::NUMERIC(14,2) AS actual_pipeline_value
+FROM months m
+LEFT JOIN enquiry_actuals a
+    ON a.enquiry_month = m.month_start
+ORDER BY m.month_start;
+
+
+CREATE OR REPLACE VIEW vw_enquiry_value_forecast_chart_v1 AS
+SELECT
+    enquiry_month AS month_start,
+    actual_pipeline_value AS actual_enquiry_value,
+    actual_enquiry_value AS gross_enquiry_value
+FROM vw_actual_enquiry_monthly_v1
+ORDER BY month_start;
+
+-- ============================================================
+-- Bookings(Contracted Value) Chart Views
+-- ============================================================
+
+-- Actual Bookings Monthly View: Uses total_order_value and date_order_received from the projects table
+
+CREATE OR REPLACE VIEW vw_actual_bookings_monthly_v1 AS
+WITH booking_actuals AS (
+    SELECT
+        DATE_TRUNC('month', p.date_order_received)::DATE AS booking_month,
+        COUNT(*) AS project_count,
+        SUM(p.total_order_value)::NUMERIC(14,2) AS actual_bookings
+    FROM projects p
+    WHERE p.date_order_received IS NOT NULL
+      AND COALESCE(p.total_order_value, 0) > 0
+      AND p.pipeline_stage IN (
+          'Won - Open (Order Received)',
+          'Won - Closed (Invoiced)',
+          'Won Via Other Ref'
+      )
+    GROUP BY 1
+),
+bounds AS (
+    SELECT
+        COALESCE(
+            (SELECT MIN(booking_month) FROM booking_actuals),
+            DATE_TRUNC('month', CURRENT_DATE)::DATE
+        ) AS min_month,
+        (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month')::DATE AS max_month
+),
+months AS (
+    SELECT
+        GENERATE_SERIES(
+            DATE_TRUNC('month', (SELECT min_month FROM bounds))::DATE,
+            (SELECT max_month FROM bounds),
+            INTERVAL '1 month'
+        )::DATE AS month_start
+)
+SELECT
+    m.month_start AS booking_month,
+    COALESCE(a.project_count, 0)::BIGINT AS project_count,
+    COALESCE(a.actual_bookings, 0)::NUMERIC(14,2) AS actual_bookings
+FROM months m
+LEFT JOIN booking_actuals a
+    ON a.booking_month = m.month_start
+ORDER BY m.month_start;
+
+
+CREATE OR REPLACE VIEW vw_bookings_forecast_chart_v1 AS
+SELECT
+    booking_month AS month_start,
+    actual_bookings
+FROM vw_actual_bookings_monthly_v1
+ORDER BY month_start;
+
+-- ==========================================================
+-- Revenue Forecast Views
+-- ==========================================================
+
+-- Actual Revenue Monthly View: Uses invoice_date and amount_invoiced from the subitems table
+CREATE OR REPLACE VIEW vw_actual_revenue_monthly_v1 AS
+WITH revenue_actuals AS (
+    SELECT
+        DATE_TRUNC('month', s.invoice_date)::DATE AS revenue_month,
+        COUNT(DISTINCT s.parent_monday_id) AS project_count,
+        COUNT(*) AS invoice_count,
+        SUM(s.amount_invoiced)::NUMERIC(14,2) AS actual_revenue
+    FROM subitems s
+    INNER JOIN projects p
+        ON p.monday_id = s.parent_monday_id
+    WHERE s.invoice_date IS NOT NULL
+      AND COALESCE(s.amount_invoiced, 0) > 0
+      AND p.pipeline_stage = 'Won - Closed (Invoiced)'
+    GROUP BY 1
+),
+bounds AS (
+    SELECT
+        COALESCE(
+            (SELECT MIN(revenue_month) FROM revenue_actuals),
+            DATE_TRUNC('month', CURRENT_DATE)::DATE
+        ) AS min_month,
+        (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month')::DATE AS max_month
+),
+months AS (
+    SELECT
+        GENERATE_SERIES(
+            DATE_TRUNC('month', (SELECT min_month FROM bounds))::DATE,
+            (SELECT max_month FROM bounds),
+            INTERVAL '1 month'
+        )::DATE AS month_start
+)
+SELECT
+    m.month_start AS revenue_month,
+    COALESCE(a.project_count, 0)::BIGINT AS project_count,
+    COALESCE(a.invoice_count, 0)::BIGINT AS invoice_count,
+    COALESCE(a.actual_revenue, 0)::NUMERIC(14,2) AS actual_revenue
+FROM months m
+LEFT JOIN revenue_actuals a
+    ON a.revenue_month = m.month_start
+ORDER BY m.month_start;
+
+
+CREATE OR REPLACE VIEW vw_revenue_forecast_chart_v1 AS
+SELECT
+    revenue_month AS month_start,
+    actual_revenue
+FROM vw_actual_revenue_monthly_v1
+ORDER BY month_start;

@@ -25,6 +25,12 @@ class StubNumericBaseline:
         self.analyze_calls = []
         self.segment_calls = []
 
+    def _gestation_support_stats(self, df, apply_time_weighting=False):
+        return {
+            "count": len(df),
+            "effective_n": float(len(df)),
+        }
+
     def analyze_project(
         self,
         project,
@@ -94,6 +100,7 @@ def _base_project(**overrides):
         "type": "Refurbishment",
         "category": "Healthcare",
         "product_type": "Modular",
+        "product_key": "pir_foil",
         "new_enquiry_value": 15000,
         "gestation_period": None,
         "pipeline_stage": None,
@@ -168,4 +175,32 @@ def test_build_segment_stats_reuses_numeric_baseline():
 
     assert stub_baseline.segment_calls, "Expected NumericBaseline.create_segment_statistics to be called"
     assert stats.sample_size == len(segment_df)
+
+
+def test_to_project_features_preserves_raw_product_type_and_canonical_product_key():
+    service = AnalysisService(db_client=DummyDBClient(), lookback_days=365)
+
+    project_features = service._to_project_features(_base_project())
+
+    assert project_features.category == "Health"
+    assert project_features.product_type == "Modular"
+    assert project_features.product_key == "pir_foil"
+
+
+def test_cluster_key_and_project_features_normalize_dirty_category_and_product_key():
+    service = AnalysisService(db_client=DummyDBClient(), lookback_days=365)
+    project = _base_project(
+        category="Education, Commercial",
+        product_type="Torch On PIR (Prebonded), Torch On PIR",
+        product_key="pir_prebonded, pir_torchon",
+    )
+
+    cluster_key = service._cluster_key(project)
+    project_features = service._to_project_features(project)
+
+    assert cluster_key["category"] == "Education"
+    assert cluster_key["product_type"] == "pir_prebonded"
+    assert project_features.category == "Education"
+    assert project_features.product_type == "Torch On PIR (Prebonded), Torch On PIR"
+    assert project_features.product_key == "pir_prebonded"
 

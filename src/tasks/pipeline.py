@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Deque, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 from ..config import (
@@ -18,6 +18,8 @@ from ..config import (
     HIDDEN_ITEMS_COLUMNS,
     SUBITEM_COLUMNS,
     PARENT_COLUMNS,
+    get_hidden_items_extraction_columns,
+    get_subitems_extraction_columns,
 )
 from ..database.supabase_client import SupabaseClient
 from ..database.sync_service import DataSyncService
@@ -84,7 +86,7 @@ class DeltaRehydrationManager:
             ", ".join(sorted(prefixes)),
         )
 
-        column_ids = list(HIDDEN_ITEMS_COLUMNS.values())
+        column_ids = get_hidden_items_extraction_columns()
 
         try:
             hidden_rows = self.monday.get_hidden_items_by_prefix(
@@ -326,17 +328,27 @@ class DeltaRehydrationManager:
     async def _collect_hidden_ids(self, prefixes: Set[str], log_id: Optional[str]) -> Dict[str, Any]:
         from collections import deque
 
-        pending = set(prefixes)
+        all_prefixes = set(prefixes)
+        matched_prefixes: Set[str] = set()
         collected: Set[str] = set()
 
-        column_ids = ["name"]
+        if not all_prefixes:
+            return {
+                "matched_ids": [],
+                "pages": 0,
+                "processed_total": 0,
+                "matched_prefixes": 0,
+                "unmatched_prefixes": 0,
+                "unmatched_prefix_values": [],
+            }
+
         cursor: Optional[str] = None
+        hidden_last_seen: Deque[str] = deque(maxlen=10)
+        ID_PAGE_SIZE = 100
         hidden_pages = 0
         hidden_processed = 0
-        hidden_last_seen: Deque[str] = deque(maxlen=10)
         start = datetime.utcnow()
         last_progress = start
-
         MAX_CONSECUTIVE_502 = 10
         STALL_WARNING_INTERVAL = timedelta(minutes=5)
         consecutive_502 = 0
@@ -352,7 +364,7 @@ class DeltaRehydrationManager:
                 .execute()
             )
             if prev.data:
-                meta = (prev.data[0].get("metadata") or {})
+                meta = prev.data[0].get("metadata") or {}
                 if meta.get("phase") == "hidden" and meta.get("last_cursor"):
                     cursor = meta.get("last_cursor")
                     hidden_pages = int(meta.get("pages") or 0)
@@ -365,29 +377,32 @@ class DeltaRehydrationManager:
         except Exception:
             pass
 
+        column_ids = ["name"]
+
         while True:
             try:
                 if cursor:
-                    page = self.monday.get_next_items_page(cursor, column_ids, limit=100)
+                    page = self.monday.get_next_items_page(cursor, column_ids, limit=ID_PAGE_SIZE)
                 else:
-                    page = self.monday.get_items_page(HIDDEN_ITEMS_BOARD_ID, column_ids, limit=100, cursor=None)
+                    page = self.monday.get_items_page(HIDDEN_ITEMS_BOARD_ID, column_ids, limit=ID_PAGE_SIZE, cursor=None)
             except Exception as exc:
                 msg = str(exc).lower()
 
                 if "cursorexpirederror" in msg or ("cursor" in msg and "expire" in msg):
-                    try:
-                        self.supabase.save_cursor_checkpoint(
-                            log_id,
-                            cursor,
-                            {
-                                "phase": "hidden",
-                                "pages": hidden_pages,
-                                "processed_total": hidden_processed,
-                                "last_seen_ring": list(hidden_last_seen),
-                            },
-                        )
-                    except Exception:
-                        pass
+                    if log_id:
+                        try:
+                            self.supabase.save_cursor_checkpoint(
+                                log_id,
+                                cursor,
+                                {
+                                    "phase": "hidden",
+                                    "pages": hidden_pages,
+                                    "processed_total": hidden_processed,
+                                    "last_seen_ring": list(hidden_last_seen),
+                                },
+                            )
+                        except Exception:
+                            pass
 
                     seed = self.monday.get_items_page(HIDDEN_ITEMS_BOARD_ID, column_ids, limit=1, cursor=None)
                     cursor = seed.get("next_cursor")
@@ -425,6 +440,7 @@ class DeltaRehydrationManager:
                             retry_sec = max(1, int(match.group(1)))
                     except Exception:
                         pass
+
                     self.logger.info("Hidden pagination hit rate limit; sleeping %ds", retry_sec)
                     await asyncio.sleep(retry_sec)
                     continue
@@ -433,7 +449,7 @@ class DeltaRehydrationManager:
                     consecutive_502 += 1
                     wait_for = 10 * min(consecutive_502, 6)
                     self.logger.warning(
-                        "[delta][hidden] 502 Bad Gateway (streak=%d) — sleeping %ds before retry",
+                        "[delta][hidden] 502 Bad Gateway (streak=%d) - sleeping %ds before retry",
                         consecutive_502,
                         wait_for,
                     )
@@ -472,9 +488,9 @@ class DeltaRehydrationManager:
                     continue
 
                 prefix = self._leading_digits(name)
-                if prefix and prefix in pending:
+                if prefix and prefix in all_prefixes:
                     collected.add(hid)
-                    pending.discard(prefix)
+                    matched_prefixes.add(prefix)
 
                 try:
                     hidden_last_seen.append(hid)
@@ -487,42 +503,49 @@ class DeltaRehydrationManager:
             self.hidden_ids_scanned = hidden_processed
             last_progress = datetime.utcnow()
 
+            unmatched_count = len(all_prefixes - matched_prefixes)
             elapsed = (datetime.utcnow() - start).total_seconds() or 1
             self.logger.info(
-                "[delta][hidden] pages=%d processed_total=%d matched=%d unmatched=%d rate=%.1f/s",
+                "[delta][hidden] pages=%d processed_total=%d matched_ids=%d matched_prefixes=%d unmatched_prefixes=%d rate=%.1f/s",
                 hidden_pages,
                 hidden_processed,
                 len(collected),
-                len(pending),
+                len(matched_prefixes),
+                unmatched_count,
                 hidden_processed / elapsed,
             )
 
             cursor = page.get("next_cursor")
-            try:
-                self.supabase.save_cursor_checkpoint(
-                    log_id,
-                    cursor,
-                    {
-                        "phase": "hidden",
-                        "pages": hidden_pages,
-                        "processed_total": hidden_processed,
-                        "last_seen_ring": list(hidden_last_seen),
-                    },
-                )
-            except Exception:
-                pass
+            if log_id:
+                try:
+                    self.supabase.save_cursor_checkpoint(
+                        log_id,
+                        cursor,
+                        {
+                            "phase": "hidden",
+                            "pages": hidden_pages,
+                            "processed_total": hidden_processed,
+                            "last_seen_ring": list(hidden_last_seen),
+                        },
+                    )
+                except Exception:
+                    pass
 
-            if not cursor or not pending:
+            # Important: do not stop when each prefix is seen once.
+            # Continue scanning until cursor is exhausted to collect all hidden rows for each prefix.
+            if not cursor:
                 break
 
             await asyncio.sleep(self.RATE_LIMIT_DELAY)
 
+        unmatched_values = sorted(all_prefixes - matched_prefixes)
         return {
             "matched_ids": list(collected),
             "pages": hidden_pages,
             "processed_total": hidden_processed,
-            "unmatched_prefixes": len(pending),
-            "unmatched_prefix_values": sorted(pending),
+            "matched_prefixes": len(matched_prefixes),
+            "unmatched_prefixes": len(unmatched_values),
+            "unmatched_prefix_values": unmatched_values,
         }
 
     async def _fast_forward_to_known_ids(
@@ -560,7 +583,7 @@ class DeltaRehydrationManager:
     async def _fetch_hidden_details(self, hidden_ids: Set[str]) -> List[Dict]:
         ids = list(hidden_ids)
         results: List[Dict] = []
-        column_ids = list(HIDDEN_ITEMS_COLUMNS.values())
+        column_ids = get_hidden_items_extraction_columns()
 
         for offset in range(0, len(ids), self.chunk_size):
             batch = ids[offset : offset + self.chunk_size]
@@ -579,7 +602,7 @@ class DeltaRehydrationManager:
 
     async def _rehydrate_batches(self, candidates: List[ProjectCandidate]) -> None:
         column_parent = list(PARENT_COLUMNS.values())
-        column_sub = list(SUBITEM_COLUMNS.values())
+        column_sub = get_subitems_extraction_columns()
         resume_index = 0
         processed_in_batch = 0
 
@@ -630,32 +653,31 @@ class DeltaRehydrationManager:
                 prefix = self._leading_digits(name)
                 if not prefix:
                     continue
-                for hidden_row in self._hidden_rows_by_prefix.get(prefix, []):
-                    hid = str(hidden_row.get("id") or hidden_row.get("monday_id") or "")
-                    if hid and hid in hidden_ids_used:
+                prefix_with_sep = prefix + "_"
+                for hname, hbucket in self.sync_service._hidden_lookup_by_name.items():
+                    if not (isinstance(hname, str) and hname.startswith(prefix_with_sep)):
                         continue
-                    hidden_stub.append(hidden_row)
-                    if hid:
-                        hidden_ids_used.add(hid)
+                    for hidden in hbucket or []:
+                        hid = str(hidden.get("monday_id") or hidden.get("id") or "").strip()
+                        if hid and hid in hidden_ids_used:
+                            continue
+                        hidden_stub.append(hidden)
+                        if hid:
+                            hidden_ids_used.add(hid)
 
             processed = self.sync_service._process_and_resolve_mirrors(parents, subitems, hidden_stub)
 
             subitems_data = self.sync_service._transform_for_subitems_table(processed["subitems"])
             rollup_map = self.sync_service._rollup_new_enquiry_from_subitems(subitems_data)
             gestation_map = self.sync_service._compute_gestation_fallback_from_subitems(subitems_data)
-            order_total_map, order_date_map = self.sync_service._rollup_order_values_from_subitems(
-                subitems_data
-            )
             design_date_map, invoice_date_map = self.sync_service._rollup_design_invoice_dates_from_subitems(
                 subitems_data
             )
+            parent_ids_for_rollups = [pid for pid in chunk_ids if pid]
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
             self.sync_service._apply_project_new_enquiry_rollup(projects_data, rollup_map)
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
-            self.sync_service._apply_project_order_rollup(
-                projects_data, order_total_map, order_date_map
-            )
             self.sync_service._apply_project_design_invoice_rollup(
                 projects_data, design_date_map, invoice_date_map
             )
@@ -665,6 +687,16 @@ class DeltaRehydrationManager:
 
             self.project_batches += 1
             await self.sync_service._batch_upsert_projects(projects_data)
+
+            rollup_updates = await self.sync_service._refresh_project_order_invoice_rollups(
+                parent_ids_for_rollups
+            )
+            if rollup_updates:
+                self.logger.info(
+                    "Persisted rollup refresh updated %d project fields",
+                    rollup_updates,
+                )
+
             self.projects_inserted += len(projects_data)
             self.logger.info(
                 "Chunk inserted | projects=%d subitems=%d new_project_rows=%d",
@@ -788,6 +820,7 @@ class RecentRehydrationManager:
         self.project_batches = 0
         self.project_rows_upserted = 0
         self.subitem_rows_upserted = 0
+        self.unmatched_prefixes: List[str] = []
 
     async def run(self) -> None:
         self.logger.info("Starting recent rehydrate run (since=%s)", self.since.date())
@@ -835,6 +868,26 @@ class RecentRehydrationManager:
             self.hidden_rows_upserted,
         )
 
+        if self.unmatched_prefixes:
+            # Map prefixes back to project names for readability
+            unmatched_projects = [
+                c for c in candidates
+                if c.prefix in set(self.unmatched_prefixes)
+            ]
+            self.logger.info(
+                "Unmatched prefixes (%d) — no hidden items found for these projects:",
+                len(self.unmatched_prefixes),
+            )
+            for proj in unmatched_projects:
+                self.logger.info(
+                    "  prefix=%s  monday_id=%s  name=%s",
+                    proj.prefix, proj.monday_id, proj.name,
+                )
+            if not unmatched_projects:
+                self.logger.info(
+                    "  Raw prefixes: %s", ", ".join(self.unmatched_prefixes)
+                )
+
         self.logger.info("Recent rehydrate completed successfully")
 
     async def _warm_hidden_cache(self, prefixes: Set[str]) -> None:
@@ -854,6 +907,7 @@ class RecentRehydrationManager:
             self.hidden_pages = stats.get("pages", 0)
             self.hidden_ids_scanned = stats.get("processed_total", 0)
             self.hidden_ids_matched = len(matched_ids)
+            self.unmatched_prefixes = stats.get("unmatched_prefix_values", [])
             if not matched_ids:
                 self.logger.warning(
                     "No hidden items matched requested prefixes; subitem fallback will rely on full cache"
@@ -914,7 +968,7 @@ class RecentRehydrationManager:
 
         self.logger.info("Using targeted hidden lookup for %d prefixes: %s", len(prefixes), prefixes)
 
-        column_ids = list(HIDDEN_ITEMS_COLUMNS.values())
+        column_ids = get_hidden_items_extraction_columns()
 
         try:
             # Query hidden items directly by prefix using contains_text
@@ -957,8 +1011,18 @@ class RecentRehydrationManager:
         from collections import deque
 
         all_prefixes = set(prefixes)
-        pending = set(prefixes)
+        matched_prefixes: Set[str] = set()
         collected: Set[str] = set()
+
+        if not all_prefixes:
+            return {
+                "matched_ids": [],
+                "pages": 0,
+                "processed_total": 0,
+                "matched_prefixes": 0,
+                "unmatched_prefixes": 0,
+                "unmatched_prefix_values": [],
+            }
 
         cursor: Optional[str] = None
         hidden_last_seen: Deque[str] = deque(maxlen=10)
@@ -1006,7 +1070,7 @@ class RecentRehydrationManager:
             except Exception as exc:
                 msg = str(exc).lower()
 
-                if "cursor" in msg and "expire" in msg:
+                if "cursorexpirederror" in msg or ("cursor" in msg and "expire" in msg):
                     if log_id:
                         try:
                             self.supabase.save_cursor_checkpoint(
@@ -1064,7 +1128,7 @@ class RecentRehydrationManager:
                     consecutive_502 += 1
                     wait_for = 10 * min(consecutive_502, 6)
                     self.logger.warning(
-                        "[rehydrate][hidden] 502 Bad Gateway (streak=%d) — sleeping %ds before retry",
+                        "[rehydrate][hidden] 502 Bad Gateway (streak=%d) - sleeping %ds before retry",
                         consecutive_502,
                         wait_for,
                     )
@@ -1106,7 +1170,7 @@ class RecentRehydrationManager:
                 prefix = self._leading_digits(name)
                 if prefix and prefix in all_prefixes:
                     collected.add(hid)
-                    pending.discard(prefix)
+                    matched_prefixes.add(prefix)
 
                 try:
                     hidden_last_seen.append(hid)
@@ -1116,17 +1180,20 @@ class RecentRehydrationManager:
             hidden_pages += 1
             hidden_processed += len(items)
             last_progress = datetime.utcnow()
+            self.hidden_pages = hidden_pages
+            self.hidden_ids_scanned = hidden_processed
+
+            unmatched_count = len(all_prefixes - matched_prefixes)
             elapsed = (datetime.utcnow() - start).total_seconds() or 1
             self.logger.info(
-                "[rehydrate][hidden] pages=%d processed_total=%d matched=%d unmatched=%d rate=%.1f/s",
+                "[rehydrate][hidden] pages=%d processed_total=%d matched_ids=%d matched_prefixes=%d unmatched_prefixes=%d rate=%.1f/s",
                 hidden_pages,
                 hidden_processed,
                 len(collected),
-                len(pending),
+                len(matched_prefixes),
+                unmatched_count,
                 hidden_processed / elapsed,
             )
-            self.hidden_pages = hidden_pages
-            self.hidden_ids_scanned = hidden_processed
 
             cursor = page.get("next_cursor")
             if log_id:
@@ -1144,23 +1211,28 @@ class RecentRehydrationManager:
                 except Exception:
                     pass
 
-            if not cursor or not pending:
+            # Important: continue until cursor is exhausted so all hidden rows are captured.
+            if not cursor:
                 break
 
             await asyncio.sleep(self.RATE_LIMIT_DELAY)
 
+        unmatched_values = sorted(all_prefixes - matched_prefixes)
+
         self.logger.info(
-            "Hidden ID scan finished: matched=%d, unmatched_prefixes=%d",
+            "Hidden ID scan finished: matched_ids=%d matched_prefixes=%d unmatched_prefixes=%d",
             len(collected),
-            len(pending),
+            len(matched_prefixes),
+            len(unmatched_values),
         )
 
         return {
             "matched_ids": list(collected),
             "pages": hidden_pages,
             "processed_total": hidden_processed,
-            "unmatched_prefixes": len(pending),
-            "unmatched_prefix_values": sorted(pending),
+            "matched_prefixes": len(matched_prefixes),
+            "unmatched_prefixes": len(unmatched_values),
+            "unmatched_prefix_values": unmatched_values,
         }
 
     async def _fast_forward_to_known_ids(
@@ -1198,7 +1270,7 @@ class RecentRehydrationManager:
     async def _fetch_hidden_details(self, hidden_ids: Set[str]) -> List[Dict]:
         ids = list(hidden_ids)
         results: List[Dict] = []
-        column_ids = list(HIDDEN_ITEMS_COLUMNS.values())
+        column_ids = get_hidden_items_extraction_columns()
 
         for offset in range(0, len(ids), self.chunk_size):
             batch = ids[offset : offset + self.chunk_size]
@@ -1217,12 +1289,12 @@ class RecentRehydrationManager:
 
     async def _rehydrate_batches(self, candidates: List[ProjectCandidate]) -> None:
         column_parent = list(PARENT_COLUMNS.values())
-        column_sub = list(SUBITEM_COLUMNS.values())
+        column_sub = get_subitems_extraction_columns()
 
         resume_index = 0
         processed_in_batch = 0
         total_processed = 0
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         while resume_index < len(candidates):
             chunk = candidates[resume_index : resume_index + self.chunk_size]
@@ -1254,34 +1326,37 @@ class RecentRehydrationManager:
             )
 
             hidden_stub: List[Dict] = []
+            hidden_ids_used: Set[str] = set()
             for item in parents:
                 name = (item.get("name") or "").strip()
                 prefix = self._leading_digits(name)
                 if not prefix:
                     continue
                 prefix_with_sep = prefix + "_"
-                for hname, hdata in self.sync_service._hidden_lookup_by_name.items():
-                    if isinstance(hname, str) and hname.startswith(prefix_with_sep):
-                        hidden_stub.append(hdata)
+                for hname, hbucket in self.sync_service._hidden_lookup_by_name.items():
+                    if not (isinstance(hname, str) and hname.startswith(prefix_with_sep)):
+                        continue
+                    for hidden in hbucket or []:
+                        hid = str(hidden.get("monday_id") or hidden.get("id") or "").strip()
+                        if hid and hid in hidden_ids_used:
+                            continue
+                        hidden_stub.append(hidden)
+                        if hid:
+                            hidden_ids_used.add(hid)
 
             processed = self.sync_service._process_and_resolve_mirrors(parents, subitems, hidden_stub)
 
             subitems_data = self.sync_service._transform_for_subitems_table(processed["subitems"])
             gestation_map = self.sync_service._compute_gestation_fallback_from_subitems(subitems_data)
             rollup_map = self.sync_service._rollup_new_enquiry_from_subitems(subitems_data)
-            order_total_map, order_date_map = self.sync_service._rollup_order_values_from_subitems(
-                subitems_data
-            )
             design_date_map, invoice_date_map = self.sync_service._rollup_design_invoice_dates_from_subitems(
                 subitems_data
             )
+            parent_ids_for_rollups = [pid for pid in chunk_ids if pid]
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
             self.sync_service._apply_project_new_enquiry_rollup(projects_data, rollup_map)
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
-            self.sync_service._apply_project_order_rollup(
-                projects_data, order_total_map, order_date_map
-            )
             self.sync_service._apply_project_design_invoice_rollup(
                 projects_data, design_date_map, invoice_date_map
             )
@@ -1294,8 +1369,17 @@ class RecentRehydrationManager:
             self.project_batches += 1
             self.project_rows_upserted += projects_written
 
+            rollup_updates = await self.sync_service._refresh_project_order_invoice_rollups(
+                parent_ids_for_rollups
+            )
+            if rollup_updates:
+                self.logger.info(
+                    "Persisted rollup refresh updated %d project fields",
+                    rollup_updates,
+                )
+
             total_processed += len(chunk_ids)
-            elapsed = (datetime.utcnow() - start_time).total_seconds() or 1
+            elapsed = (datetime.now(timezone.utc) - start_time).total_seconds() or 1
             self.logger.info(
                 (
                     "Chunk committed | range=%d-%d projects=%d subitems=%d "
@@ -1327,22 +1411,35 @@ class RecentRehydrationManager:
         self.logger.info("Processed %d candidate projects", len(candidates))
 
     def _load_candidate_projects(self) -> List[ProjectCandidate]:
-        try:
-            rows = (
-                self.supabase.client.table("projects")
-                .select("monday_id, item_name, project_name, date_created")
-                .gte("date_created", self.since.date().isoformat())
-                .order("date_created", desc=False)
-                .execute()
-                .data
-                or []
-            )
-        except Exception as exc:
-            self.logger.error("Failed to query Supabase projects: %s", exc)
-            return []
+        PAGE_SIZE = 1000
+        all_rows: list[dict] = []
+        offset = 0
+
+        while True:
+            try:
+                rows = (
+                    self.supabase.client.table("projects")
+                    .select("monday_id, item_name, project_name, date_created")
+                    .gte("date_created", self.since.date().isoformat())
+                    .order("date_created", desc=False)
+                    .range(offset, offset + PAGE_SIZE - 1)
+                    .execute()
+                    .data
+                    or []
+                )
+            except Exception as exc:
+                self.logger.error("Failed to query Supabase projects (offset=%d): %s", offset, exc)
+                break
+
+            all_rows.extend(rows)
+            self.logger.info("Loaded %d candidate rows (offset=%d, total=%d)", len(rows), offset, len(all_rows))
+
+            if len(rows) < PAGE_SIZE:
+                break
+            offset += PAGE_SIZE
 
         candidates: List[ProjectCandidate] = []
-        for row in rows:
+        for row in all_rows:
             monday_id = str(row.get("monday_id") or "").strip()
             if not monday_id:
                 continue
@@ -1350,6 +1447,7 @@ class RecentRehydrationManager:
             prefix = self._leading_digits(name)
             candidates.append(ProjectCandidate(monday_id, name, prefix))
 
+        self.logger.info("Total candidates loaded: %d", len(candidates))
         return candidates
 
     async def _retry(self, fn, *args, **kwargs):
@@ -1393,18 +1491,194 @@ class RecentRehydrationManager:
         return "".join(token) or None
 
 
+def _build_rehydrate_candidate_batches(
+    candidates: Sequence[ProjectCandidate],
+    batch_prefix_limit: int,
+) -> List[List[ProjectCandidate]]:
+    prefix_limit = max(1, int(batch_prefix_limit))
+    batches: List[List[ProjectCandidate]] = []
+    current_batch: List[ProjectCandidate] = []
+    current_prefixes: Set[str] = set()
+
+    for candidate in candidates:
+        batch_key = (candidate.prefix or candidate.monday_id or "").strip()
+        if not batch_key:
+            continue
+
+        if (
+            current_batch
+            and batch_key not in current_prefixes
+            and len(current_prefixes) >= prefix_limit
+        ):
+            batches.append(current_batch)
+            current_batch = []
+            current_prefixes = set()
+
+        current_batch.append(candidate)
+        current_prefixes.add(batch_key)
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+async def _rehydrate_candidates_batched(
+    candidates: Sequence[ProjectCandidate],
+    *,
+    batch_prefix_limit: int,
+    chunk_size: int,
+    logger: Optional[logging.Logger] = None,
+) -> None:
+    if not candidates:
+        return
+
+    log = logger or logging.getLogger(f"{__name__}.rehydrate_batched")
+    prefix_limit = max(1, int(batch_prefix_limit))
+    effective_chunk_size = max(1, int(chunk_size))
+    batches = _build_rehydrate_candidate_batches(candidates, prefix_limit)
+    unique_prefixes = {
+        (candidate.prefix or candidate.monday_id or "").strip()
+        for candidate in candidates
+        if (candidate.prefix or candidate.monday_id or "").strip()
+    }
+
+    log.info(
+        (
+            "Prepared %d prefix-limited rehydrate batches | "
+            "candidates=%d unique_prefixes=%d batch_prefix_limit=%d chunk_size=%d"
+        ),
+        len(batches),
+        len(candidates),
+        len(unique_prefixes),
+        prefix_limit,
+        effective_chunk_size,
+    )
+
+    attempted = 0
+    succeeded = 0
+    failed = 0
+    failed_ids: List[str] = []
+
+    for index, batch in enumerate(batches, start=1):
+        batch_ids = [candidate.monday_id for candidate in batch if candidate.monday_id]
+        if not batch_ids:
+            continue
+
+        batch_prefixes = sorted(
+            {
+                (candidate.prefix or candidate.monday_id or "").strip()
+                for candidate in batch
+                if (candidate.prefix or candidate.monday_id or "").strip()
+            }
+        )
+
+        log.info(
+            (
+                "Starting rehydrate batch %d/%d | projects=%d unique_prefixes=%d "
+                "first_id=%s last_id=%s attempted=%d/%d succeeded=%d failed=%d"
+            ),
+            index,
+            len(batches),
+            len(batch_ids),
+            len(batch_prefixes),
+            batch_ids[0],
+            batch_ids[-1],
+            attempted,
+            len(candidates),
+            succeeded,
+            failed,
+        )
+
+        attempted += len(batch_ids)
+
+        try:
+            await rehydrate_projects_by_ids(
+                batch_ids,
+                chunk_size=max(1, min(effective_chunk_size, len(batch_ids))),
+                logger=log,
+            )
+        except Exception:
+            failed += len(batch_ids)
+            failed_ids.extend(batch_ids)
+            log.exception(
+                "Rehydrate batch %d/%d failed | projects=%d first_id=%s last_id=%s",
+                index,
+                len(batches),
+                len(batch_ids),
+                batch_ids[0],
+                batch_ids[-1],
+            )
+            continue
+
+        succeeded += len(batch_ids)
+        log.info(
+            "Finished rehydrate batch %d/%d | attempted=%d/%d succeeded=%d failed=%d",
+            index,
+            len(batches),
+            attempted,
+            len(candidates),
+            succeeded,
+            failed,
+        )
+
+    if failed_ids:
+        unique_failed_ids = sorted(set(failed_ids))
+        log.warning(
+            "Batched rehydrate finished with failed project IDs (%d): %s",
+            len(unique_failed_ids),
+            ", ".join(unique_failed_ids),
+        )
+    else:
+        log.info(
+            "Batched rehydrate finished successfully | attempted=%d succeeded=%d",
+            attempted,
+            succeeded,
+        )
+
+
 async def rehydrate_delta(
     *,
     since: Optional[datetime] = None,
     days_back: int = 3,
     chunk_size: int = 100,
+    batch_prefix_limit: Optional[int] = None,
     logger: Optional[logging.Logger] = None,
 ) -> None:
     """Run the delta rehydrate flow for newly created Monday projects."""
 
     target_since = since or datetime.utcnow() - timedelta(days=days_back)
     manager = DeltaRehydrationManager(target_since, chunk_size=chunk_size, logger=logger)
-    await manager.run()
+
+    if batch_prefix_limit is None:
+        await manager.run()
+        return
+
+    log = manager.logger
+    log.info(
+        (
+            "Starting delta rehydrate via batched by-id flow "
+            "(since=%s batch_prefix_limit=%d chunk_size=%d)"
+        ),
+        target_since.date(),
+        max(1, int(batch_prefix_limit)),
+        max(1, int(chunk_size)),
+    )
+
+    supabase_ids = manager._load_existing_supabase_ids()
+    log.info("Supabase already has %d projects on/after cutoff", len(supabase_ids))
+
+    candidates = await manager._discover_new_monday_projects(supabase_ids)
+    if not candidates:
+        log.info("No new Monday projects found after %s", target_since.date())
+        return
+
+    await _rehydrate_candidates_batched(
+        candidates,
+        batch_prefix_limit=max(1, int(batch_prefix_limit)),
+        chunk_size=max(1, int(chunk_size)),
+        logger=log,
+    )
 
 
 async def rehydrate_recent(
@@ -1412,13 +1686,43 @@ async def rehydrate_recent(
     since: Optional[datetime] = None,
     days_back: int = 3,
     chunk_size: int = 100,
+    batch_prefix_limit: Optional[int] = None,
     logger: Optional[logging.Logger] = None,
 ) -> None:
     """Run the recent rehydrate flow for Supabase projects after a cutoff."""
 
     target_since = since or datetime.utcnow() - timedelta(days=days_back)
     manager = RecentRehydrationManager(target_since, chunk_size=chunk_size, logger=logger)
-    await manager.run()
+
+    if batch_prefix_limit is None:
+        await manager.run()
+        return
+
+    log = manager.logger
+    log.info(
+        (
+            "Starting recent rehydrate via batched by-id flow "
+            "(since=%s batch_prefix_limit=%d chunk_size=%d)"
+        ),
+        target_since.date(),
+        max(1, int(batch_prefix_limit)),
+        max(1, int(chunk_size)),
+    )
+
+    candidates = manager._load_candidate_projects()
+    if not candidates:
+        log.info(
+            "No Supabase projects found with date_created >= %s",
+            target_since.date(),
+        )
+        return
+
+    await _rehydrate_candidates_batched(
+        candidates,
+        batch_prefix_limit=max(1, int(batch_prefix_limit)),
+        chunk_size=max(1, int(chunk_size)),
+        logger=log,
+    )
 
 
 async def rehydrate_projects_by_ids(

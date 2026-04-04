@@ -85,6 +85,7 @@ class ProjectFeatures(BaseModel):
     type: Optional[str] = None
     category: Optional[str] = None
     product_type: Optional[str] = None
+    product_key: Optional[str] = None
     new_enquiry_value: float = Field(default=0.0, ge=0)
     gestation_period: Optional[int] = Field(default=None, ge=0)
     pipeline_stage: Optional[str] = None
@@ -151,14 +152,16 @@ class NumericPredictions(BaseModel):
     expected_gestation_days: Optional[int] = None
     gestation_confidence: float = Field(default=0.0, ge=0, le=1)
     gestation_range: Dict[str, int] = Field(default_factory=dict)
-    
+    gestation_prediction_interval: Dict[str, Optional[int]] = Field(default_factory=dict)
+    gestation_cv: Optional[float] = Field(default=None, ge=0)
+
     expected_conversion_rate: float = Field(default=0.5, ge=0, le=1)
     conversion_method: str = Field(default="inclusive")
     conversion_confidence: float = Field(default=0.0, ge=0, le=1)
-    
+
     rating_score: int = Field(default=50, ge=1, le=100)
     rating_components: Dict[str, Any] = Field(default_factory=dict)
-    
+
     segment_statistics: Optional[SegmentStatistics] = None
 
 class ProjectAnalysisInput(BaseModel):

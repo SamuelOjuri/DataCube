@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +7,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, List
 import time
 from collections import defaultdict
 
@@ -22,6 +21,7 @@ from ..config import (
     HIDDEN_ITEMS_BOARD_ID,
     PARENT_COLUMNS,
     SUBITEM_COLUMNS,
+    HIDDEN_ITEMS_COLUMNS,
     WEBHOOK_RATE_LIMIT_MAX_REQUESTS,
     WEBHOOK_RATE_LIMIT_WINDOW_SECONDS,
     WEBHOOK_DUPLICATE_TTL_SECONDS,
@@ -66,25 +66,256 @@ def _queue_push_job(project_id: str, reason: str) -> None:
         logger.warning("Failed to enqueue Monday sync for %s: %s", project_id, exc)
 
 
-def _lookup_parents_for_hidden(hidden_item_id: str) -> Set[str]:
+HIDDEN_SUBITEM_FALLBACK_LIMIT = 250
+HIDDEN_PROJECT_FALLBACK_LIMIT = 100
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _load_hidden_snapshot(hidden_item_id: str) -> Optional[Dict[str, Any]]:
     try:
         rows = (
-            supabase_client.client.table('subitems')
-            .select('parent_monday_id')
-            .eq('hidden_item_id', hidden_item_id)
+            supabase_client.client.table("hidden_items")
+            .select("monday_id, item_name, prefix")
+            .eq("monday_id", hidden_item_id)
+            .limit(1)
             .execute()
             .data
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to map hidden item %s to parents: %s", hidden_item_id, exc)
+        logger.warning("Failed to load hidden item snapshot for %s: %s", hidden_item_id, exc)
+        return None
+
+    return rows[0] if rows else None
+
+
+def _collect_parent_ids_from_rows(rows: List[Dict[str, Any]]) -> Set[str]:
+    return {
+        str(row.get("parent_monday_id"))
+        for row in rows
+        if row.get("parent_monday_id")
+    }
+
+
+def _lookup_parents_for_hidden(
+    hidden_item_id: str,
+    *,
+    extra_names: Optional[Set[str]] = None,
+    extra_prefixes: Optional[Set[str]] = None,
+) -> Set[str]:
+    matched_parent_ids: Set[str] = set()
+    candidate_names: Set[str] = {_clean_text(v) for v in (extra_names or set()) if _clean_text(v)}
+    candidate_prefixes: Set[str] = {_clean_text(v) for v in (extra_prefixes or set()) if _clean_text(v)}
+
+    hidden_snapshot = _load_hidden_snapshot(hidden_item_id)
+    if hidden_snapshot:
+        snapshot_name = _clean_text(hidden_snapshot.get("item_name"))
+        if snapshot_name:
+            candidate_names.add(snapshot_name)
+
+        snapshot_prefix = (
+            _clean_text(hidden_snapshot.get("prefix"))
+            or sync_service._leading_digits_from_name(snapshot_name)
+            or ""
+        )
+        if snapshot_prefix:
+            candidate_prefixes.add(snapshot_prefix)
+
+    for name in list(candidate_names):
+        derived_prefix = sync_service._leading_digits_from_name(name)
+        if derived_prefix:
+            candidate_prefixes.add(derived_prefix)
+
+    normalized_names = {
+        sync_service._normalize_hidden_name_key(name)
+        for name in candidate_names
+        if name
+    }
+
+    try:
+        direct_rows = (
+            supabase_client.client.table("subitems")
+            .select("parent_monday_id, item_name, hidden_item_id")
+            .eq("hidden_item_id", hidden_item_id)
+            .execute()
+            .data
+            or []
+        )
+        matched_parent_ids |= _collect_parent_ids_from_rows(direct_rows)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed direct hidden link lookup for %s: %s", hidden_item_id, exc)
+
+    candidate_subitems: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+
+    for name in sorted(candidate_names):
+        try:
+            rows = (
+                supabase_client.client.table("subitems")
+                .select("parent_monday_id, item_name, hidden_item_id")
+                .eq("item_name", name)
+                .limit(HIDDEN_SUBITEM_FALLBACK_LIMIT)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed exact-name subitem lookup for hidden item %s name %s: %s",
+                hidden_item_id,
+                name,
+                exc,
+            )
+            continue
+
+        for row in rows:
+            key = (
+                _clean_text(row.get("parent_monday_id")),
+                _clean_text(row.get("item_name")),
+                _clean_text(row.get("hidden_item_id")),
+            )
+            candidate_subitems[key] = row
+
+    for prefix in sorted(candidate_prefixes):
+        try:
+            rows = (
+                supabase_client.client.table("subitems")
+                .select("parent_monday_id, item_name, hidden_item_id")
+                .ilike("item_name", f"{prefix}%")
+                .limit(HIDDEN_SUBITEM_FALLBACK_LIMIT)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed prefix subitem lookup for hidden item %s prefix %s: %s",
+                hidden_item_id,
+                prefix,
+                exc,
+            )
+            continue
+
+        for row in rows:
+            key = (
+                _clean_text(row.get("parent_monday_id")),
+                _clean_text(row.get("item_name")),
+                _clean_text(row.get("hidden_item_id")),
+            )
+            candidate_subitems[key] = row
+
+    exact_name_matches = 0
+    normalized_name_matches = 0
+    prefix_subitem_matches = 0
+
+    for row in candidate_subitems.values():
+        parent_id = _clean_text(row.get("parent_monday_id"))
+        if not parent_id:
+            continue
+
+        row_hidden_id = _clean_text(row.get("hidden_item_id"))
+        row_name = _clean_text(row.get("item_name"))
+        row_normalized = sync_service._normalize_hidden_name_key(row_name) if row_name else ""
+        row_prefix = sync_service._leading_digits_from_name(row_name) if row_name else None
+
+        if row_hidden_id and row_hidden_id == hidden_item_id:
+            matched_parent_ids.add(parent_id)
+            continue
+
+        if row_name and row_name in candidate_names:
+            matched_parent_ids.add(parent_id)
+            exact_name_matches += 1
+            continue
+
+        if row_normalized and row_normalized in normalized_names:
+            matched_parent_ids.add(parent_id)
+            normalized_name_matches += 1
+            continue
+
+        if row_prefix and row_prefix in candidate_prefixes:
+            matched_parent_ids.add(parent_id)
+            prefix_subitem_matches += 1
+
+    prefix_project_matches = 0
+    for prefix in sorted(candidate_prefixes):
+        for field_name in ("item_name", "project_name"):
+            try:
+                rows = (
+                    supabase_client.client.table("projects")
+                    .select("monday_id")
+                    .ilike(field_name, f"{prefix}%")
+                    .limit(HIDDEN_PROJECT_FALLBACK_LIMIT)
+                    .execute()
+                    .data
+                    or []
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed prefix project lookup for hidden item %s prefix %s field %s: %s",
+                    hidden_item_id,
+                    prefix,
+                    field_name,
+                    exc,
+                )
+                continue
+
+            for row in rows:
+                project_id = _clean_text(row.get("monday_id"))
+                if project_id:
+                    matched_parent_ids.add(project_id)
+                    prefix_project_matches += 1
+
+    logger.info(
+        (
+            "Hidden parent lookup resolved | hidden_item=%s parents=%d "
+            "candidate_names=%d candidate_prefixes=%d "
+            "exact_name_matches=%d normalized_name_matches=%d "
+            "prefix_subitem_matches=%d prefix_project_matches=%d"
+        ),
+        hidden_item_id,
+        len(matched_parent_ids),
+        len(candidate_names),
+        len(candidate_prefixes),
+        exact_name_matches,
+        normalized_name_matches,
+        prefix_subitem_matches,
+        prefix_project_matches,
+    )
+
+    return matched_parent_ids
+
+
+def _queue_hidden_rehydrate_jobs(
+    hidden_item_id: str,
+    reason: str,
+    *,
+    extra_names: Optional[Set[str]] = None,
+    extra_prefixes: Optional[Set[str]] = None,
+) -> Set[str]:
+    parents = _lookup_parents_for_hidden(
+        hidden_item_id,
+        extra_names=extra_names,
+        extra_prefixes=extra_prefixes,
+    )
+    if not parents:
+        logger.warning(
+            "No parent projects resolved for hidden item %s via hidden_id/name/normalized/prefix lookup",
+            hidden_item_id,
+        )
         return set()
 
-    return {
-        str(row.get('parent_monday_id'))
-        for row in rows
-        if row.get('parent_monday_id')
-    }
+    for parent in sorted(parents):
+        _queue_rehydrate_job(parent, reason)
+
+    logger.info(
+        "Queued %d parent rehydrate jobs for hidden item %s (%s)",
+        len(parents),
+        hidden_item_id,
+        reason,
+    )
+    return parents
 
 
 def _lookup_parent_for_subitem(subitem_id: str) -> Optional[str]:
@@ -145,6 +376,9 @@ ANALYSIS_TRIGGER_COLUMNS = {
         SUBITEM_COLUMNS['product_type'],
         SUBITEM_COLUMNS['new_enquiry_value'],
         SUBITEM_COLUMNS['cust_order_value_material'],
+        SUBITEM_COLUMNS['amount_invoiced'],
+        SUBITEM_COLUMNS['invoice_date'],
+        SUBITEM_COLUMNS['invoice_number'],
     },
 }
 
@@ -568,35 +802,16 @@ async def handle_item_created(
         item_data = result['data']['items'][0]
 
         if board_id == PARENT_BOARD_ID:
-            # Normalize the item before transformation
+            # Seed the project row quickly, then let the queued rehydrate path
+            # perform the full refresh -> analysis -> push flow.
             normalized_item = sync_service._normalize_monday_item(item_data)
             transformed = sync_service._transform_for_projects_table([normalized_item])
             if transformed:
                 supabase_client.upsert_projects(transformed)
-                logger.info("Upserted project: %s", transformed[0].get("monday_id"))
-            from ..services.analysis_service import AnalysisService
+                logger.info("Upserted project placeholder: %s", transformed[0].get("monday_id"))
 
-            try:
-                logger.info(
-                    "Running analysis for new project %s on board %s",
-                    item_id,
-                    board_id,
-                )
-                analysis_started = time.time()
-                AnalysisService().analyze_and_store(item_id)
-                logger.info(
-                    "Analysis complete for project %s (%.2f ms)",
-                    item_id,
-                    (time.time() - analysis_started) * 1000,
-                )
-                _queue_push_job(item_id, "parent_create")
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "Analysis failed for newly created item %s on board %s",
-                    item_id,
-                    board_id,
-                )
-                _mark_analysis_warning(webhook_log_id, f"analysis failed: {exc}")
+            _queue_rehydrate_job(str(item_id), "parent_create")
+            return
 
         elif board_id == SUBITEM_BOARD_ID:
             transformed = sync_service._transform_for_subitems_table([item_data])
@@ -610,13 +825,34 @@ async def handle_item_created(
 
         elif board_id == HIDDEN_ITEMS_BOARD_ID:
             transformed = sync_service._transform_for_hidden_table([item_data])
+
+            extra_names: Set[str] = set()
+            extra_prefixes: Set[str] = set()
+
             if transformed:
                 supabase_client.upsert_hidden_items(transformed)
                 logger.info("Upserted hidden item: %s", transformed[0].get("monday_id"))
+
+                hidden_name = _clean_text(transformed[0].get("item_name"))
+                if hidden_name:
+                    extra_names.add(hidden_name)
+
+                hidden_prefix = (
+                    _clean_text(transformed[0].get("prefix"))
+                    or sync_service._leading_digits_from_name(hidden_name)
+                    or ""
+                )
+                if hidden_prefix:
+                    extra_prefixes.add(hidden_prefix)
             else:
                 logger.debug("Hidden item %s produced no rows after transform", item_id)
-            for parent in _lookup_parents_for_hidden(str(item_id)):
-                _queue_rehydrate_job(parent, "hidden_create")
+
+            _queue_hidden_rehydrate_jobs(
+                str(item_id),
+                "hidden_create",
+                extra_names=extra_names,
+                extra_prefixes=extra_prefixes,
+            )
             return  # skip AnalysisService for hidden items
 
     except Exception as e:
@@ -630,7 +866,8 @@ async def handle_column_changed_minimal(
     *,
     webhook_log_id: Optional[str] = None
 ):
-    """Minimal column update with enhanced error handling and validation"""
+    """Minimal column update with enhanced error handling and validation."""
+    item_id = str(item_id)
 
     event_data = payload.get('event', {})
     column_id = event_data.get('columnId')
@@ -640,10 +877,36 @@ async def handle_column_changed_minimal(
         logger.warning(f"No column ID in payload for item {item_id}")
         return
 
+    analysis_targets: Set[str] = set()
+    trigger_columns = ANALYSIS_TRIGGER_COLUMNS.get(board_id, set())
+
+    if column_id in trigger_columns:
+        if board_id == PARENT_BOARD_ID:
+            analysis_targets.add(item_id)
+        elif board_id == SUBITEM_BOARD_ID:
+            parent_id = _lookup_parent_project_id(item_id)
+            if parent_id:
+                analysis_targets.add(parent_id)
+
     field_mapping = get_enhanced_column_field_mapping(board_id, column_id)
 
+    # Important: hidden board updates should still trigger parent rehydrate
+    # even when the changed column is currently unmapped.
+    
     if not field_mapping:
-        logger.debug(f"No mapping for column {column_id} in board {board_id}")
+        if board_id == HIDDEN_ITEMS_BOARD_ID:
+            parents = _queue_hidden_rehydrate_jobs(
+                item_id,
+                f"hidden_change_unmapped:{column_id}",
+            )
+            if not parents:
+                logger.debug(
+                    "No mapping for hidden column %s and no parent link found for hidden item %s",
+                    column_id,
+                    item_id,
+                )
+        else:
+            logger.debug(f"No mapping for column {column_id} in board {board_id}")
         return
 
     table_name = field_mapping['table']
@@ -653,29 +916,25 @@ async def handle_column_changed_minimal(
     if transform_func:
         try:
             new_value = transform_func(new_value)
-        except Exception as e:
-            logger.warning(f"Value transformation failed for {column_id}: {e}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Value transformation failed for {column_id}: {exc}")
+            if board_id == HIDDEN_ITEMS_BOARD_ID:
+                _queue_hidden_rehydrate_jobs(
+                    item_id,
+                    f"hidden_change_parse_error:{column_id}",
+                )
             return
 
-    analysis_targets: Set[str] = set()
-    trigger_columns = ANALYSIS_TRIGGER_COLUMNS.get(board_id, set())
-
-    if column_id in trigger_columns:
-        if board_id == PARENT_BOARD_ID:
-            analysis_targets.add(str(item_id))
-        elif board_id == SUBITEM_BOARD_ID:
-            parent_id = _lookup_parent_project_id(item_id)
-            if parent_id:
-                analysis_targets.add(parent_id)
-
     try:
-        result = supabase_client.client.table(table_name)\
+        result = (
+            supabase_client.client.table(table_name)
             .update({
                 field_name: new_value,
                 'last_synced_at': datetime.now().isoformat()
-            })\
-            .eq('monday_id', item_id)\
+            })
+            .eq('monday_id', item_id)
             .execute()
+        )
 
         if result.data:
             logger.debug(f"Updated {field_name} for item {item_id}: {new_value}")
@@ -705,7 +964,9 @@ async def handle_column_changed_minimal(
                     _queue_push_job(target_id, "parent_change")
                 except Exception as exc:  # noqa: BLE001
                     logger.exception(
-                        "Analysis failed for project %s after %s change", target_id, column_id
+                        "Analysis failed for project %s after %s change",
+                        target_id,
+                        column_id,
                     )
                     _mark_analysis_warning(
                         webhook_log_id,
@@ -717,11 +978,15 @@ async def handle_column_changed_minimal(
                 _queue_rehydrate_job(target_id, "subitem_change")
 
         elif board_id == HIDDEN_ITEMS_BOARD_ID:
-            for parent in _lookup_parents_for_hidden(item_id):
-                _queue_rehydrate_job(parent, "hidden_change")
+            parents = _queue_hidden_rehydrate_jobs(
+                item_id,
+                f"hidden_change:{column_id}",
+            )
+            if not parents:
+                logger.debug("No parent project found for hidden item %s", item_id)
 
-    except Exception as e:
-        logger.error(f"Failed to update {field_name} for item {item_id}: {e}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"Failed to update {field_name} for item {item_id}: {exc}")
         raise
 
 async def handle_item_deleted(board_id: str, item_id: str):
@@ -778,6 +1043,8 @@ async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict) -
         logger.warning(f"No new name provided for item {item_id} (value={raw_value!r})")
         return
 
+    hidden_snapshot = _load_hidden_snapshot(str(item_id)) if board_id == HIDDEN_ITEMS_BOARD_ID else None
+
     try:
         table_map = {
             PARENT_BOARD_ID: "projects",
@@ -804,6 +1071,41 @@ async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict) -
 
         logger.info(f"Updated name for {item_id} in {table_name}: {new_name}")
 
+        if board_id == SUBITEM_BOARD_ID:
+            parent_id = _lookup_parent_for_subitem(str(item_id))
+            if parent_id:
+                _queue_rehydrate_job(parent_id, "subitem_name_update")
+
+        elif board_id == HIDDEN_ITEMS_BOARD_ID:
+            extra_names: Set[str] = set()
+            extra_prefixes: Set[str] = set()
+
+            old_name = _clean_text((hidden_snapshot or {}).get("item_name"))
+            if old_name:
+                extra_names.add(old_name)
+
+            if new_name:
+                extra_names.add(new_name)
+
+            old_prefix = (
+                _clean_text((hidden_snapshot or {}).get("prefix"))
+                or sync_service._leading_digits_from_name(old_name)
+                or ""
+            )
+            if old_prefix:
+                extra_prefixes.add(old_prefix)
+
+            new_prefix = sync_service._leading_digits_from_name(new_name) or ""
+            if new_prefix:
+                extra_prefixes.add(new_prefix)
+
+            _queue_hidden_rehydrate_jobs(
+                str(item_id),
+                "hidden_name_update",
+                extra_names=extra_names,
+                extra_prefixes=extra_prefixes,
+            )
+
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Failed to update name for item {item_id}: {exc}")
         raise
@@ -817,7 +1119,14 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
         data = {"raw": raw_value}
         if isinstance(raw_value, str):
             value = raw_value.strip()
-            if value.startswith("{") and value.endswith("}"):
+            if not value:
+                data["text"] = ""
+                return data
+            # Parse JSON payloads emitted by Monday webhooks.
+            if (
+                (value.startswith("{") and value.endswith("}"))
+                or (value.startswith("[") and value.endswith("]"))
+            ):
                 try:
                     parsed = json.loads(value)
                 except json.JSONDecodeError:
@@ -825,54 +1134,82 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
                 else:
                     if isinstance(parsed, dict):
                         return parsed
-                    data["text"] = raw_value
-            else:
-                data["text"] = raw_value
-        elif raw_value is not None:
+                    data["text"] = parsed
+                return data
+            data["text"] = raw_value
+            return data
+        if raw_value is not None:
             data["text"] = str(raw_value)
         return data
 
+    def _unwrap_scalar(value):
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            for key in ("value", "text", "label", "name", "amount", "date", "display_value"):
+                if key in value and value.get(key) not in (None, ""):
+                    return _unwrap_scalar(value.get(key))
+            return None
+        if isinstance(value, list):
+            if not value:
+                return None
+            return _unwrap_scalar(value[0])
+        if isinstance(value, (int, float)):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        # Handle nested JSON-like strings, including quoted numerics
+        # e.g. "\"18012.58\""
+        if (
+            (text.startswith("{") and text.endswith("}"))
+            or (text.startswith("[") and text.endswith("]"))
+            or (text.startswith('"') and text.endswith('"'))
+        ):
+            try:
+                parsed = json.loads(text)
+            except Exception:
+                parsed = None
+            if parsed is not None and parsed != text:
+                return _unwrap_scalar(parsed)
+        while len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+            text = text[1:-1].strip()
+        return text or None
+
     def parse_text_value(raw_value):
         data = _coerce_monday_value(raw_value)
-        text = data.get("text") or data.get("value") or data.get("name") or data.get("label")
-        if isinstance(text, dict):
-            text = text.get("label") or text.get("text") or text.get("value")
-        if text is not None:
-            return str(text).strip()
-        raw = data.get("raw")
-        if raw is not None:
-            return str(raw).strip()
-        return None
+        candidate = (
+            data.get("text")
+            or data.get("value")
+            or data.get("name")
+            or data.get("label")
+            or data.get("raw")
+        )
+        value = _unwrap_scalar(candidate)
+        return str(value).strip() if value is not None else None
 
     def parse_status_value(raw_value, label_map):
         data = _coerce_monday_value(raw_value)
         index = data.get("index")
         label_entry = data.get("label")
-        label = None
-        if isinstance(label_entry, dict):
-            if index is None:
-                index = label_entry.get("index")
-            label = label_entry.get("label") or label_entry.get("text")
-        elif label_entry is not None:
-            label = str(label_entry)
-        if index is not None:
+        if index is None and isinstance(label_entry, dict):
+            index = label_entry.get("index")
+        if index is not None and label_map:
             mapped = label_map.get(str(index))
             if mapped:
                 return mapped
-        if label:
-            mapped = label_map.get(str(label))
-            return mapped or label.strip()
-        text = data.get("text") or data.get("value")
-        if text:
-            text_str = str(text).strip()
-            mapped = label_map.get(text_str)
-            return mapped or text_str
-        raw = data.get("raw")
-        if raw:
-            raw_str = str(raw).strip()
-            mapped = label_map.get(raw_str)
-            return mapped or raw_str
-        return None
+        label_candidate = (
+            _unwrap_scalar(label_entry)
+            or _unwrap_scalar(data.get("text"))
+            or _unwrap_scalar(data.get("value"))
+            or _unwrap_scalar(data.get("raw"))
+        )
+        if label_candidate is None:
+            return None
+        label_text = str(label_candidate).strip()
+        if label_map:
+            return label_map.get(label_text) or label_text
+        return label_text
 
     def parse_dropdown_value(raw_value, label_map=None):
         data = _coerce_monday_value(raw_value)
@@ -882,36 +1219,30 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
         if isinstance(chosen, list) and chosen:
             first = chosen[0]
             if isinstance(first, dict):
-                candidate_id = first.get("id") or first.get("value")
-                candidate_label = first.get("name") or first.get("label") or first.get("text")
+                candidate_id = _unwrap_scalar(first.get("id") or first.get("value"))
+                candidate_label = _unwrap_scalar(first.get("name") or first.get("label") or first.get("text"))
             else:
-                candidate_id = str(first)
+                candidate_id = _unwrap_scalar(first)
         ids = data.get("ids")
         if candidate_id is None and isinstance(ids, list) and ids:
-            candidate_id = str(ids[0])
+            candidate_id = _unwrap_scalar(ids[0])
         if candidate_label is None:
-            value = data.get("text") or data.get("value") or data.get("label")
-            if isinstance(value, dict):
-                candidate_label = value.get("label") or value.get("text")
-            elif value is not None:
-                candidate_label = str(value)
+            candidate_label = _unwrap_scalar(data.get("label") or data.get("text") or data.get("value"))
         if label_map:
             if candidate_id is not None:
                 mapped = label_map.get(str(candidate_id))
                 if mapped:
                     return mapped
-            if candidate_label:
-                mapped = label_map.get(candidate_label)
+            if candidate_label is not None:
+                mapped = label_map.get(str(candidate_label))
                 if mapped:
                     return mapped
-        if candidate_label:
-            return candidate_label.strip()
+        if candidate_label is not None:
+            return str(candidate_label).strip()
         if candidate_id is not None:
             return str(candidate_id).strip()
-        raw = data.get("raw")
-        if raw is not None:
-            return str(raw).strip()
-        return None
+        raw = _unwrap_scalar(data.get("raw"))
+        return str(raw).strip() if raw is not None else None
 
     def parse_numeric_value(raw_value):
         if raw_value is None or raw_value == "":
@@ -919,34 +1250,80 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
         if isinstance(raw_value, (int, float)):
             return float(raw_value)
         data = _coerce_monday_value(raw_value)
-        candidate = data.get("value") or data.get("text")
-        if isinstance(candidate, dict):
-            candidate = candidate.get("value") or candidate.get("amount") or candidate.get("text")
+        candidate = (
+            data.get("value")
+            or data.get("amount")
+            or data.get("text")
+            or data.get("display_value")
+            or data.get("raw")
+        )
+        candidate = _unwrap_scalar(candidate)
         if candidate is None:
-            candidate = data.get("raw")
-        if candidate is None:
+            return None
+        if isinstance(candidate, (int, float)):
+            return float(candidate)
+        clean = (
+            str(candidate)
+            .replace("£", "")
+            .replace("$", "")
+            .replace("€", "")
+            .replace(",", "")
+            .strip()
+        )
+        if not clean:
             return None
         try:
-            clean_value = str(candidate).replace("£", "").replace(",", "").strip()
-            return float(clean_value) if clean_value else None
+            return float(clean)
         except (ValueError, TypeError):
-            return None
+            pass
+        import re
+        match = re.search(r"-?\d+(?:\.\d+)?", clean)
+        if match:
+            try:
+                return float(match.group(0))
+            except (ValueError, TypeError):
+                return None
+        return None
 
     def parse_date_value(raw_value):
         data = _coerce_monday_value(raw_value)
-        date_text = data.get("date") or data.get("text") or data.get("value")
-        if isinstance(date_text, dict):
-            date_text = date_text.get("date") or date_text.get("text")
-        if not date_text:
-            date_text = data.get("raw")
+        candidate = (
+            data.get("date")
+            or data.get("text")
+            or data.get("value")
+            or data.get("raw")
+        )
+        date_text = _unwrap_scalar(candidate)
         if not date_text:
             return None
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+        date_text = str(date_text).strip()
+        if not date_text:
+            return None
+        for fmt in (
+            "%Y-%m-%d",
+            "%d/%m/%Y",
+            "%m/%d/%Y",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+        ):
             try:
-                return datetime.strptime(str(date_text), fmt).date().isoformat()
+                return datetime.strptime(date_text, fmt).date().isoformat()
             except ValueError:
                 continue
-        return str(date_text)
+        try:
+            return datetime.fromisoformat(date_text.replace("Z", "+00:00")).date().isoformat()
+        except Exception:
+            return date_text
+
+    hidden_quote_col = HIDDEN_ITEMS_COLUMNS.get('quote_amount', 'formula63__1')
+    hidden_reason_col = HIDDEN_ITEMS_COLUMNS.get('reason_for_change', 'dropdown2__1')
+    hidden_design_col = HIDDEN_ITEMS_COLUMNS.get('date_design_completed', 'date__1')
+    hidden_invoice_col = HIDDEN_ITEMS_COLUMNS.get('invoice_date', 'date42__1')
+    hidden_invoice_number_col = HIDDEN_ITEMS_COLUMNS.get('invoice_number', 'invoice_number_mkm2nq6s')
+    hidden_amount_invoiced_col = HIDDEN_ITEMS_COLUMNS.get('amount_invoiced', 'numbers56__1')
+    hidden_received_col = HIDDEN_ITEMS_COLUMNS.get('date_received', 'date4__1')
+    hidden_order_col = HIDDEN_ITEMS_COLUMNS.get('date_order_received', 'date7__1')
+    hidden_covm_col = HIDDEN_ITEMS_COLUMNS.get('cust_order_value_material', 'numbers98__1')
 
     mappings = {
         PARENT_BOARD_ID: {
@@ -1007,6 +1384,16 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
                 "field": "new_enquiry_value",
                 "transform": parse_numeric_value,
             },
+            SUBITEM_COLUMNS["reason_for_change"]: {
+                "table": "subitems",
+                "field": "reason_for_change",
+                "transform": parse_dropdown_value,
+            },
+            SUBITEM_COLUMNS["quote_amount"]: {
+                "table": "subitems",
+                "field": "quote_amount",
+                "transform": parse_numeric_value,
+            },
             SUBITEM_COLUMNS["date_order_received"]: {
                 "table": "subitems",
                 "field": "date_order_received",
@@ -1017,24 +1404,67 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
                 "field": "cust_order_value_material",
                 "transform": parse_numeric_value,
             },
+            SUBITEM_COLUMNS["invoice_date"]: {
+                "table": "subitems",
+                "field": "invoice_date",
+                "transform": parse_date_value,
+            },
+            SUBITEM_COLUMNS["invoice_number"]: {
+                "table": "subitems",
+                "field": "invoice_number",
+                "transform": parse_text_value,
+            },
+            SUBITEM_COLUMNS["amount_invoiced"]: {
+                "table": "subitems",
+                "field": "amount_invoiced",
+                "transform": parse_numeric_value,
+            },
         },
         HIDDEN_ITEMS_BOARD_ID: {
-            # These constant names must exist in your config:
-            # e.g. HIDDEN_ITEMS_COLUMNS["quote_amount"]
-            "formula63__1": {
+            hidden_quote_col: {
                 "table": "hidden_items",
                 "field": "quote_amount",
                 "transform": parse_numeric_value,
             },
-            "date__1": {
+            hidden_reason_col: {
+                "table": "hidden_items",
+                "field": "reason_for_change",
+                "transform": parse_dropdown_value,
+            },
+            hidden_design_col: {
                 "table": "hidden_items",
                 "field": "date_design_completed",
                 "transform": parse_date_value,
             },
-            "date42__1": {
+            hidden_invoice_col: {
                 "table": "hidden_items",
                 "field": "invoice_date",
                 "transform": parse_date_value,
+            },
+            hidden_invoice_number_col: {
+                "table": "hidden_items",
+                "field": "invoice_number",
+                "transform": parse_text_value,
+            },
+            hidden_amount_invoiced_col: {
+                "table": "hidden_items",
+                "field": "amount_invoiced",
+                "transform": parse_numeric_value,
+            },
+            hidden_received_col: {
+                "table": "hidden_items",
+                "field": "date_received",
+                "transform": parse_date_value,
+            },
+            hidden_order_col: {
+                "table": "hidden_items",
+                "field": "date_order_received",
+                "transform": parse_date_value,
+            },
+            hidden_covm_col: {
+                "table": "hidden_items",
+                "field": "cust_order_value_material",
+                "transform": parse_numeric_value,
             },
         },
     }

@@ -3,6 +3,9 @@ Backfill: compute product_key for all existing projects rows.
 
 Usage:
     python -m scripts.backfill_product_key [--batch-size 500] [--dry-run] [--all]
+
+Default mode updates rows whose current product_key is missing, unknown, or non-canonical.
+Use --all to recompute every row from product_type.
 """
 
 import argparse
@@ -14,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.database.supabase_client import SupabaseClient
 from src.database.sync_service import DataSyncService
+from src.config import CANONICAL_PRODUCT_KEYS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -26,47 +30,28 @@ def backfill(batch_size: int = 500, dry_run: bool = False, recompute_all: bool =
     # ── Fetch rows ──────────────────────────────────────────────
     if recompute_all:
         logger.info("Fetching ALL projects for full recompute...")
-        all_rows = []
-        offset = 0
-        page_size = 1000
-        while True:
-            page = (
-                db.client.table("projects")
-                .select("monday_id, product_type, product_key")
-                .range(offset, offset + page_size - 1)
-                .execute()
-                .data
-            )
-            if not page:
-                break
-            all_rows.extend(page)
-            offset += page_size
-            logger.info(f"  Fetched {len(all_rows)} rows so far...")
-            if len(page) < page_size:
-                break
-        rows = all_rows
     else:
-        logger.info("Fetching projects with missing/unknown product_key...")
-        all_rows = []
-        offset = 0
-        page_size = 1000
-        while True:
-            page = (
-                db.client.table("projects")
-                .select("monday_id, product_type, product_key")
-                .or_("product_key.is.null,product_key.eq.unknown,product_key.eq.")
-                .range(offset, offset + page_size - 1)
-                .execute()
-                .data
-            )
-            if not page:
-                break
-            all_rows.extend(page)
-            offset += page_size
-            logger.info(f"  Fetched {len(all_rows)} rows so far...")
-            if len(page) < page_size:
-                break
-        rows = all_rows
+        logger.info("Fetching all projects to target missing/unknown/non-canonical product_key values...")
+
+    all_rows = []
+    offset = 0
+    page_size = 1000
+    while True:
+        page = (
+            db.client.table("projects")
+            .select("monday_id, product_type, product_key")
+            .range(offset, offset + page_size - 1)
+            .execute()
+            .data
+        )
+        if not page:
+            break
+        all_rows.extend(page)
+        offset += page_size
+        logger.info(f"  Fetched {len(all_rows)} rows so far...")
+        if len(page) < page_size:
+            break
+    rows = all_rows
 
     if not rows:
         logger.info("Nothing to backfill — all rows already have a product_key.")
@@ -79,7 +64,12 @@ def backfill(batch_size: int = 500, dry_run: bool = False, recompute_all: bool =
     for row in rows:
         raw = row.get("product_type") or ""
         new_key = svc._compute_product_key(raw)
-        current_key = row.get("product_key") or ""
+        current_key = (row.get("product_key") or "").strip()
+        current_is_canonical = current_key in CANONICAL_PRODUCT_KEYS
+
+        if not recompute_all and current_key and current_key != "unknown" and current_is_canonical:
+            continue
+
         if new_key != current_key:
             updates.append({"monday_id": row["monday_id"], "product_key": new_key})
 
