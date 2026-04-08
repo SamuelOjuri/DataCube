@@ -277,6 +277,7 @@ def compute_metrics(actual, predicted, label):
         'within_7d_pct': round(100 * (abs_error <= 7).mean(), 2),
         'within_14d_pct': round(100 * (abs_error <= 14).mean(), 2),
         'within_30d_pct': round(100 * (abs_error <= 30).mean(), 2),
+        'within_90d_pct': round(100 * (abs_error <= 90).mean(), 2),
         'mape_pct': round(100 * (abs_error / actual.replace(0, np.nan)).mean(), 2),
         'corr_pred_actual': round(np.corrcoef(predicted, actual)[0, 1], 4),
     }
