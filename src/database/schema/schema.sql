@@ -148,6 +148,8 @@ CREATE TABLE hidden_items (
     date_project_won DATE,
     date_project_closed DATE,
     invoice_date DATE,
+    invoice_number TEXT,
+    amount_invoiced NUMERIC(12, 2),
     
     quote_amount NUMERIC(12, 2),
     material_value NUMERIC(12, 2),
