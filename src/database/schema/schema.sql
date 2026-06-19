@@ -918,3 +918,181 @@ SELECT
     actual_revenue
 FROM vw_actual_revenue_monthly_v1
 ORDER BY month_start;
+
+
+-- =========================================================
+-- Monthly Pipeline Budget Comparison
+-- Past months: weighted actual enquiry
+-- Current/future months: forecast expected value
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS pipeline_budget_monthly (
+    budget_month DATE PRIMARY KEY,
+    budget_value NUMERIC(14,2) NOT NULL CHECK (budget_value >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (budget_month = DATE_TRUNC('month', budget_month)::DATE)
+);
+
+INSERT INTO pipeline_budget_monthly (budget_month, budget_value)
+VALUES
+    (DATE '2025-11-01',  701629.00),
+    (DATE '2025-12-01',  522980.00),
+    (DATE '2026-01-01',  671565.00),
+    (DATE '2026-02-01',  727501.00),
+    (DATE '2026-03-01',  703607.00),
+    (DATE '2026-04-01',  585892.00),
+    (DATE '2026-05-01', 1399827.00),
+    (DATE '2026-06-01', 1356055.00),
+    (DATE '2026-07-01', 1214639.00),
+    (DATE '2026-08-01', 1257868.00),
+    (DATE '2026-09-01',  994150.00),
+    (DATE '2026-10-01',  725764.00)
+ON CONFLICT (budget_month) DO UPDATE
+SET
+    budget_value = EXCLUDED.budget_value,
+    updated_at = NOW();
+
+CREATE OR REPLACE VIEW vw_pipeline_budget_comparison_monthly_v1 AS
+WITH forecast_monthly AS (
+    SELECT
+        forecast_month AS month_start,
+        SUM(project_count)::BIGINT AS forecast_project_count,
+        SUM(expected_value)::NUMERIC(14,2) AS forecast_expected_value,
+        SUM(committed_value)::NUMERIC(14,2) AS forecast_committed_value,
+        SUM(best_case_value)::NUMERIC(14,2) AS forecast_best_case_value,
+        SUM(worst_case_value)::NUMERIC(14,2) AS forecast_worst_case_value
+    FROM mv_pipeline_forecast_monthly_12m_v1
+    GROUP BY forecast_month
+),
+base AS (
+    SELECT
+        b.budget_month AS month_start,
+        b.budget_value,
+
+        COALESCE(a.project_count, 0)::INTEGER AS actual_project_count,
+        COALESCE(a.actual_enquiry_value, 0)::NUMERIC(14,2) AS actual_enquiry_value,
+        COALESCE(a.actual_pipeline_value, 0)::NUMERIC(14,2) AS weighted_actual_value,
+
+        COALESCE(f.forecast_project_count, 0)::BIGINT AS forecast_project_count,
+        COALESCE(f.forecast_expected_value, 0)::NUMERIC(14,2) AS forecast_expected_value,
+        COALESCE(f.forecast_committed_value, 0)::NUMERIC(14,2) AS forecast_committed_value,
+        COALESCE(f.forecast_best_case_value, 0)::NUMERIC(14,2) AS forecast_best_case_value,
+        COALESCE(f.forecast_worst_case_value, 0)::NUMERIC(14,2) AS forecast_worst_case_value
+    FROM pipeline_budget_monthly b
+    LEFT JOIN vw_actual_enquiry_monthly_v1 a
+        ON a.enquiry_month = b.budget_month
+    LEFT JOIN forecast_monthly f
+        ON f.month_start = b.budget_month
+),
+blended AS (
+    SELECT
+        month_start,
+        budget_value,
+        actual_project_count,
+        actual_enquiry_value,
+        weighted_actual_value,
+        forecast_project_count,
+        forecast_expected_value,
+        forecast_committed_value,
+        forecast_best_case_value,
+        forecast_worst_case_value,
+        CASE
+            WHEN month_start < DATE_TRUNC('month', CURRENT_DATE)::DATE
+                THEN weighted_actual_value
+            ELSE
+                forecast_expected_value
+        END::NUMERIC(14,2) AS comparison_value,
+        CASE
+            WHEN month_start < DATE_TRUNC('month', CURRENT_DATE)::DATE
+                THEN 'Actual Weighted Enquiry'
+            ELSE
+                'Forecast Expected'
+        END AS comparison_source
+    FROM base
+)
+SELECT
+    month_start,
+    budget_value,
+
+    actual_project_count,
+    actual_enquiry_value,
+    weighted_actual_value,
+
+    forecast_project_count,
+    forecast_expected_value,
+    forecast_committed_value,
+    forecast_best_case_value,
+    forecast_worst_case_value,
+
+    comparison_value,
+
+    CASE
+        WHEN comparison_source = 'Actual Weighted Enquiry'
+            THEN comparison_value
+        ELSE
+            NULL::NUMERIC(14,2)
+    END AS actual_weighted_value_for_chart,
+
+    CASE
+        WHEN comparison_source = 'Forecast Expected'
+            THEN comparison_value
+        ELSE
+            NULL::NUMERIC(14,2)
+    END AS forecast_expected_value_for_chart,
+
+    comparison_source,
+    (comparison_value - budget_value)::NUMERIC(14,2) AS variance_to_budget,
+
+    CASE
+        WHEN budget_value = 0 THEN NULL
+        ELSE ROUND(comparison_value / budget_value, 4)
+    END AS attainment_ratio
+FROM blended
+ORDER BY month_start;
+
+CREATE OR REPLACE VIEW vw_pipeline_budget_combo_chart_v1 AS
+SELECT
+    month_start,
+    budget_value,
+    actual_weighted_value_for_chart AS actual_weighted_value,
+    forecast_expected_value_for_chart AS forecast_expected_value,
+    comparison_value,
+    variance_to_budget,
+    attainment_ratio,
+    comparison_source
+FROM vw_pipeline_budget_comparison_monthly_v1
+ORDER BY month_start;
+
+-- ============================================================
+-- Weighted Enquiry Value Monthly View. 
+-- This is used to calculate the weighted enquiry value for the monthly pipeline budget comparison.
+-- ============================================================
+CREATE OR REPLACE VIEW vw_weighted_enquiry_value_monthly_v1 AS
+WITH latest_analysis AS (
+    SELECT
+        ar.project_id,
+        ar.expected_conversion_rate,
+        ROW_NUMBER() OVER (
+            PARTITION BY ar.project_id
+            ORDER BY ar.analysis_timestamp DESC NULLS LAST, ar.id DESC
+        ) AS rn
+    FROM analysis_results ar
+)
+SELECT
+    DATE_TRUNC('month', p.date_created)::DATE AS enquiry_month,
+    COUNT(*)::INTEGER AS enquiry_count_all,
+    SUM(CASE WHEN COALESCE(p.new_enquiry_value, 0) > 0 THEN 1 ELSE 0 END)::INTEGER AS enquiry_count_valued,
+    SUM(
+        GREATEST(COALESCE(p.new_enquiry_value, 0), 0)
+        * GREATEST(0::NUMERIC, LEAST(1::NUMERIC, COALESCE(la.expected_conversion_rate, 0::NUMERIC)))
+    )::FLOAT8 AS weighted_enquiry_value
+FROM projects p
+LEFT JOIN latest_analysis la
+    ON la.project_id = p.monday_id
+   AND la.rn = 1
+WHERE p.date_created IS NOT NULL
+  AND p.date_created >= DATE '2022-01-01'
+  AND DATE_TRUNC('month', p.date_created)::DATE < DATE_TRUNC('month', CURRENT_DATE)::DATE
+GROUP BY 1
+ORDER BY 1;
