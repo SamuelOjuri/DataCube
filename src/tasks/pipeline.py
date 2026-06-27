@@ -673,6 +673,9 @@ class DeltaRehydrationManager:
             design_date_map, invoice_date_map = self.sync_service._rollup_design_invoice_dates_from_subitems(
                 subitems_data
             )
+            invoice_date_range_map = self.sync_service._rollup_invoice_date_ranges_from_subitems(
+                subitems_data
+            )
             parent_ids_for_rollups = [pid for pid in chunk_ids if pid]
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
@@ -680,6 +683,9 @@ class DeltaRehydrationManager:
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
             self.sync_service._apply_project_design_invoice_rollup(
                 projects_data, design_date_map, invoice_date_map
+            )
+            self.sync_service._apply_project_invoice_date_range_rollup(
+                projects_data, invoice_date_range_map
             )
 
             self.subitem_batches += 1
@@ -1352,6 +1358,9 @@ class RecentRehydrationManager:
             design_date_map, invoice_date_map = self.sync_service._rollup_design_invoice_dates_from_subitems(
                 subitems_data
             )
+            invoice_date_range_map = self.sync_service._rollup_invoice_date_ranges_from_subitems(
+                subitems_data
+            )
             parent_ids_for_rollups = [pid for pid in chunk_ids if pid]
 
             projects_data = self.sync_service._transform_for_projects_table(processed["projects"])
@@ -1359,6 +1368,9 @@ class RecentRehydrationManager:
             self.sync_service._apply_project_gestation_fallback(projects_data, gestation_map)
             self.sync_service._apply_project_design_invoice_rollup(
                 projects_data, design_date_map, invoice_date_map
+            )
+            self.sync_service._apply_project_invoice_date_range_rollup(
+                projects_data, invoice_date_range_map
             )
 
             subitems_written = await self.sync_service._batch_upsert_subitems(subitems_data)

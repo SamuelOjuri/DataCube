@@ -335,6 +335,15 @@ class IntelligentSyncManager:
                 subitems_data = self.sync_service._transform_for_subitems_table(raw_subs)
                 updated = await self.sync_service._batch_upsert_subitems(subitems_data)
                 stats["subitems_updated"] += updated
+                rollup_parent_ids = self.sync_service._collect_parent_ids(subitems_data)
+                rollup_updates = await self.sync_service._refresh_project_order_invoice_rollups(
+                    rollup_parent_ids
+                )
+                if rollup_updates:
+                    logger.info(
+                        "[rehydrate][subitems] refreshed %d parent rollup fields",
+                        rollup_updates,
+                    )
 
                 sub_pages += 1
                 sub_processed += len(subitems_data)

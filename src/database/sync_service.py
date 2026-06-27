@@ -344,13 +344,38 @@ class DataSyncService:
     def _compute_project_rollups_from_persisted_subitems(
         self,
         parent_ids: List[str],
-    ) -> Tuple[Dict[str, float], Dict[str, str], Dict[str, float], Dict[str, float], Dict[str, int]]:
+    ) -> Tuple[
+        Dict[str, float],
+        Dict[str, str],
+        Dict[str, float],
+        Dict[str, float],
+        Dict[str, int],
+        Dict[str, str],
+        Dict[str, str],
+        Dict[str, int],
+    ]:
         persisted_rows = self._load_persisted_subitems_for_rollups(parent_ids)
 
         order_total_map, order_date_map = self._rollup_order_values_from_subitems(
             persisted_rows
         )
         invoice_total_map = self._rollup_invoice_totals_from_subitems(persisted_rows)
+        invoice_range_map = self._rollup_invoice_date_ranges_from_subitems(persisted_rows)
+        first_invoice_date_map = {
+            pid: row["first_date_invoiced"]
+            for pid, row in invoice_range_map.items()
+            if row.get("first_date_invoiced")
+        }
+        last_invoice_date_map = {
+            pid: row["last_date_invoiced"]
+            for pid, row in invoice_range_map.items()
+            if row.get("last_date_invoiced")
+        }
+        invoice_spread_map = {
+            pid: int(row["invoicing_spread_days"])
+            for pid, row in invoice_range_map.items()
+            if row.get("invoicing_spread_days") is not None
+        }
         new_enquiry_map = self._rollup_new_enquiry_from_subitems(persisted_rows)
         gestation_map = self._compute_persisted_gestation_rollup_from_subitems(
             persisted_rows
@@ -359,13 +384,17 @@ class DataSyncService:
         logger.info(
             (
                 "Persisted subitem rollups computed | parents=%d subitems=%d "
-                "order_totals=%d order_dates=%d invoice_totals=%d new_enquiry=%d gestation=%d"
+                "order_totals=%d order_dates=%d invoice_totals=%d invoice_first=%d "
+                "invoice_last=%d invoice_spreads=%d new_enquiry=%d gestation=%d"
             ),
             len(parent_ids),
             len(persisted_rows),
             len(order_total_map),
             len(order_date_map),
             len(invoice_total_map),
+            len(first_invoice_date_map),
+            len(last_invoice_date_map),
+            len(invoice_spread_map),
             len(new_enquiry_map),
             len(gestation_map),
         )
@@ -376,6 +405,9 @@ class DataSyncService:
             invoice_total_map,
             new_enquiry_map,
             gestation_map,
+            first_invoice_date_map,
+            last_invoice_date_map,
+            invoice_spread_map,
         )
 
     def _compute_persisted_gestation_rollup_from_subitems(self, subitems_data: List[Dict]) -> Dict[str, int]:
@@ -532,6 +564,9 @@ class DataSyncService:
             invoice_total_map,
             new_enquiry_map,
             gestation_map,
+            first_invoice_date_map,
+            last_invoice_date_map,
+            invoice_spread_map,
         ) = self._compute_project_rollups_from_persisted_subitems(cleaned_parent_ids)
 
         updated = 0
@@ -541,6 +576,12 @@ class DataSyncService:
             ("date_order_received", order_date_map),
         ]:
             updated += await self._batch_update_rollup_column(col, src_map)
+
+        updated += await self._batch_update_invoice_date_range_rollups(
+            cleaned_parent_ids,
+            first_invoice_date_map,
+            last_invoice_date_map,
+        )
 
         updated += await self._batch_fill_missing_numeric_rollup_column(
             "new_enquiry_value",
@@ -565,6 +606,87 @@ class DataSyncService:
             updated,
         )
         return updated
+
+    async def _refresh_linked_subitem_rollup_fields_from_hidden_items(
+        self,
+        hidden_data: List[Dict[str, Any]],
+    ) -> Tuple[int, List[str]]:
+        hidden_by_id = {
+            str(row.get("monday_id") or "").strip(): row
+            for row in (hidden_data or [])
+            if str(row.get("monday_id") or "").strip()
+        }
+        if not hidden_by_id:
+            return 0, []
+
+        transactional_fields = (
+            "invoice_date",
+            "amount_invoiced",
+            "date_order_received",
+            "cust_order_value_material",
+        )
+        hidden_ids = sorted(hidden_by_id)
+        related_subitems: List[Dict[str, Any]] = []
+        batch_size = 500
+
+        for start in range(0, len(hidden_ids), batch_size):
+            batch = hidden_ids[start : start + batch_size]
+            try:
+                result = (
+                    self.supabase_client.client.table("subitems")
+                    .select("monday_id, parent_monday_id, hidden_item_id")
+                    .in_("hidden_item_id", batch)
+                    .execute()
+                )
+                related_subitems.extend(result.data or [])
+            except Exception as e:
+                logger.error(
+                    "Failed loading subitems linked to hidden items for rollup refresh: %s",
+                    e,
+                )
+
+        updated = 0
+        parent_ids: Set[str] = set()
+        for subitem in related_subitems:
+            hidden_id = str(subitem.get("hidden_item_id") or "").strip()
+            hidden_row = hidden_by_id.get(hidden_id)
+            subitem_id = str(subitem.get("monday_id") or "").strip()
+            if not hidden_row or not subitem_id:
+                continue
+
+            payload = {
+                field: hidden_row.get(field)
+                for field in transactional_fields
+                if field in hidden_row
+            }
+            if not payload:
+                continue
+
+            payload["last_synced_at"] = datetime.now().isoformat()
+            try:
+                self.supabase_client.client.table("subitems") \
+                    .update(payload) \
+                    .eq("monday_id", subitem_id) \
+                    .execute()
+                updated += 1
+                parent_id = str(subitem.get("parent_monday_id") or "").strip()
+                if parent_id:
+                    parent_ids.add(parent_id)
+            except Exception as e:
+                logger.error(
+                    "Failed updating linked subitem %s from hidden item %s: %s",
+                    subitem_id,
+                    hidden_id,
+                    e,
+                )
+
+        if updated:
+            logger.info(
+                "Hidden-item rollup field refresh: %d subitems updated, %d parents affected",
+                updated,
+                len(parent_ids),
+            )
+        return updated, sorted(parent_ids)
 
     # -----------------------------------------------------------------
     # Product-key normalisation helpers
@@ -627,6 +749,9 @@ class DataSyncService:
             design_date_map, invoice_date_map = self._rollup_design_invoice_dates_from_subitems(
                 subitems_data
             )
+            invoice_date_range_map = self._rollup_invoice_date_ranges_from_subitems(
+                subitems_data
+            )
             parent_ids_for_rollups = self._collect_rollup_parent_ids(
                 project_rows=processed_data["projects"],
                 subitems_data=subitems_data,
@@ -637,6 +762,9 @@ class DataSyncService:
             self._apply_project_gestation_fallback(projects_data, gmap)
             self._apply_project_design_invoice_rollup(
                 projects_data, design_date_map, invoice_date_map
+            )
+            self._apply_project_invoice_date_range_rollup(
+                projects_data, invoice_date_range_map
             )
 
             stats = {
@@ -989,16 +1117,24 @@ class DataSyncService:
                 hidden_data: List[Dict] = []
                 subitems_data: List[Dict] = []
                 projects_data: List[Dict] = []
+                hidden_rollup_parent_ids: List[str] = []
 
                 rollup_map: Dict[str, float] = {}
                 gmap: Dict[str, int] = {}
                 design_date_map: Dict[str, str] = {}
                 invoice_date_map: Dict[str, str] = {}
+                invoice_date_range_map: Dict[str, Dict[str, Any]] = {}
                 parent_ids_for_rollups: List[str] = []
 
                 if processed_data["hidden"]:
                     hidden_data = self._transform_for_hidden_table(processed_data["hidden"])
                     stats["updated"] += await self._batch_upsert_hidden_items(hidden_data)
+                    hidden_subitem_updates, hidden_rollup_parent_ids = (
+                        await self._refresh_linked_subitem_rollup_fields_from_hidden_items(
+                            hidden_data
+                        )
+                    )
+                    stats["updated"] += hidden_subitem_updates
                     stats["processed"] += len(hidden_data)
 
                 if processed_data["subitems"]:
@@ -1008,12 +1144,20 @@ class DataSyncService:
                     design_date_map, invoice_date_map = self._rollup_design_invoice_dates_from_subitems(
                         subitems_data
                     )
+                    invoice_date_range_map = self._rollup_invoice_date_ranges_from_subitems(
+                        subitems_data
+                    )
                     stats["updated"] += await self._batch_upsert_subitems(subitems_data)
                     stats["processed"] += len(subitems_data)
 
-                parent_ids_for_rollups = self._collect_rollup_parent_ids(
-                    project_rows=processed_data["projects"],
-                    subitems_data=subitems_data,
+                parent_ids_for_rollups = sorted(
+                    set(hidden_rollup_parent_ids)
+                    | set(
+                        self._collect_rollup_parent_ids(
+                            project_rows=processed_data["projects"],
+                            subitems_data=subitems_data,
+                        )
+                    )
                 )
 
                 if processed_data["projects"]:
@@ -1022,6 +1166,9 @@ class DataSyncService:
                     self._apply_project_gestation_fallback(projects_data, gmap)
                     self._apply_project_design_invoice_rollup(
                         projects_data, design_date_map, invoice_date_map
+                    )
+                    self._apply_project_invoice_date_range_rollup(
+                        projects_data, invoice_date_range_map
                     )
                     stats["updated"] += await self._batch_upsert_projects(projects_data)
                     stats["processed"] += len(projects_data)
@@ -1033,6 +1180,7 @@ class DataSyncService:
                     or gmap
                     or design_date_map
                     or invoice_date_map
+                    or invoice_date_range_map
                     or parent_ids_for_rollups
                 ):
                     stats["updated"] += await self._refresh_project_order_invoice_rollups(
@@ -1079,6 +1227,17 @@ class DataSyncService:
                             for pid, val in invoice_date_map.items()
                             if val
                         )
+                    if invoice_date_range_map:
+                        patch.extend(
+                            {
+                                "monday_id": pid,
+                                "first_date_invoiced": row.get("first_date_invoiced"),
+                                "last_date_invoiced": row.get("last_date_invoiced"),
+                                "last_synced_at": datetime.now().isoformat(),
+                            }
+                            for pid, row in invoice_date_range_map.items()
+                            if row.get("first_date_invoiced")
+                        )
 
                     if patch:
                         existing_ids = self.supabase_client.get_existing_project_ids()
@@ -1097,6 +1256,7 @@ class DataSyncService:
                                         "date_order_received",
                                         "first_date_designed",
                                         "first_date_invoiced",
+                                        "last_date_invoiced",
                                         "last_synced_at",
                                     )
                                 }
@@ -1524,6 +1684,7 @@ class DataSyncService:
                     "date_received": self._parse_date_value(normalized_item.get("date_received")),
                     "date_design_completed": self._parse_date_value(normalized_item.get("date_design_completed")),
                     "invoice_date": self._parse_date_value(normalized_item.get("invoice_date")),
+                    "amount_invoiced": self._parse_numeric_value(normalized_item.get("amount_invoiced")),
                     "date_order_received": self._parse_date_value(normalized_item.get("date_order_received")),
                     "cust_order_value_material": self._parse_numeric_value(
                         normalized_item.get("cust_order_value_material")
@@ -1876,7 +2037,6 @@ class DataSyncService:
         subitems_data: List[Dict]
     ) -> Tuple[Dict[str, str], Dict[str, str]]:
         design_min: Dict[str, datetime] = {}
-        invoice_min: Dict[str, datetime] = {}
 
         def _to_dt(value: Any) -> Optional[datetime]:
             parsed = self._parse_date_value(value)
@@ -1896,13 +2056,64 @@ class DataSyncService:
             if d_dt and (pid not in design_min or d_dt < design_min[pid]):
                 design_min[pid] = d_dt
 
-            i_dt = _to_dt(s.get("invoice_date"))
-            if i_dt and (pid not in invoice_min or i_dt < invoice_min[pid]):
-                invoice_min[pid] = i_dt
-
         design_map = {pid: dt.date().isoformat() for pid, dt in design_min.items()}
-        invoice_map = {pid: dt.date().isoformat() for pid, dt in invoice_min.items()}
+        invoice_range_map = self._rollup_invoice_date_ranges_from_subitems(subitems_data)
+        invoice_map = {
+            pid: row["first_date_invoiced"]
+            for pid, row in invoice_range_map.items()
+            if row.get("first_date_invoiced")
+        }
         return design_map, invoice_map
+
+    def _rollup_invoice_date_ranges_from_subitems(
+        self,
+        subitems_data: List[Dict]
+    ) -> Dict[str, Dict[str, Any]]:
+        invoice_min: Dict[str, datetime] = {}
+        invoice_max: Dict[str, datetime] = {}
+        invoice_count: Dict[str, int] = {}
+
+        def _to_dt(value: Any) -> Optional[datetime]:
+            parsed = self._parse_date_value(value)
+            if not parsed:
+                return None
+            try:
+                return datetime.strptime(parsed, "%Y-%m-%d")
+            except Exception:
+                return None
+
+        for s in subitems_data or []:
+            pid = str(s.get("parent_monday_id") or "").strip()
+            if not pid:
+                continue
+
+            invoice_dt = _to_dt(s.get("invoice_date"))
+            if not invoice_dt:
+                continue
+
+            if pid not in invoice_min or invoice_dt < invoice_min[pid]:
+                invoice_min[pid] = invoice_dt
+            if pid not in invoice_max or invoice_dt > invoice_max[pid]:
+                invoice_max[pid] = invoice_dt
+            invoice_count[pid] = invoice_count.get(pid, 0) + 1
+
+        invoice_ranges: Dict[str, Dict[str, Any]] = {}
+        for pid, first_dt in invoice_min.items():
+            last_dt = invoice_max[pid]
+            spread_days = max(0, (last_dt.date() - first_dt.date()).days)
+            invoice_ranges[pid] = {
+                "first_date_invoiced": first_dt.date().isoformat(),
+                "last_date_invoiced": last_dt.date().isoformat(),
+                "invoice_date_count": invoice_count.get(pid, 0),
+                "invoicing_spread_days": int(spread_days),
+            }
+
+        logger.info(
+            "Invoice date range rollup computed: %d parents with invoice dates (from %d subitems)",
+            len(invoice_ranges),
+            len(subitems_data or []),
+        )
+        return invoice_ranges
 
     def _apply_project_design_invoice_rollup(
         self,
@@ -1945,6 +2156,31 @@ class DataSyncService:
                             p["first_date_invoiced"] = rolled_invoice
                     except Exception:
                         p["first_date_invoiced"] = rolled_invoice
+
+    def _apply_project_invoice_date_range_rollup(
+        self,
+        projects_data: List[Dict],
+        invoice_date_range_map: Dict[str, Dict[str, Any]],
+    ) -> None:
+        if not projects_data or not invoice_date_range_map:
+            return
+
+        for p in projects_data:
+            pid = str(p.get("monday_id") or p.get("id") or "").strip()
+            if not pid:
+                continue
+
+            rolled_range = invoice_date_range_map.get(pid)
+            if not rolled_range:
+                continue
+
+            first_invoice = self._parse_date_value(rolled_range.get("first_date_invoiced"))
+            last_invoice = self._parse_date_value(rolled_range.get("last_date_invoiced"))
+            if not first_invoice or not last_invoice:
+                continue
+
+            p["first_date_invoiced"] = first_invoice
+            p["last_date_invoiced"] = last_invoice
 
     def _apply_project_invoice_total_rollup(
         self,
@@ -2122,6 +2358,40 @@ class DataSyncService:
                 logger.error(f"Rollup update [{column}] failed for {pid}: {e}")
         if updated:
             logger.info(f"Rollup update [{column}]: {updated} projects updated")
+        return updated
+
+    async def _batch_update_invoice_date_range_rollups(
+        self,
+        parent_ids: List[str],
+        first_invoice_date_map: Dict[str, str],
+        last_invoice_date_map: Dict[str, str],
+    ) -> int:
+        updated = 0
+        for pid in parent_ids:
+            if not pid:
+                continue
+
+            first_invoice = first_invoice_date_map.get(pid)
+            last_invoice = last_invoice_date_map.get(pid)
+
+            payload = {
+                "first_date_invoiced": first_invoice,
+                "last_date_invoiced": last_invoice,
+            }
+            try:
+                self.supabase_client.client.table("projects") \
+                    .update(payload) \
+                    .eq("monday_id", pid) \
+                    .execute()
+                updated += 1
+            except Exception as e:
+                logger.error(f"Invoice date range rollup update failed for {pid}: {e}")
+
+        if updated:
+            logger.info(
+                "Invoice date range rollup update: %d projects updated",
+                updated,
+            )
         return updated
 
     async def _batch_upsert_subitems(self, subitems_data: List[Dict]) -> int:

@@ -294,11 +294,17 @@ def _install_trace_hooks() -> None:
             invoice_totals,
             new_enquiry_totals,
             gestation_totals,
+            first_invoice_dates,
+            last_invoice_dates,
+            invoice_spreads,
         ) = result
         logger.info("TRACE persisted parent_ids: %s", parent_ids)
         logger.info("TRACE persisted order totals: %s", order_totals)
         logger.info("TRACE persisted order dates: %s", order_dates)
         logger.info("TRACE persisted invoice totals: %s", invoice_totals)
+        logger.info("TRACE persisted first invoice dates: %s", first_invoice_dates)
+        logger.info("TRACE persisted last invoice dates: %s", last_invoice_dates)
+        logger.info("TRACE persisted invoice spreads: %s", invoice_spreads)
         logger.info("TRACE persisted new enquiry totals: %s", new_enquiry_totals)
         logger.info("TRACE persisted gestation totals: %s", gestation_totals)
         return result

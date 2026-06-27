@@ -1,202 +1,62 @@
--- Enhanced monitoring views and functions for DataCube
+-- Database maintenance and snapshot functions
 
--- Sync health monitoring view
-CREATE OR REPLACE VIEW sync_health AS
-SELECT 
-    board_id,
-    board_name,
-    MAX(completed_at) as last_sync,
-    COUNT(*) as total_syncs,
-    COUNT(*) FILTER (WHERE status = 'completed') as successful_syncs,
-    COUNT(*) FILTER (WHERE status = 'failed') as failed_syncs,
-    COUNT(*) FILTER (WHERE status = 'running') as running_syncs,
-    ROUND(
-        COUNT(*) FILTER (WHERE status = 'completed')::numeric / 
-        NULLIF(COUNT(*), 0) * 100, 2
-    ) as success_rate_percent,
-    AVG(items_processed) FILTER (WHERE status = 'completed') as avg_items_processed,
-    AVG(
-        EXTRACT(EPOCH FROM (completed_at - started_at))
-    ) FILTER (WHERE status = 'completed') as avg_duration_seconds,
-    MAX(started_at) as last_sync_attempt
-FROM sync_log
-WHERE started_at > NOW() - INTERVAL '7 days'
-GROUP BY board_id, board_name;
+DROP FUNCTION IF EXISTS public.refresh_analytics_views();
 
--- Data freshness monitoring
-CREATE OR REPLACE VIEW data_freshness AS
-SELECT
-    'projects' as table_name,
-    COUNT(*) as total_records,
-    COUNT(*) FILTER (WHERE last_synced_at > NOW() - INTERVAL '1 hour') as fresh_1h,
-    COUNT(*) FILTER (WHERE last_synced_at > NOW() - INTERVAL '24 hours') as fresh_24h,
-    COUNT(*) FILTER (WHERE last_synced_at < NOW() - INTERVAL '24 hours') as stale_24h,
-    MIN(last_synced_at) as oldest_sync,
-    MAX(last_synced_at) as newest_sync,
-    ROUND(
-        EXTRACT(EPOCH FROM (NOW() - (NOW() - AVG(EXTRACT(EPOCH FROM (NOW() - last_synced_at))) * INTERVAL '1 second'))) / 3600, 2
-    ) as avg_age_hours
-FROM projects
-UNION ALL
-SELECT
-    'subitems' as table_name,
-    COUNT(*),
-    COUNT(*) FILTER (WHERE last_synced_at > NOW() - INTERVAL '1 hour'),
-    COUNT(*) FILTER (WHERE last_synced_at > NOW() - INTERVAL '24 hours'),
-    COUNT(*) FILTER (WHERE last_synced_at < NOW() - INTERVAL '24 hours'),
-    MIN(last_synced_at),
-    MAX(last_synced_at),
-    ROUND(
-        AVG(EXTRACT(EPOCH FROM (NOW() - last_synced_at))) / 3600, 2
-    )
-FROM subitems
-UNION ALL
-SELECT
-    'hidden_items' as table_name,
-    COUNT(*),
-    COUNT(*) FILTER (WHERE last_synced_at > NOW() - INTERVAL '1 hour'),
-    COUNT(*) FILTER (WHERE last_synced_at > NOW() - INTERVAL '24 hours'),
-    COUNT(*) FILTER (WHERE last_synced_at < NOW() - INTERVAL '24 hours'),
-    MIN(last_synced_at),
-    MAX(last_synced_at),
-    ROUND(
-        AVG(EXTRACT(EPOCH FROM (NOW() - last_synced_at))) / 3600, 2
-    )
-FROM hidden_items;
-
--- Webhook processing metrics
-CREATE OR REPLACE VIEW webhook_metrics AS
-SELECT
-    event_type,
-    board_id,
-    COUNT(*) as total_events,
-    COUNT(*) FILTER (WHERE status = 'processed') as processed_events,
-    COUNT(*) FILTER (WHERE status = 'failed') as failed_events,
-    COUNT(*) FILTER (WHERE status = 'pending') as pending_events,
-    ROUND(
-        COUNT(*) FILTER (WHERE status = 'processed')::numeric / 
-        NULLIF(COUNT(*), 0) * 100, 2
-    ) as success_rate_percent,
-    AVG(
-        EXTRACT(EPOCH FROM (processed_at - received_at))
-    ) FILTER (WHERE processed_at IS NOT NULL) as avg_processing_seconds,
-    MAX(received_at) as last_webhook_received
-FROM webhook_events
-WHERE received_at > NOW() - INTERVAL '24 hours'
-GROUP BY event_type, board_id;
-
--- System performance overview
-CREATE OR REPLACE VIEW system_performance AS
-SELECT
-    'Database Size' as metric,
-    pg_size_pretty(pg_database_size(current_database())) as value,
-    'info' as status
-UNION ALL
-SELECT
-    'Active Connections' as metric,
-    COUNT(*)::text as value,
-    CASE 
-        WHEN COUNT(*) > 80 THEN 'warning'
-        WHEN COUNT(*) > 50 THEN 'caution'
-        ELSE 'healthy'
-    END as status
-FROM pg_stat_activity
-WHERE state = 'active'
-UNION ALL
-SELECT
-    'Failed Syncs (24h)' as metric,
-    COUNT(*)::text as value,
-    CASE 
-        WHEN COUNT(*) > 10 THEN 'critical'
-        WHEN COUNT(*) > 5 THEN 'warning'
-        ELSE 'healthy'
-    END as status
-FROM sync_log
-WHERE started_at > NOW() - INTERVAL '24 hours' AND status = 'failed';
-
--- Function to get account performance
-CREATE OR REPLACE FUNCTION get_account_performance(account_name TEXT)
-RETURNS JSONB AS $$
-DECLARE
-    result JSONB;
+CREATE OR REPLACE FUNCTION public.refresh_analytics_views()
+RETURNS void AS $$
 BEGIN
-    SELECT jsonb_build_object(
-        'account', account_name,
-        'total_projects', COUNT(*),
-        'won_projects', COUNT(*) FILTER (WHERE status_category = 'Won'),
-        'lost_projects', COUNT(*) FILTER (WHERE status_category = 'Lost'),
-        'open_projects', COUNT(*) FILTER (WHERE status_category = 'Open'),
-        'win_rate', ROUND(
-            COUNT(*) FILTER (WHERE status_category = 'Won')::numeric / 
-            NULLIF(COUNT(*), 0), 3
-        ),
-        'avg_project_value', ROUND(AVG(new_enquiry_value), 2),
-        'total_value', ROUND(SUM(new_enquiry_value), 2),
-        'avg_gestation_days', ROUND(AVG(gestation_period) FILTER (WHERE gestation_period > 0), 1),
-        'recent_activity', COUNT(*) FILTER (WHERE date_created > CURRENT_DATE - INTERVAL '90 days')
-    ) INTO result
-    FROM projects
-    WHERE account = account_name
-    AND date_created > CURRENT_DATE - INTERVAL '2 years';
-    
-    RETURN result;
-END;
-$$ LANGUAGE plpgsql;
-
--- Function to refresh materialized views
-CREATE OR REPLACE FUNCTION refresh_analytics_views()
-RETURNS TEXT AS $$
-BEGIN
-    REFRESH MATERIALIZED VIEW conversion_metrics;
-    REFRESH MATERIALIZED VIEW conversion_metrics_recent;
-
-    -- Forecast aggregate refresh (if deployed)
-    IF to_regclass('public.mv_pipeline_forecast_monthly_12m_v1') IS NOT NULL THEN
-        REFRESH MATERIALIZED VIEW mv_pipeline_forecast_monthly_12m_v1;
+    IF to_regclass('public.mv_pipeline_velocity_stats_v1') IS NOT NULL THEN
+        REFRESH MATERIALIZED VIEW public.mv_pipeline_velocity_stats_v1;
     END IF;
 
-    RETURN 'Analytics and forecast views refreshed at ' || NOW()::text;
+    IF to_regclass('public.mv_quote_conversion_stats_v1') IS NOT NULL THEN
+        REFRESH MATERIALIZED VIEW public.mv_quote_conversion_stats_v1;
+    END IF;
+
+    IF to_regclass('public.mv_invoice_smoothing_signal_v1') IS NOT NULL
+       AND to_regprocedure('public.refresh_invoice_smoothing_signal_v1(date)') IS NOT NULL THEN
+        PERFORM public.refresh_invoice_smoothing_signal_v1(CURRENT_DATE);
+    END IF;
+
+    IF to_regclass('public.mv_pipeline_smoothed_revenue_monthly_12m_v1') IS NOT NULL THEN
+        REFRESH MATERIALIZED VIEW public.mv_pipeline_smoothed_revenue_monthly_12m_v1;
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to clean old webhook events
-CREATE OR REPLACE FUNCTION cleanup_old_webhook_events_batch(
-    p_batch_size INTEGER DEFAULT 2000,
-    p_older_than_days INTEGER DEFAULT 30
+CREATE OR REPLACE FUNCTION refresh_conversion_views()
+RETURNS void AS $$
+BEGIN
+    IF to_regclass('public.mv_quote_conversion_stats_v1') IS NOT NULL THEN
+        REFRESH MATERIALIZED VIEW mv_quote_conversion_stats_v1;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION create_pipeline_forecast_snapshot()
+RETURNS void AS $$
+BEGIN
+    INSERT INTO pipeline_forecast_snapshot (
+        forecast_month,
+        forecast_value_net,
+        forecast_value_gross,
+        project_count
+    )
+    SELECT
+        forecast_month,
+        SUM(forecast_value_net),
+        SUM(forecast_value_gross),
+        COUNT(*)
+    FROM vw_pipeline_forecast_monthly_12m_v1
+    GROUP BY forecast_month;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP FUNCTION IF EXISTS public.cleanup_old_pipeline_smoothing_forecast_snapshots(INTEGER);
+
+CREATE OR REPLACE FUNCTION cleanup_old_pipeline_smoothing_forecast_snapshots(
+    retain_days INTEGER DEFAULT 730
 )
-RETURNS INTEGER AS $$
-DECLARE
-    deleted_count INTEGER := 0;
-BEGIN
-    IF p_batch_size IS NULL OR p_batch_size < 1 THEN
-        RAISE EXCEPTION 'p_batch_size must be >= 1, got %', p_batch_size;
-    END IF;
-
-    IF p_older_than_days IS NULL OR p_older_than_days < 1 THEN
-        RAISE EXCEPTION 'p_older_than_days must be >= 1, got %', p_older_than_days;
-    END IF;
-
-    WITH candidates AS (
-        SELECT id
-        FROM webhook_events
-        WHERE received_at < NOW() - (p_older_than_days || ' days')::interval
-          AND status IN ('processed', 'failed', 'processed_with_warnings')
-        ORDER BY received_at ASC
-        LIMIT p_batch_size
-    )
-    DELETE FROM webhook_events w
-    USING candidates c
-    WHERE w.id = c.id;
-
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
-END;
-$$ LANGUAGE plpgsql;
-
-
-
--- Cleanup old forecast snapshots based on retention window
-CREATE OR REPLACE FUNCTION cleanup_old_pipeline_forecast_snapshots(retain_days INTEGER DEFAULT 730)
 RETURNS INTEGER AS $$
 DECLARE
     deleted_count INTEGER := 0;
@@ -205,7 +65,7 @@ BEGIN
         RAISE EXCEPTION 'retain_days must be >= 1, got %', retain_days;
     END IF;
 
-    DELETE FROM pipeline_forecast_snapshot
+    DELETE FROM pipeline_smoothing_forecast_snapshot
     WHERE snapshot_date < (CURRENT_DATE - retain_days);
 
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
@@ -213,46 +73,196 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Insert one daily snapshot set for the 12-month forecast window
-CREATE OR REPLACE FUNCTION create_pipeline_forecast_snapshot(target_snapshot_date DATE DEFAULT CURRENT_DATE)
+DROP FUNCTION IF EXISTS public.create_pipeline_smoothing_forecast_snapshot();
+DROP FUNCTION IF EXISTS public.create_pipeline_smoothing_forecast_snapshot(DATE);
+
+CREATE OR REPLACE FUNCTION create_pipeline_smoothing_forecast_snapshot(
+    target_snapshot_date DATE DEFAULT CURRENT_DATE
+)
 RETURNS INTEGER AS $$
 DECLARE
     inserted_count INTEGER := 0;
 BEGIN
-    -- Idempotent daily snapshot: replace the day if rerun
-    DELETE FROM pipeline_forecast_snapshot
+    DELETE FROM pipeline_smoothing_forecast_snapshot
     WHERE snapshot_date = target_snapshot_date;
 
-    INSERT INTO pipeline_forecast_snapshot (
+    INSERT INTO pipeline_smoothing_forecast_snapshot (
         snapshot_date,
         project_id,
         forecast_month,
         stage_bucket,
-        contract_value,
-        probability,
-        committed_value,
+        base_forecast_month,
+        forecast_date,
+        smoothing_as_of_date,
+        forecast_value_net,
+        forecast_value_gross,
         expected_value,
-        best_case_value,
-        worst_case_value,
-        analysis_timestamp,
+        combined_smoothed_probability,
+        expected_spread_days,
+        risk_band,
+        workbook_suggested_treatment,
+        default_smoothing_recommended,
+        unsmoothed_allocated_value,
+        smoothed_allocated_value,
+        allocated_expected_value,
+        project_count,
+        source_view,
         created_at
+    )
+    WITH bounds AS (
+        SELECT
+            DATE_TRUNC('month', target_snapshot_date)::DATE AS window_start,
+            (DATE_TRUNC('month', target_snapshot_date) + INTERVAL '12 months')::DATE AS window_end
+    ),
+    scored_projects AS (
+        SELECT
+            s.project_id,
+            s.stage_bucket,
+            s.forecast_date::DATE AS forecast_date,
+            s.forecast_month::DATE AS base_forecast_month,
+            s.smoothing_as_of_date,
+            COALESCE(s.expected_value, 0::NUMERIC)::NUMERIC AS expected_value,
+            GREATEST(
+                0::NUMERIC,
+                LEAST(1::NUMERIC, COALESCE(s.combined_smoothed_probability, 0::NUMERIC))
+            ) AS combined_smoothed_probability,
+            GREATEST(0::NUMERIC, COALESCE(s.expected_spread_days, 0::NUMERIC)) AS expected_spread_days,
+            s.risk_band,
+            s.workbook_suggested_treatment,
+            s.default_smoothing_recommended
+        FROM vw_pipeline_smoothing_score_v1 s
+        CROSS JOIN bounds b
+        WHERE s.forecast_month >= b.window_start
+          AND s.forecast_month < b.window_end
+    ),
+    project_values AS (
+        SELECT
+            sp.*,
+            (sp.expected_value * sp.combined_smoothed_probability) AS smoothed_value,
+            (sp.expected_value * (1::NUMERIC - sp.combined_smoothed_probability)) AS unsmoothed_value,
+            GREATEST(CEIL(sp.expected_spread_days)::INTEGER, 1) AS spread_day_count
+        FROM scored_projects sp
+    ),
+    allocation_periods AS (
+        SELECT
+            pv.*,
+            b.window_end,
+            LEAST((pv.forecast_date + pv.spread_day_count)::DATE, b.window_end) AS allocation_end_date
+        FROM project_values pv
+        CROSS JOIN bounds b
+    ),
+    allocation_periods_with_days AS (
+        SELECT
+            ap.*,
+            GREATEST(
+                EXTRACT(EPOCH FROM (ap.allocation_end_date::TIMESTAMP - ap.forecast_date::TIMESTAMP))
+                    / 86400::NUMERIC,
+                1::NUMERIC
+            ) AS allocation_day_count
+        FROM allocation_periods ap
+    ),
+    allocation_rows AS (
+        SELECT
+            ap.project_id,
+            ap.stage_bucket,
+            ap.base_forecast_month AS forecast_month,
+            ap.base_forecast_month,
+            ap.forecast_date,
+            ap.smoothing_as_of_date,
+            ap.expected_value,
+            ap.combined_smoothed_probability,
+            ap.expected_spread_days,
+            ap.risk_band,
+            ap.workbook_suggested_treatment,
+            ap.default_smoothing_recommended,
+            ap.unsmoothed_value AS unsmoothed_allocated_value,
+            0::NUMERIC AS smoothed_allocated_value
+        FROM allocation_periods_with_days ap
+
+        UNION ALL
+
+        SELECT
+            ap.project_id,
+            ap.stage_bucket,
+            allocation_month.month_start::DATE AS forecast_month,
+            ap.base_forecast_month,
+            ap.forecast_date,
+            ap.smoothing_as_of_date,
+            ap.expected_value,
+            ap.combined_smoothed_probability,
+            ap.expected_spread_days,
+            ap.risk_band,
+            ap.workbook_suggested_treatment,
+            ap.default_smoothing_recommended,
+            0::NUMERIC AS unsmoothed_allocated_value,
+            (
+                ap.smoothed_value *
+                GREATEST(
+                    EXTRACT(EPOCH FROM (
+                        LEAST(
+                            ap.allocation_end_date::TIMESTAMP,
+                            (allocation_month.month_start + INTERVAL '1 month')::TIMESTAMP
+                        ) - GREATEST(
+                            ap.forecast_date::TIMESTAMP,
+                            allocation_month.month_start::TIMESTAMP
+                        )
+                    )) / 86400::NUMERIC,
+                    0::NUMERIC
+                ) / ap.allocation_day_count
+            ) AS smoothed_allocated_value
+        FROM allocation_periods_with_days ap
+        CROSS JOIN LATERAL GENERATE_SERIES(
+            DATE_TRUNC('month', ap.forecast_date)::DATE,
+            DATE_TRUNC('month', (ap.allocation_end_date - INTERVAL '1 day')::DATE)::DATE,
+            INTERVAL '1 month'
+        ) AS allocation_month(month_start)
+    ),
+    grouped_allocations AS (
+        SELECT
+            ar.project_id,
+            ar.forecast_month,
+            MIN(ar.stage_bucket) AS stage_bucket,
+            MIN(ar.base_forecast_month) AS base_forecast_month,
+            MIN(ar.forecast_date) AS forecast_date,
+            MIN(ar.smoothing_as_of_date) AS smoothing_as_of_date,
+            MAX(ar.expected_value) AS expected_value,
+            MAX(ar.combined_smoothed_probability) AS combined_smoothed_probability,
+            MAX(ar.expected_spread_days) AS expected_spread_days,
+            MAX(ar.risk_band) AS risk_band,
+            MAX(ar.workbook_suggested_treatment) AS workbook_suggested_treatment,
+            BOOL_OR(COALESCE(ar.default_smoothing_recommended, FALSE)) AS default_smoothing_recommended,
+            SUM(ar.unsmoothed_allocated_value) AS unsmoothed_allocated_value,
+            SUM(ar.smoothed_allocated_value) AS smoothed_allocated_value,
+            SUM(ar.unsmoothed_allocated_value + ar.smoothed_allocated_value) AS allocated_expected_value
+        FROM allocation_rows ar
+        CROSS JOIN bounds b
+        WHERE ar.forecast_month >= b.window_start
+          AND ar.forecast_month < b.window_end
+        GROUP BY ar.project_id, ar.forecast_month
     )
     SELECT
         target_snapshot_date,
-        f.project_id,
-        f.forecast_month,
-        f.stage_bucket,
-        f.contract_value,
-        f.probability,
-        f.committed_value,
-        f.expected_value,
-        f.best_case_value,
-        f.worst_case_value,
-        f.analysis_timestamp,
-        NOW()
-    FROM vw_pipeline_forecast_project_v1 f
-    WHERE f.forecast_month >= DATE_TRUNC('month', target_snapshot_date)::DATE
-      AND f.forecast_month < (DATE_TRUNC('month', target_snapshot_date) + INTERVAL '12 months')::DATE;
+        ga.project_id,
+        ga.forecast_month,
+        ga.stage_bucket,
+        ga.base_forecast_month,
+        ga.forecast_date,
+        ga.smoothing_as_of_date,
+        ROUND(ga.allocated_expected_value, 2)::NUMERIC(18, 2) AS forecast_value_net,
+        ROUND(ga.allocated_expected_value, 2)::NUMERIC(18, 2) AS forecast_value_gross,
+        ROUND(ga.expected_value, 2)::NUMERIC(12, 2) AS expected_value,
+        ROUND(ga.combined_smoothed_probability, 6)::NUMERIC(8, 6) AS combined_smoothed_probability,
+        ROUND(ga.expected_spread_days, 2)::NUMERIC(10, 2) AS expected_spread_days,
+        ga.risk_band,
+        ga.workbook_suggested_treatment,
+        ga.default_smoothing_recommended,
+        ROUND(ga.unsmoothed_allocated_value, 2)::NUMERIC(12, 2) AS unsmoothed_allocated_value,
+        ROUND(ga.smoothed_allocated_value, 2)::NUMERIC(12, 2) AS smoothed_allocated_value,
+        ROUND(ga.allocated_expected_value, 2)::NUMERIC(12, 2) AS allocated_expected_value,
+        1::INTEGER AS project_count,
+        'vw_pipeline_smoothing_score_v1'::TEXT AS source_view,
+        CURRENT_TIMESTAMP
+    FROM grouped_allocations ga;
 
     GET DIAGNOSTICS inserted_count = ROW_COUNT;
     RETURN inserted_count;

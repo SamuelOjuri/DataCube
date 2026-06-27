@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from typing import Any, Sequence
 
 import psycopg
@@ -25,7 +26,7 @@ def _get_dsn() -> str:
 
 
 @pytest.fixture(scope="module")
-def conn() -> psycopg.Connection[Any]:
+def conn() -> Iterator[psycopg.Connection[Any]]:
     with psycopg.connect(_get_dsn()) as connection:
         yield connection
 
@@ -82,22 +83,29 @@ def test_stage_bucket_mapping_correctness(conn: psycopg.Connection[Any]) -> None
     assert mismatches == 0, f"Found {mismatches} stage-bucket mapping mismatches"
 
 
-def test_contract_value_practical_fallback(conn: psycopg.Connection[Any]) -> None:
+def test_contract_value_stage_aware_fallback(conn: psycopg.Connection[Any]) -> None:
     mismatches = _scalar(
         conn,
         """
         SELECT COUNT(*)
         FROM vw_pipeline_forecast_project_v1
-        WHERE contract_value <> COALESCE(
-            NULLIF(total_order_value, 0),
-            NULLIF(new_enquiry_value, 0),
-            0
-        )::NUMERIC(12,2);
+        WHERE contract_value <> CASE
+            WHEN pipeline_stage IN (
+                'Won - Closed (Invoiced)',
+                'Won - Open (Order Received)',
+                'Won Via Other Ref'
+            )
+                THEN COALESCE(NULLIF(total_order_value, 0), NULLIF(new_enquiry_value, 0), 0)
+            WHEN pipeline_stage = 'Lost'
+                THEN COALESCE(NULLIF(new_enquiry_value, 0), NULLIF(total_order_value, 0), 0)
+            ELSE
+                COALESCE(NULLIF(new_enquiry_value, 0), NULLIF(total_order_value, 0), 0)
+        END::NUMERIC(12,2);
         """,
     )
     assert (
         mismatches == 0
-    ), f"Found {mismatches} contract-value practical fallback mismatches"
+    ), f"Found {mismatches} contract-value stage-aware fallback mismatches"
 
 
 def test_monthly_12m_window_clamping(conn: psycopg.Connection[Any]) -> None:

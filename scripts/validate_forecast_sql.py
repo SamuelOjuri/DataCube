@@ -26,14 +26,21 @@ CHECKS: dict[str, str] = {
             ELSE 'Open'
         END;
     """,
-    "contract_value_fallback_mismatches": """
+    "contract_value_stage_aware_fallback_mismatches": """
         SELECT COUNT(*)
         FROM vw_pipeline_forecast_project_v1
-        WHERE contract_value <> COALESCE(
-            NULLIF(total_order_value, 0),
-            NULLIF(new_enquiry_value, 0),
-            0
-        )::NUMERIC(12,2);
+        WHERE contract_value <> CASE
+            WHEN pipeline_stage IN (
+                'Won - Closed (Invoiced)',
+                'Won - Open (Order Received)',
+                'Won Via Other Ref'
+            )
+                THEN COALESCE(NULLIF(total_order_value, 0), NULLIF(new_enquiry_value, 0), 0)
+            WHEN pipeline_stage = 'Lost'
+                THEN COALESCE(NULLIF(new_enquiry_value, 0), NULLIF(total_order_value, 0), 0)
+            ELSE
+                COALESCE(NULLIF(new_enquiry_value, 0), NULLIF(total_order_value, 0), 0)
+        END::NUMERIC(12,2);
     """,
     "monthly_window_out_of_range_rows": """
         WITH bounds AS (
