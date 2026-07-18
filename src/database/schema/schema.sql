@@ -2051,3 +2051,36 @@ SELECT
     actual_revenue
 FROM vw_actual_revenue_monthly_v1
 ORDER BY month_start;
+
+-- ===========================================================================================================================================
+-- Monthly Weighted Enquiry Value View: Uses new_enquiry_value and expected_conversion_rate from the projects table and analysis_results table
+-- ===========================================================================================================================================
+
+CREATE OR REPLACE VIEW vw_weighted_enquiry_value_monthly_v1 AS
+WITH latest_analysis AS (
+    SELECT
+        ar.project_id,
+        ar.expected_conversion_rate,
+        ROW_NUMBER() OVER (
+            PARTITION BY ar.project_id
+            ORDER BY ar.analysis_timestamp DESC NULLS LAST, ar.id DESC
+        ) AS rn
+    FROM analysis_results ar
+)
+SELECT
+    DATE_TRUNC('month', p.date_created)::DATE AS enquiry_month,
+    COUNT(*)::INTEGER AS enquiry_count_all,
+    SUM(CASE WHEN COALESCE(p.new_enquiry_value, 0) > 0 THEN 1 ELSE 0 END)::INTEGER AS enquiry_count_valued,
+    SUM(
+        GREATEST(COALESCE(p.new_enquiry_value, 0), 0)
+        * GREATEST(0::NUMERIC, LEAST(1::NUMERIC, COALESCE(la.expected_conversion_rate, 0::NUMERIC)))
+    )::FLOAT8 AS weighted_enquiry_value
+FROM projects p
+LEFT JOIN latest_analysis la
+    ON la.project_id = p.monday_id
+   AND la.rn = 1
+WHERE p.date_created IS NOT NULL
+  AND p.date_created >= DATE '2022-01-01'
+  AND DATE_TRUNC('month', p.date_created)::DATE < DATE_TRUNC('month', CURRENT_DATE)::DATE
+GROUP BY 1
+ORDER BY 1;
