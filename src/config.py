@@ -5,8 +5,15 @@ Contains all board IDs, column mappings, and API settings.
 
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from typing import Optional, Dict, List
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    # Forecast-only runtimes do not need .env loading when they replay an
+    # already-extracted local dataset.
+    def load_dotenv(*args, **kwargs):
+        return False
 
 # Load environment variables
 load_dotenv()

@@ -2217,3 +2217,639 @@ WHERE p.date_created IS NOT NULL
   AND DATE_TRUNC('month', p.date_created)::DATE < DATE_TRUNC('month', CURRENT_DATE)::DATE
 GROUP BY 1
 ORDER BY 1;
+
+####################################################
+
+-- ============================================================================================
+-- Segmented Weighted Enquiry Forecast - Phase 2 (Supabase layer)
+--
+-- Mirrors src/config.py (CANONICAL_PRODUCT_KEYS, PRODUCT_TYPE_ALIASES, CATEGORY_LABELS) and
+-- src/core/normalization.py, plus the allocation rules in
+-- src/services/segmented_weighted_enquiry_forecast.py, so that the live Postgres views can be
+-- validated against the frozen Python-allocator baseline (see Phase 3 tests/validation script
+-- and outputs/segmented_weighted_enquiry_baseline_frozen/).
+--
+-- Read-only surface for Power BI: only the two vw_weighted_enquiry_* views below are granted to
+-- the power_bi_reader role. Underlying tables (projects, subitems, analysis_results) are never
+-- granted directly.
+-- ============================================================================================
+
+DROP VIEW IF EXISTS public.vw_weighted_enquiry_leaf_monthly_v1;
+DROP VIEW IF EXISTS public.vw_weighted_enquiry_project_leaf_allocation_v1;
+DROP FUNCTION IF EXISTS public.weighted_enquiry_category_segments(TEXT);
+DROP FUNCTION IF EXISTS public.weighted_enquiry_category_segment(TEXT);
+DROP FUNCTION IF EXISTS public.weighted_enquiry_category_label(TEXT);
+DROP FUNCTION IF EXISTS public.weighted_enquiry_products(TEXT);
+DROP FUNCTION IF EXISTS public.weighted_enquiry_product_key(TEXT);
+DROP FUNCTION IF EXISTS public.weighted_enquiry_normalize_text_key(TEXT);
+
+-- ------------------------------------------------------------------
+-- 4. SQL normalization primitives matching src/core/normalization.py
+--    (defined first because taxonomy alias seed data below depends on them)
+-- ------------------------------------------------------------------
+
+-- Mirrors normalize_text_key() exactly: lower-case; collapse whitespace around "/" and "-";
+-- collapse whitespace around "(" and ")"; re-insert a single space before "(" when it directly
+-- follows a non-space character; then collapse any remaining whitespace runs to one space.
+CREATE OR REPLACE FUNCTION public.weighted_enquiry_normalize_text_key(raw_value TEXT)
+RETURNS TEXT AS $$
+    SELECT REGEXP_REPLACE(
+        REGEXP_REPLACE(
+            REGEXP_REPLACE(
+                REGEXP_REPLACE(
+                    REGEXP_REPLACE(
+                        LOWER(BTRIM(COALESCE(raw_value, ''))),
+                        '[[:space:]]*/[[:space:]]*', '/', 'g'
+                    ),
+                    '[[:space:]]*-[[:space:]]*', '-', 'g'
+                ),
+                '[[:space:]]*\([[:space:]]*', '(', 'g'
+            ),
+            '[[:space:]]*\)[[:space:]]*', ')', 'g'
+        ),
+        '([^[:space:]])\(', '\1 (', 'g'
+    );
+$$ LANGUAGE sql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION public.weighted_enquiry_normalize_text_key(raw_value TEXT, recurse BOOLEAN)
+RETURNS TEXT AS $$
+    SELECT BTRIM(REGEXP_REPLACE(public.weighted_enquiry_normalize_text_key(raw_value), '[[:space:]]+', ' ', 'g'));
+$$ LANGUAGE sql IMMUTABLE;
+
+-- ------------------------------------------------------------------
+-- 5. Product & category taxonomy tables, seeded from src/config.py
+-- ------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.weighted_enquiry_product_taxonomy (
+    canonical_product_key TEXT PRIMARY KEY,
+    reporting_segment TEXT NOT NULL CHECK (reporting_segment IN ('Non-Combustible', 'Combustible'))
+);
+
+-- CANONICAL_PRODUCT_KEYS + NON_COMBUSTIBLE_PRODUCT_KEYS (segmented_weighted_enquiry_forecast.py)
+INSERT INTO public.weighted_enquiry_product_taxonomy (canonical_product_key, reporting_segment) VALUES
+    ('pir_tissue', 'Combustible'),
+    ('pir_foil', 'Combustible'),
+    ('pir_torchon', 'Combustible'),
+    ('pir_prebonded', 'Combustible'),
+    ('eps_standard', 'Combustible'),
+    ('eps_inverted', 'Combustible'),
+    ('eps_pir_composite', 'Combustible'),
+    ('xps', 'Combustible'),
+    ('vips', 'Combustible'),
+    ('hardrock', 'Non-Combustible'),
+    ('rockdeck', 'Non-Combustible'),
+    ('t3_system', 'Non-Combustible'),
+    ('unknown', 'Combustible')
+ON CONFLICT (canonical_product_key) DO UPDATE SET reporting_segment = EXCLUDED.reporting_segment;
+
+CREATE TABLE IF NOT EXISTS public.weighted_enquiry_product_alias_map (
+    alias_normalized TEXT PRIMARY KEY,
+    canonical_product_key TEXT NOT NULL REFERENCES public.weighted_enquiry_product_taxonomy(canonical_product_key)
+);
+
+-- PRODUCT_TYPE_ALIASES (config.py), keys pre-normalized to match
+-- public.weighted_enquiry_normalize_text_key() output (lower-case, slash/hyphen/paren/whitespace collapse).
+INSERT INTO public.weighted_enquiry_product_alias_map (alias_normalized, canonical_product_key) VALUES
+    ('tf pir', 'pir_tissue'),
+    ('tissue faced pir', 'pir_tissue'),
+    ('foil faced pir', 'pir_foil'),
+    ('enertherm', 'pir_foil'),
+    ('torchon pir', 'pir_torchon'),
+    ('torch on pir', 'pir_torchon'),
+    ('tissue faced pir (prebonded)', 'pir_prebonded'),
+    ('torchon pir (prebonded)', 'pir_prebonded'),
+    ('torch on pir (prebonded)', 'pir_prebonded'),
+    ('foil faced pir (prebonded)', 'pir_prebonded'),
+    ('eps', 'eps_standard'),
+    ('eps 150 (spr)', 'eps_standard'),
+    ('eps 150 (spi)', 'eps_standard'),
+    ('eps 100 (spi)', 'eps_standard'),
+    ('inverted eps', 'eps_inverted'),
+    ('eps 200e', 'eps_inverted'),
+    ('eps 300e', 'eps_inverted'),
+    ('eps/pir tissue faced', 'eps_pir_composite'),
+    ('eps/pir tissue faced (prebonded)', 'eps_pir_composite'),
+    ('eps/pir foil faced', 'eps_pir_composite'),
+    ('eps/pir enertherm', 'eps_pir_composite'),
+    ('eps/pir torch on', 'eps_pir_composite'),
+    ('eps/pir torch on (prebonded)', 'eps_pir_composite'),
+    ('xps', 'xps'),
+    ('vip', 'vips'),
+    ('vips', 'vips'),
+    ('inverted vips', 'vips'),
+    ('hardrock', 'hardrock'),
+    ('rockwool hardrock multi-fix (dd)', 'hardrock'),
+    ('hardrock multi-fix (dd)', 'hardrock'),
+    ('rockwool hardrock multifix (dd)', 'hardrock'),
+    ('hardrock multifix (dd)', 'hardrock'),
+    ('rockwool hardrock multi fix (dd)', 'hardrock'),
+    ('hardrock multi fix (dd)', 'hardrock'),
+    ('rockdeck', 'rockdeck'),
+    ('rockdeck coverboard', 'rockdeck'),
+    ('rockdeck coverboard (g-board12.5mm)', 'rockdeck'),
+    ('rockdeck coverboard (g-board 12.5mm)', 'rockdeck'),
+    ('t3+', 't3_system'),
+    ('ready t3+', 't3_system'),
+    ('roofblock g1t3+', 't3_system')
+ON CONFLICT (alias_normalized) DO UPDATE SET canonical_product_key = EXCLUDED.canonical_product_key;
+
+CREATE TABLE IF NOT EXISTS public.weighted_enquiry_category_id_labels (
+    category_id TEXT PRIMARY KEY,
+    category_label TEXT NOT NULL
+);
+
+-- CATEGORY_LABELS (config.py): raw Monday dropdown id -> label
+INSERT INTO public.weighted_enquiry_category_id_labels (category_id, category_label) VALUES
+    ('1', 'Apartments'),
+    ('2', 'Commercial'),
+    ('3', 'Education'),
+    ('4', 'House'),
+    ('5', 'Health'),
+    ('6', 'Commodity'),
+    ('7', 'Industrial'),
+    ('8', 'Leisure'),
+    ('9', 'Military'),
+    ('10', 'Mixed Use'),
+    ('11', 'Student Accommodation'),
+    ('12', 'Consultancy'),
+    ('13', 'Datacentre')
+ON CONFLICT (category_id) DO UPDATE SET category_label = EXCLUDED.category_label;
+
+CREATE TABLE IF NOT EXISTS public.weighted_enquiry_category_reporting_segment_map (
+    category_label TEXT PRIMARY KEY,
+    reporting_segment TEXT NOT NULL CHECK (
+        reporting_segment IN ('Data Centres', 'Education', 'Apartments/Housing', 'Other')
+    )
+);
+
+-- Final reporting-segment mapping, mirrors _canonical_category_segments()
+-- in segmented_weighted_enquiry_forecast.py.
+INSERT INTO public.weighted_enquiry_category_reporting_segment_map (category_label, reporting_segment) VALUES
+    ('Datacentre', 'Data Centres'),
+    ('Education', 'Education'),
+    ('House', 'Apartments/Housing'),
+    ('Apartments', 'Apartments/Housing'),
+    ('Commercial', 'Other'),
+    ('Health', 'Other'),
+    ('Commodity', 'Other'),
+    ('Industrial', 'Other'),
+    ('Leisure', 'Other'),
+    ('Military', 'Other'),
+    ('Mixed Use', 'Other'),
+    ('Student Accommodation', 'Other'),
+    ('Consultancy', 'Other')
+ON CONFLICT (category_label) DO UPDATE SET reporting_segment = EXCLUDED.reporting_segment;
+
+CREATE TABLE IF NOT EXISTS public.weighted_enquiry_category_alias_map (
+    alias_normalized TEXT PRIMARY KEY,
+    category_label TEXT NOT NULL
+);
+
+-- get_category_alias_map() (normalization.py): every known label maps to itself, plus the
+-- explicit _CATEGORY_TEXT_ALIASES overrides (healthcare/health care -> Health,
+-- data centre/data center -> Datacentre).
+INSERT INTO public.weighted_enquiry_category_alias_map (alias_normalized, category_label)
+SELECT public.weighted_enquiry_normalize_text_key(category_label), category_label
+FROM public.weighted_enquiry_category_reporting_segment_map
+ON CONFLICT (alias_normalized) DO UPDATE SET category_label = EXCLUDED.category_label;
+
+INSERT INTO public.weighted_enquiry_category_alias_map (alias_normalized, category_label) VALUES
+    ('healthcare', 'Health'),
+    ('health care', 'Health'),
+    ('data centre', 'Datacentre'),
+    ('data center', 'Datacentre')
+ON CONFLICT (alias_normalized) DO UPDATE SET category_label = EXCLUDED.category_label;
+
+-- ------------------------------------------------------------------
+-- 6. SQL normalization functions matching src/core/normalization.py
+-- ------------------------------------------------------------------
+
+-- Mirrors compute_product_key() for a single (already comma-split) token: returns the
+-- canonical product key, 'unknown' for a non-empty unmapped token, or '' for an empty token.
+CREATE OR REPLACE FUNCTION public.weighted_enquiry_product_key(raw_token TEXT)
+RETURNS TEXT AS $$
+DECLARE
+    normalized TEXT;
+    mapped TEXT;
+BEGIN
+    IF raw_token IS NULL OR BTRIM(raw_token) = '' THEN
+        RETURN '';
+    END IF;
+
+    normalized := public.weighted_enquiry_normalize_text_key(raw_token, TRUE);
+    IF normalized = '' THEN
+        RETURN '';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.weighted_enquiry_product_taxonomy t
+        WHERE t.canonical_product_key = normalized
+    ) THEN
+        RETURN normalized;
+    END IF;
+
+    SELECT canonical_product_key INTO mapped
+    FROM public.weighted_enquiry_product_alias_map
+    WHERE alias_normalized = normalized;
+
+    IF mapped IS NOT NULL THEN
+        RETURN mapped;
+    END IF;
+
+    RETURN 'unknown';
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Mirrors _canonical_products(): splits a raw (possibly comma-separated) product_type value,
+-- deduplicates by canonical identity, and always returns at least one row
+-- (('missing','Combustible','missing') when no usable product is found).
+CREATE OR REPLACE FUNCTION public.weighted_enquiry_products(raw_value TEXT)
+RETURNS TABLE(identity TEXT, reporting_segment TEXT, mapping_status TEXT) AS $$
+    WITH tokens AS (
+        SELECT BTRIM(token) AS raw_token, ordinality
+        FROM regexp_split_to_table(COALESCE(raw_value, ''), '\s*,\s*') WITH ORDINALITY AS t(token, ordinality)
+        WHERE BTRIM(token) <> ''
+    ),
+    resolved AS (
+        SELECT
+            ordinality,
+            public.weighted_enquiry_product_key(raw_token) AS canonical,
+            public.weighted_enquiry_normalize_text_key(raw_token, TRUE) AS normalized_raw
+        FROM tokens
+    ),
+    classified AS (
+        SELECT
+            ordinality,
+            CASE
+                WHEN canonical <> '' AND canonical <> 'unknown' THEN canonical
+                WHEN normalized_raw <> '' THEN 'unmapped:' || normalized_raw
+                ELSE 'missing'
+            END AS identity,
+            CASE
+                WHEN canonical <> '' AND canonical <> 'unknown' THEN 'mapped'
+                WHEN normalized_raw <> '' THEN 'unmapped'
+                ELSE 'missing'
+            END AS mapping_status,
+            CASE
+                WHEN canonical IN (
+                    SELECT canonical_product_key FROM public.weighted_enquiry_product_taxonomy
+                    WHERE reporting_segment = 'Non-Combustible'
+                ) THEN 'Non-Combustible'
+                ELSE 'Combustible'
+            END AS reporting_segment
+        FROM resolved
+    ),
+    deduped AS (
+        SELECT DISTINCT ON (identity) identity, reporting_segment, mapping_status, ordinality
+        FROM classified
+        ORDER BY identity, ordinality
+    )
+    SELECT identity, reporting_segment, mapping_status FROM deduped
+    UNION ALL
+    SELECT 'missing', 'Combustible', 'missing'
+    WHERE NOT EXISTS (SELECT 1 FROM tokens);
+$$ LANGUAGE sql STABLE;
+
+-- Mirrors normalize_category_value() for a single (already comma-split) token: numeric ids
+-- resolve via weighted_enquiry_category_id_labels, text resolves via the alias map, otherwise
+-- the trimmed raw token is returned unchanged.
+CREATE OR REPLACE FUNCTION public.weighted_enquiry_category_label(raw_token TEXT)
+RETURNS TEXT AS $$
+DECLARE
+    trimmed TEXT := BTRIM(COALESCE(raw_token, ''));
+    normalized TEXT;
+    mapped TEXT;
+BEGIN
+    IF trimmed = '' THEN
+        RETURN '';
+    END IF;
+
+    IF trimmed ~ '^[0-9]+$' THEN
+        SELECT category_label INTO mapped
+        FROM public.weighted_enquiry_category_id_labels
+        WHERE category_id = trimmed;
+        IF mapped IS NOT NULL THEN
+            RETURN mapped;
+        END IF;
+    END IF;
+
+    normalized := public.weighted_enquiry_normalize_text_key(trimmed, TRUE);
+    SELECT category_label INTO mapped
+    FROM public.weighted_enquiry_category_alias_map
+    WHERE alias_normalized = normalized;
+
+    IF mapped IS NOT NULL THEN
+        RETURN mapped;
+    END IF;
+
+    RETURN trimmed;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Mirrors the per-token classification inside _canonical_category_segments(): maps a resolved
+-- category label to its final reporting segment, defaulting to ('Other','unmapped').
+CREATE OR REPLACE FUNCTION public.weighted_enquiry_category_segment(raw_token TEXT)
+RETURNS TABLE(segment TEXT, mapping_status TEXT) AS $$
+DECLARE
+    label TEXT := public.weighted_enquiry_category_label(raw_token);
+    mapped_segment TEXT;
+BEGIN
+    SELECT reporting_segment INTO mapped_segment
+    FROM public.weighted_enquiry_category_reporting_segment_map
+    WHERE category_label = label;
+
+    IF mapped_segment IS NOT NULL THEN
+        RETURN QUERY SELECT mapped_segment, 'mapped'::TEXT;
+    ELSE
+        RETURN QUERY SELECT 'Other'::TEXT, 'unmapped'::TEXT;
+    END IF;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Mirrors _canonical_category_segments(): splits a raw (possibly comma-separated) category
+-- value, deduplicates by final reporting segment, and always returns at least one row
+-- (('Other','missing') when the raw value is empty).
+CREATE OR REPLACE FUNCTION public.weighted_enquiry_category_segments(raw_value TEXT)
+RETURNS TABLE(segment TEXT, mapping_status TEXT) AS $$
+    WITH tokens AS (
+        SELECT BTRIM(token) AS raw_token, ordinality
+        FROM regexp_split_to_table(COALESCE(raw_value, ''), '\s*,\s*') WITH ORDINALITY AS t(token, ordinality)
+        WHERE BTRIM(token) <> ''
+    ),
+    resolved AS (
+        SELECT ordinality, (public.weighted_enquiry_category_segment(raw_token)).*
+        FROM tokens
+    ),
+    deduped AS (
+        SELECT DISTINCT ON (segment) segment, mapping_status, ordinality
+        FROM resolved
+        ORDER BY segment, ordinality
+    )
+    SELECT segment, mapping_status FROM deduped
+    UNION ALL
+    SELECT 'Other', 'missing'
+    WHERE NOT EXISTS (SELECT 1 FROM tokens);
+$$ LANGUAGE sql STABLE;
+
+-- ------------------------------------------------------------------
+-- 7. Project-to-leaf allocation audit view
+-- ------------------------------------------------------------------
+
+CREATE OR REPLACE VIEW public.vw_weighted_enquiry_project_leaf_allocation_v1 AS
+WITH latest_analysis AS (
+    SELECT
+        ar.project_id,
+        ar.expected_conversion_rate,
+        ROW_NUMBER() OVER (
+            PARTITION BY ar.project_id
+            ORDER BY ar.analysis_timestamp DESC NULLS LAST, ar.id DESC
+        ) AS rn
+    FROM public.analysis_results ar
+),
+base_projects AS (
+    SELECT
+        p.monday_id AS project_id,
+        DATE_TRUNC('month', p.date_created)::DATE AS enquiry_month,
+        GREATEST(COALESCE(p.new_enquiry_value, 0), 0)::FLOAT8 AS gross_value,
+        LEAST(GREATEST(COALESCE(la.expected_conversion_rate, 0), 0::NUMERIC), 1::NUMERIC)::FLOAT8 AS conversion_rate,
+        p.category AS category_raw,
+        p.product_type AS product_type_raw
+    FROM public.projects p
+    LEFT JOIN latest_analysis la
+        ON la.project_id = p.monday_id
+       AND la.rn = 1
+    WHERE p.date_created IS NOT NULL
+      AND p.date_created >= DATE '2022-01-01'
+      AND DATE_TRUNC('month', p.date_created)::DATE < DATE_TRUNC('month', CURRENT_DATE)::DATE
+),
+-- Prefer positive subitem enquiry values for product allocation (allocate_product_segments()).
+project_subitem_value AS (
+    SELECT
+        s.parent_monday_id AS project_id,
+        s.monday_id AS subitem_id,
+        GREATEST(COALESCE(s.new_enquiry_value, 0), 0)::FLOAT8 AS subitem_value,
+        s.product_type AS product_type_raw
+    FROM public.subitems s
+    WHERE GREATEST(COALESCE(s.new_enquiry_value, 0), 0) > 0
+),
+subitem_product_rows AS (
+    SELECT
+        psv.project_id,
+        psv.subitem_id,
+        psv.subitem_value,
+        prod.identity,
+        prod.reporting_segment,
+        prod.mapping_status
+    FROM project_subitem_value psv
+    CROSS JOIN LATERAL public.weighted_enquiry_products(psv.product_type_raw) AS prod
+    WHERE prod.identity <> 'missing'
+),
+subitem_usable_counts AS (
+    SELECT subitem_id, COUNT(*) AS usable_count
+    FROM subitem_product_rows
+    GROUP BY subitem_id
+),
+subitem_identity_values AS (
+    SELECT
+        spr.project_id,
+        spr.identity,
+        spr.reporting_segment,
+        spr.mapping_status,
+        SUM(spr.subitem_value / suc.usable_count) AS identity_value
+    FROM subitem_product_rows spr
+    JOIN subitem_usable_counts suc ON suc.subitem_id = spr.subitem_id
+    GROUP BY spr.project_id, spr.identity, spr.reporting_segment, spr.mapping_status
+),
+subitem_project_status AS (
+    SELECT
+        project_id,
+        CASE WHEN BOOL_OR(mapping_status = 'unmapped') THEN 'contains_unmapped' ELSE 'mapped' END AS mapping_status
+    FROM subitem_identity_values
+    GROUP BY project_id
+),
+subitem_segment_totals AS (
+    SELECT project_id, reporting_segment, SUM(identity_value) AS segment_value
+    FROM subitem_identity_values
+    WHERE identity_value > 0
+    GROUP BY project_id, reporting_segment
+),
+subitem_project_totals AS (
+    SELECT project_id, SUM(segment_value) AS source_value_total
+    FROM subitem_segment_totals
+    GROUP BY project_id
+    HAVING SUM(segment_value) > 0
+),
+subitem_product_shares AS (
+    SELECT
+        t.project_id,
+        t.reporting_segment AS product_segment,
+        (t.segment_value / pt.source_value_total)::FLOAT8 AS product_share,
+        'subitem_value_weighted'::TEXT AS product_allocation_method,
+        ps.mapping_status AS product_mapping_status,
+        pt.source_value_total::FLOAT8 AS source_value_total
+    FROM subitem_segment_totals t
+    JOIN subitem_project_totals pt ON pt.project_id = t.project_id
+    JOIN subitem_project_status ps ON ps.project_id = t.project_id
+),
+-- Fallback: equal canonical-product allocation from the project-level product_type_raw when no
+-- usable subitem value exists (allocate_product_segments() fallback branch).
+fallback_products AS (
+    SELECT
+        bp.project_id,
+        prod.identity,
+        prod.reporting_segment,
+        prod.mapping_status
+    FROM base_projects bp
+    CROSS JOIN LATERAL public.weighted_enquiry_products(bp.product_type_raw) AS prod
+    WHERE bp.project_id NOT IN (SELECT project_id FROM subitem_project_totals)
+),
+fallback_status AS (
+    SELECT
+        project_id,
+        COUNT(*) AS total_products,
+        CASE
+            WHEN BOOL_AND(mapping_status = 'missing') THEN 'missing'
+            WHEN BOOL_OR(mapping_status = 'unmapped') THEN 'contains_unmapped'
+            ELSE 'mapped'
+        END AS mapping_status
+    FROM fallback_products
+    GROUP BY project_id
+),
+fallback_product_shares AS (
+    SELECT
+        fp.project_id,
+        fp.reporting_segment AS product_segment,
+        (COUNT(*)::FLOAT8 / fs.total_products)::FLOAT8 AS product_share,
+        CASE WHEN fs.total_products > 1 THEN 'equal_product_split' ELSE 'default_mapping' END AS product_allocation_method,
+        fs.mapping_status AS product_mapping_status,
+        0::FLOAT8 AS source_value_total
+    FROM fallback_products fp
+    JOIN fallback_status fs ON fs.project_id = fp.project_id
+    GROUP BY fp.project_id, fp.reporting_segment, fs.total_products, fs.mapping_status
+),
+product_shares AS (
+    SELECT * FROM subitem_product_shares
+    UNION ALL
+    SELECT * FROM fallback_product_shares
+),
+-- Category shares: equal split across deduplicated final reporting segments
+-- (allocate_category_segments()).
+category_tokens AS (
+    SELECT
+        bp.project_id,
+        cs.segment AS category_segment,
+        cs.mapping_status,
+        COUNT(*) OVER (PARTITION BY bp.project_id) AS segment_count
+    FROM base_projects bp
+    CROSS JOIN LATERAL public.weighted_enquiry_category_segments(bp.category_raw) AS cs
+),
+category_status AS (
+    SELECT
+        project_id,
+        CASE
+            WHEN BOOL_AND(mapping_status = 'missing') THEN 'missing'
+            WHEN BOOL_OR(mapping_status = 'unmapped') THEN 'contains_unmapped'
+            ELSE 'mapped'
+        END AS mapping_status
+    FROM category_tokens
+    GROUP BY project_id
+),
+category_shares AS (
+    SELECT
+        ct.project_id,
+        ct.category_segment,
+        (1.0 / ct.segment_count)::FLOAT8 AS category_share,
+        CASE WHEN ct.segment_count > 1 THEN 'equal_category_segment_split' ELSE 'default_mapping' END AS category_allocation_method,
+        cst.mapping_status AS category_mapping_status
+    FROM category_tokens ct
+    JOIN category_status cst ON cst.project_id = ct.project_id
+)
+SELECT
+    bp.project_id,
+    bp.enquiry_month,
+    ps.product_segment,
+    cs.category_segment,
+    (ps.product_share * cs.category_share)::FLOAT8 AS allocation_share,
+    (bp.gross_value * bp.conversion_rate)::FLOAT8 AS project_weighted_enquiry_value,
+    (bp.gross_value * bp.conversion_rate * ps.product_share * cs.category_share)::FLOAT8 AS allocated_weighted_enquiry_value,
+    ps.product_allocation_method,
+    cs.category_allocation_method,
+    ps.product_mapping_status,
+    cs.category_mapping_status,
+    ps.source_value_total AS subitem_source_value_total
+FROM base_projects bp
+JOIN product_shares ps ON ps.project_id = bp.project_id
+JOIN category_shares cs ON cs.project_id = bp.project_id;
+
+-- ------------------------------------------------------------------
+-- 8. Eight-leaf zero-filled monthly actuals view
+-- ------------------------------------------------------------------
+
+CREATE OR REPLACE VIEW public.vw_weighted_enquiry_leaf_monthly_v1 AS
+WITH months AS (
+    SELECT generate_series(
+        DATE '2022-01-01',
+        (DATE_TRUNC('month', CURRENT_DATE)::DATE - INTERVAL '1 month')::DATE,
+        INTERVAL '1 month'
+    )::DATE AS month_start
+),
+product_segments(product_segment) AS (
+    VALUES ('Non-Combustible'), ('Combustible')
+),
+category_segments(category_segment) AS (
+    VALUES ('Data Centres'), ('Education'), ('Apartments/Housing'), ('Other')
+),
+leaf_grid AS (
+    SELECT m.month_start, ps.product_segment, cs.category_segment
+    FROM months m
+    CROSS JOIN product_segments ps
+    CROSS JOIN category_segments cs
+),
+leaf_actuals AS (
+    SELECT
+        enquiry_month AS month_start,
+        product_segment,
+        category_segment,
+        SUM(allocated_weighted_enquiry_value)::FLOAT8 AS actual_weighted_enquiry_value
+    FROM public.vw_weighted_enquiry_project_leaf_allocation_v1
+    GROUP BY enquiry_month, product_segment, category_segment
+)
+SELECT
+    g.month_start,
+    g.product_segment,
+    g.category_segment,
+    COALESCE(la.actual_weighted_enquiry_value, 0)::FLOAT8 AS actual_weighted_enquiry_value
+FROM leaf_grid g
+LEFT JOIN leaf_actuals la
+    ON la.month_start = g.month_start
+   AND la.product_segment = g.product_segment
+   AND la.category_segment = g.category_segment
+ORDER BY g.month_start, g.product_segment, g.category_segment;
+
+-- ------------------------------------------------------------------
+-- 9. Read-only grants for Power BI (views only; no table/write access)
+-- ------------------------------------------------------------------
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'power_bi_reader') THEN
+        CREATE ROLE power_bi_reader NOLOGIN;
+    END IF;
+END
+$$;
+
+GRANT USAGE ON SCHEMA public TO power_bi_reader;
+GRANT SELECT ON public.vw_weighted_enquiry_project_leaf_allocation_v1 TO power_bi_reader;
+GRANT SELECT ON public.vw_weighted_enquiry_leaf_monthly_v1 TO power_bi_reader;
+
+-- Explicit denial of the underlying tables (defense in depth; a NOLOGIN role with no grants
+-- already has no access, but this documents intent and survives future blanket grants).
+REVOKE ALL ON public.projects FROM power_bi_reader;
+REVOKE ALL ON public.subitems FROM power_bi_reader;
+REVOKE ALL ON public.analysis_results FROM power_bi_reader;
+
+-- Step 9 (per SegmentedWeightedEnquiryForecast.md): these are ordinary views, not materialized
+-- views. Only introduce a materialized view here if refresh profiling in Phase 6 shows the live
+-- views are too slow for Power BI Desktop/gateway refresh.
+
+

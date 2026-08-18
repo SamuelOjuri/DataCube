@@ -122,6 +122,21 @@ Power BI can consume forecast data via **direct database connection** (recommend
 
 Use Power BI Web connector pointed at `/forecast/pipeline`, `/forecast/snapshot`, or the `/forecast/smoothing/*` endpoints. For smoothing snapshot reporting, use `allocated_monthly_value` as the additive total; `expected_value` is explanatory on project-month rows and may repeat for projects allocated across multiple months.
 
+### Live Segmented Weighted-Enquiry Forecast
+
+The segmented report uses this refresh path:
+
+`Supabase raw tables -> SQL allocation/monthly views -> Power BI PostgreSQL import -> embedded Python/XGBoost -> report`
+
+- Power BI reads `public.vw_weighted_enquiry_leaf_monthly_v1`; the audit table reads `public.vw_weighted_enquiry_project_leaf_allocation_v1`.
+- The embedded [powerbi_segmented_xgb_script.py](scripts/powerbi_segmented_xgb_script.py) produces the eight-leaf production forecast and model diagnostics. The aggregate benchmark remains diagnostic-only.
+- Use Python 3.11.8 with the exact packages in [requirements-powerbi.txt](requirements-powerbi.txt). A missing or mismatched XGBoost installation must fail refresh.
+- Store PostgreSQL credentials in Power BI Data Source Settings or the on-premises data gateway. Never put credentials in the PBIX updater, M source, or repository.
+- Run `python scripts/validate_segmented_weighted_enquiry_sql.py` before model refresh. After refreshing Desktop, export acceptance rows with `update_segmented_pbix_model.ps1`, then run `python scripts/validate_segmented_pbix_acceptance.py`.
+- Gateway cutover requires a successful scheduled refresh using the pinned Python environment and PostgreSQL connectivity, followed by visual review of all seven production pages.
+- Retain `Forward-Looking-Monthly-Outlook-Segmented.pbix` as the CSV-backed rollback report for one release cycle. If SQL, Python, Desktop, gateway, or reconciliation gates fail, keep the live report unapproved and restore the CSV-backed report.
+- [build_segmented_weighted_enquiry_reports.py](scripts/build_segmented_weighted_enquiry_reports.py) is an offline audit/export utility over the SQL views. `--raw-extract` invokes the legacy allocator only as a parity oracle; it is not a production input path.
+
 ### Validation and Backtest
 
 - **Automated tests**: Run `pytest tests/test_pipeline_forecast_service.py` to validate stage bucketing, contract-value fallback, window clamping, and band monotonicity against live data.
@@ -162,4 +177,3 @@ The first production validation should verify formula correctness, probability/s
 ### Monday Push — Unchanged
 
 The existing webhook → rehydrate → analyse → Monday push flow in `queue_worker.py`, `pipeline.py`, and `monday_update_service.py` is completely unaffected by the forecast layer. Forecast artifacts are a parallel, read-only output path.
-
