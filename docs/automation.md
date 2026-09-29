@@ -71,6 +71,105 @@ Offline regression checks (the two live webhook smoke tests are excluded):
 & .\report.venv\Scripts\python.exe -m pytest tests/test_sync_service.py tests/test_webhooks.py -k 'not test_parent_update and not test_subitem_update' -q
 ```
 
+### Controlled Order Backfill
+
+Use `scripts/backfill_order_values.py` for the order-only historical backfill.
+It does not invoke the broad rehydration pipeline, change order dates, refresh
+forecast views, replay webhooks, or modify historical snapshots.
+
+Prerequisites:
+
+- Set `MONDAY_API_KEY` and `SUPABASE_DB_URL` in the environment or local `.env`.
+  The database URL must be a PostgreSQL connection string, not the Supabase REST
+  URL. Use direct PostgreSQL or session pooling and credentials permitted to read,
+  lock and update these three tables. The script does not use the service-role
+  REST client and does not print connection credentials.
+- Keep the corrected services deployed, but pause scheduled syncs, queue consumers,
+  snapshot jobs and other writers for the capture/review/apply/verify window.
+  Retain incoming webhooks durably for replay; do not discard events. Coordinate
+  a quiet Monday editing window too. The script cannot pause these services for
+  you; `--writers-paused` is your explicit confirmation, not an automatic pause.
+- Ensure there is enough local space for the baseline, source and plan artifacts.
+  These contain commercially sensitive amounts and identifiers: keep them private
+  and out of source control. Use a new run directory for every preparation.
+
+1. Prepare a read-only dry run from the repository root:
+
+```powershell
+python -m scripts.backfill_order_values prepare --run-dir outputs/order_value_backfill/run1
+```
+
+`prepare` reads all database rows using keyset pagination and starts fresh Monday
+board traversals, without reusing sync cursors. It checks board counts and exact
+detail-response coverage. Missing pages, API failures and count changes abort
+preparation; an incomplete directory has no usable manifest and cannot be applied.
+Parent IDs, subitem parent/hidden links and numeric hidden-board inputs are captured.
+The computed material-plus-charges amount is compared with Monday's total formula.
+
+The run directory contains `baseline.json`, `source.json`, `plan.json`,
+`review.csv` and `manifest.json`. Review the CSV's old total, material sum, charge
+sum, proposed total, difference and validation status. Inspect `diagnostics` in
+the plan for orphaned records and unlinked nonzero hidden orders. The manifest
+prints a run ID, per-table update counts and blocked-project counts.
+
+Missing or conflicting links, duplicate source orders, unknown amounts and formula
+disagreements block the whole affected project. Unlike ordinary sync's name-based
+fallbacks, this backfill requires a verified single Monday link agreeing with the
+stored relationship. Resolve relationships using the corrected sync process and
+prepare a new run; this script does not guess links, insert missing records or
+delete stale children. A project with no stored or live children is withheld unless
+individually approved when preparing a new run, for example:
+
+```powershell
+python -m scripts.backfill_order_values prepare --run-dir outputs/order_value_backfill/run2 --approve-empty-project 123456789
+```
+
+2. Apply the reviewed run, using its printed run ID:
+
+```powershell
+python -m scripts.backfill_order_values apply --run-dir outputs/order_value_backfill/run1 --confirm-run-id RUN_ID_FROM_PREPARE --writers-paused
+```
+
+Apply refuses unresolved projects or diagnostics by default. `--allow-blocked` is
+an explicit opt-in to a PARTIAL backfill: only verified projects and their linked
+order components are updated; blocked rows are untouched. This is not certification
+of the full dataset. Keep the unresolved report for step 4.
+
+The script checks artifact hashes, code/mapping versions and database target, then
+fetches Monday again and rejects source drift. Inside one transaction it acquires
+write-conflicting table locks with a five-second lock timeout, compares the current
+database with the captured baseline, replaces order fields and verifies the complete
+expected state before commit. Other captured invoice/enquiry/date fields must remain
+unchanged. Database triggers may update normal metadata timestamps.
+
+Existing nonzero totals are replaced, never incremented. Any write or reconciliation
+failure rolls back the transaction. Retrying the same unchanged run after a confirmed
+commit is a no-op. Each successful apply writes a separate `apply-*.json` receipt.
+If the connection or receipt write fails near commit, do not assume rollback: run
+`verify` before retrying. Never edit staged files to bypass a refusal.
+
+3. Verify while writers are still paused:
+
+```powershell
+python -m scripts.backfill_order_values verify --run-dir outputs/order_value_backfill/run1
+```
+
+This read-only check compares the stored values with the reviewed post-apply state
+and writes a `verify-*.json` result. It exits with code 2 on disagreement and code 1
+on errors. A matching result can still have blocked projects after a partial run;
+check those counts. Source or database drift requires a fresh preparation, not
+overwriting the old audit files.
+
+After verification, follow step 4's reconciliation and forecast-view refresh gates.
+Replay retained events and resume writers under the deployment runbook; neither is
+automated here. Preserved historical snapshots still represent their original values.
+
+Offline backfill tests:
+
+```powershell
+python -m pytest tests/test_backfill_order_values.py -q --basetemp "$env:TEMP/order-$([guid]::NewGuid().ToString('N'))"
+```
+
 ## Scheduled Jobs Summary
 
 | Job | Schedule | Function | Description |
