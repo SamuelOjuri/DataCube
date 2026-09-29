@@ -13,7 +13,8 @@ webhook-driven flow, scheduled background jobs, and the pipeline forecast layer.
   - Persists job status to the `job_queue` table for observability.
 - **Webhook integration** (`src/webhooks/webhook_server.py`)
   - Subitem/hidden item updates enqueue rehydrate jobs for affected parent projects.
-  - Parent item updates still perform immediate analysis and enqueue a Monday push.
+  - Parent item updates still perform immediate analysis and enqueue a Monday push,
+    except order-value mirror changes, which enqueue source rehydration.
 - **Postgres maintenance** (`src/tasks/postgres_maintenance.py`)
   - Materialized view refresh (conversion metrics, forecast aggregates, and smoothing artifacts).
   - Daily base forecast and smoothing snapshot creation plus retention cleanup.
@@ -34,6 +35,41 @@ webhook-driven flow, scheduled background jobs, and the pipeline forecast layer.
     - **30-minute materialized view refresh** (`refresh_conversion_views`) — runs `refresh_analytics_views()`, including smoothing signal refresh before smoothed monthly allocation refresh.
     - **Daily forecast snapshot maintenance** (`forecast_snapshot_maintenance`, default 03:10 UTC) — creates today's base and smoothing snapshots and deletes expired rows.
   - Queue worker is started alongside the FastAPI app.
+
+## Customer Order Value
+
+`projects.total_order_value` is the sum of `cust_order_value_material` plus
+`cust_additional_charges` across the project's persisted subitems. Both amounts
+come from the same resolved hidden item: Monday columns `numbers98__1` and
+`numbers3__1`. The material component remains separately available. Order dates,
+invoice values, enquiry values and reporting-stage filters are unchanged.
+
+Order inputs use strict decimal parsing. A fetched blank numeric source is stored
+as zero; a missing or invalid source is stored as NULL. A project total is withheld
+if any child has an unknown component, if a hidden source is repeated in the
+loaded rollup population, or if the total exceeds NUMERIC(12,2). These conditions
+are logged. The existing project total is retained, not certified as current.
+Fully loaded zero-value projects, including projects with no persisted subitems,
+are updated to zero. Child reads use keyset pagination until an empty page.
+
+Order webhooks queue rehydration of both current source amounts instead of
+writing event values directly. Parent order mirrors cannot overwrite the rollup.
+Explicit hidden IDs take precedence over name matching; unresolved explicit IDs
+and multiple links do not fall back to another source. Name-based fallbacks still
+require relationship verification during reconciliation.
+
+Before the order-only backfill, ensure `cust_additional_charges NUMERIC(12,2)` exists
+on both `hidden_items` and `subitems`, without a zero default for unfetched history.
+Deploy the corrected sync and webhook code to all writers. The code change does
+not itself backfill existing rows, refresh forecast materialized views, or restate
+historical snapshots. Reconcile the backfilled totals against Monday before using
+them as certified full customer order values.
+
+Offline regression checks (the two live webhook smoke tests are excluded):
+
+```powershell
+& .\report.venv\Scripts\python.exe -m pytest tests/test_sync_service.py tests/test_webhooks.py -k 'not test_parent_update and not test_subitem_update' -q
+```
 
 ## Scheduled Jobs Summary
 

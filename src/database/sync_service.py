@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple, Any, Set
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import pandas as pd
 
 from ..config import (
@@ -81,7 +82,8 @@ class DataSyncService:
 
     def _has_transactional_hidden_values(self, row: Dict[str, Any]) -> bool:
         return (
-            row.get("cust_order_value_material") is not None
+            row.get("cust_order_value_material") not in (None, 0)
+            or row.get("cust_additional_charges") not in (None, 0)
             or bool(row.get("date_order_received"))
             or row.get("amount_invoiced") is not None
         )
@@ -139,6 +141,15 @@ class DataSyncService:
 
     def _get_hidden_match_context(self, subitem: Dict[str, Any]) -> Dict[str, Any]:
         hidden_id = str(subitem.get("hidden_item_id") or "").strip()
+        if subitem.get("_invalid_hidden_link") or (hidden_id and hidden_id not in self._hidden_lookup_by_id):
+            return {
+                "resolved": None,
+                "item_name": str(subitem.get("item_name") or subitem.get("name") or "").strip(),
+                "exact_matches": [],
+                "normalized_matches": [],
+                "prefix_matches": [],
+                "candidates": [],
+            }
         if hidden_id and hidden_id in self._hidden_lookup_by_id:
             return {
                 "resolved": self._hidden_lookup_by_id[hidden_id],
@@ -319,26 +330,43 @@ class DataSyncService:
         return sorted(project_ids | subitem_parent_ids)
 
     def _load_persisted_subitems_for_rollups(self, parent_ids: List[str]) -> List[Dict]:
+        return self._load_subitems_by_relation(
+            "parent_monday_id",
+            parent_ids,
+            "monday_id, hidden_item_id, parent_monday_id, item_name, "
+            "cust_order_value_material, cust_additional_charges, date_order_received, amount_invoiced, "
+            "new_enquiry_value, reason_for_change, quote_amount, "
+            "date_design_completed, invoice_date",
+        )
+
+    def _load_subitems_by_relation(
+        self, relation: str, related_ids: List[str], columns: str
+    ) -> List[Dict]:
         rows: List[Dict] = []
-        if not parent_ids:
-            return rows
-
         batch_size = 500
-        for start in range(0, len(parent_ids), batch_size):
-            batch = parent_ids[start : start + batch_size]
-            result = (
-                self.supabase_client.client.table("subitems")
-                .select(
-                    "parent_monday_id, item_name, "
-                    "cust_order_value_material, date_order_received, amount_invoiced, "
-                    "new_enquiry_value, reason_for_change, quote_amount, "
-                    "date_design_completed, invoice_date"
+        for start in range(0, len(related_ids), batch_size):
+            batch = related_ids[start : start + batch_size]
+            last_id = None
+            while True:
+                query = (
+                    self.supabase_client.client.table("subitems")
+                    .select(columns)
+                    .in_(relation, batch)
+                    .order("monday_id")
+                    .limit(batch_size)
                 )
-                .in_("parent_monday_id", batch)
-                .execute()
-            )
-            rows.extend(result.data or [])
-
+                if last_id is not None:
+                    query = query.gt("monday_id", last_id)
+                page = query.execute().data
+                if page is None:
+                    raise ValueError("Missing subitem query result")
+                if not page:
+                    break
+                next_id = page[-1]["monday_id"]
+                if next_id == last_id:
+                    raise ValueError("Subitem pagination did not advance")
+                rows.extend(page)
+                last_id = next_id
         return rows
 
     def _compute_project_rollups_from_persisted_subitems(
@@ -359,6 +387,9 @@ class DataSyncService:
         order_total_map, order_date_map = self._rollup_order_values_from_subitems(
             persisted_rows
         )
+        parents_with_subitems = {row["parent_monday_id"] for row in persisted_rows}
+        for parent_id in set(parent_ids) - parents_with_subitems:
+            order_total_map[parent_id] = 0.0
         invoice_total_map = self._rollup_invoice_totals_from_subitems(persisted_rows)
         invoice_range_map = self._rollup_invoice_date_ranges_from_subitems(persisted_rows)
         first_invoice_date_map = {
@@ -624,26 +655,12 @@ class DataSyncService:
             "amount_invoiced",
             "date_order_received",
             "cust_order_value_material",
+            "cust_additional_charges",
         )
         hidden_ids = sorted(hidden_by_id)
-        related_subitems: List[Dict[str, Any]] = []
-        batch_size = 500
-
-        for start in range(0, len(hidden_ids), batch_size):
-            batch = hidden_ids[start : start + batch_size]
-            try:
-                result = (
-                    self.supabase_client.client.table("subitems")
-                    .select("monday_id, parent_monday_id, hidden_item_id")
-                    .in_("hidden_item_id", batch)
-                    .execute()
-                )
-                related_subitems.extend(result.data or [])
-            except Exception as e:
-                logger.error(
-                    "Failed loading subitems linked to hidden items for rollup refresh: %s",
-                    e,
-                )
+        related_subitems = self._load_subitems_by_relation(
+            "hidden_item_id", hidden_ids, "monday_id, parent_monday_id, hidden_item_id"
+        )
 
         updated = 0
         parent_ids: Set[str] = set()
@@ -1561,17 +1578,11 @@ class DataSyncService:
                         resolved_hidden_tx.get("date_order_received")
                     )
 
-                cust_order_value_material = self._parse_numeric_value(
-                    normalized.get("cust_order_value_material")
-                )
-                if cust_order_value_material is None and resolved_hidden_tx:
-                    cust_order_value_material = self._parse_numeric_value(
-                        resolved_hidden_tx.get("cust_order_value_material")
-                    )
-                    if cust_order_value_material is not None:
-                        logger.info(
-                            f"Enriched {nm} cust_order_value_material: {cust_order_value_material}"
-                        )
+                order_source = resolved_hidden_tx or {}
+                if hidden_id and str(order_source.get("monday_id") or "") != hidden_id:
+                    order_source = {}
+                cust_order_value_material = order_source.get("cust_order_value_material")
+                cust_additional_charges = order_source.get("cust_additional_charges")
 
                 subitem = {
                     "monday_id": normalized.get("monday_id") or normalized.get("id") or item.get("id"),
@@ -1598,6 +1609,7 @@ class DataSyncService:
                     "order_status": normalized.get("order_status", ""),
                     "date_order_received": date_order_received,
                     "cust_order_value_material": cust_order_value_material,
+                    "cust_additional_charges": cust_additional_charges,
                     "customer_po": normalized.get("customer_po", ""),
                     "supplier1": normalized.get("supplier1", ""),
                     "supplier2": normalized.get("supplier2", ""),
@@ -1686,9 +1698,7 @@ class DataSyncService:
                     "invoice_date": self._parse_date_value(normalized_item.get("invoice_date")),
                     "amount_invoiced": self._parse_numeric_value(normalized_item.get("amount_invoiced")),
                     "date_order_received": self._parse_date_value(normalized_item.get("date_order_received")),
-                    "cust_order_value_material": self._parse_numeric_value(
-                        normalized_item.get("cust_order_value_material")
-                    ),
+                    **self._extract_hidden_order_amounts(item),
                     "date_quoted": self._parse_date_value(normalized_item.get("date_quoted")),
                     "date_project_won": self._parse_date_value(normalized_item.get("date_project_won")),
                     "date_project_closed": self._parse_date_value(normalized_item.get("date_project_closed")),
@@ -1715,6 +1725,22 @@ class DataSyncService:
                     )
 
                     if hidden_id:
+                        previous = self._hidden_lookup_by_id.get(hidden_id)
+                        if previous:
+                            previous_name = str(previous.get("item_name") or "").strip()
+                            previous_prefix = (
+                                str(previous.get("prefix") or "").strip()
+                                or self._leading_digits_from_name(previous_name) or ""
+                            )
+                            for lookup, key in (
+                                (self._hidden_lookup_by_name, previous_name),
+                                (self._hidden_lookup_by_normalized_name, self._normalize_hidden_name_key(previous_name)),
+                                (self._hidden_lookup_by_prefix, previous_prefix),
+                            ):
+                                if key in lookup:
+                                    lookup[key] = [row for row in lookup[key] if str(row.get("monday_id")) != hidden_id]
+                                    if not lookup[key]:
+                                        del lookup[key]
                         self._hidden_lookup_by_id[hidden_id] = hidden
 
                     if item_name:
@@ -1736,12 +1762,36 @@ class DataSyncService:
                 except Exception as e:
                     logger.warning(f"Failed to update hidden lookup: {e}")
 
-                transformed.append({k: v for k, v in hidden.items() if v is not None})
+                transformed.append({
+                    key: value for key, value in hidden.items()
+                    if value is not None or key in ("cust_order_value_material", "cust_additional_charges")
+                })
 
             except Exception as e:
                 logger.warning(f"Failed to transform hidden item {item.get('id')}: {e}")
 
         return transformed
+
+    def _extract_hidden_order_amounts(self, item: Dict) -> Dict[str, Optional[float]]:
+        columns = {column.get("id"): column for column in item.get("column_values", [])}
+        amounts: Dict[str, Optional[float]] = {}
+        for field in ("cust_order_value_material", "cust_additional_charges"):
+            amounts[field] = None
+            column = columns.get(HIDDEN_ITEMS_COLUMNS[field])
+            if column is None or not ({"value", "text"} & column.keys()):
+                logger.warning("Missing order source | hidden=%s field=%s", item.get("id"), field)
+                continue
+            try:
+                raw_value = column.get("value")
+                if isinstance(raw_value, str) and raw_value.strip():
+                    raw_value = json.loads(raw_value, parse_float=Decimal)
+                if raw_value is None or raw_value == "":
+                    raw_value = column.get("text")
+                amount = self._parse_order_amount(raw_value)
+                amounts[field] = float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+            except (ValueError, InvalidOperation):
+                logger.warning("Invalid order source | hidden=%s field=%s", item.get("id"), field)
+        return amounts
 
     def _normalize_monday_item(self, item: Dict) -> Dict:
         """Normalize Monday item using existing label normalization logic"""
@@ -1755,6 +1805,32 @@ class DataSyncService:
 
         for column_value in item.get("column_values", []):
             column_id = column_value.get("id")
+            if column_id == SUBITEM_COLUMNS["hidden_item_id"]:
+                try:
+                    linked_ids = column_value.get("linked_item_ids")
+                    if linked_ids is None:
+                        raw_link = column_value.get("value")
+                        parsed_link = json.loads(raw_link) if isinstance(raw_link, str) and raw_link else raw_link
+                        if parsed_link is None:
+                            linked_ids = []
+                        elif isinstance(parsed_link, dict):
+                            if "linkedPulseIds" in parsed_link:
+                                linked_ids = [row["linkedPulseId"] for row in parsed_link["linkedPulseIds"]]
+                            else:
+                                linked_ids = parsed_link["linkedItemIds"]
+                        else:
+                            raise ValueError("Invalid hidden item link")
+                    if not isinstance(linked_ids, list):
+                        raise ValueError("Invalid hidden item links")
+                    linked_ids = {str(linked_id) for linked_id in linked_ids}
+                    if len(linked_ids) > 1 or any(not linked_id.isdigit() for linked_id in linked_ids):
+                        raise ValueError("Expected one hidden item ID")
+                    if linked_ids:
+                        normalized["hidden_item_id"] = next(iter(linked_ids))
+                except (ValueError, TypeError, KeyError):
+                    normalized["_invalid_hidden_link"] = True
+                    logger.warning("Invalid or multiple hidden item links | subitem=%s", item.get("id"))
+                continue
             if column_id:
                 normalized_value = self.label_normalizer.normalize_column_value(
                     column_value, column_id
@@ -1936,7 +2012,9 @@ class DataSyncService:
         self,
         subitems_data: List[Dict]
     ) -> Tuple[Dict[str, float], Dict[str, str]]:
-        totals: Dict[str, float] = {}
+        decimal_totals: Dict[str, Decimal] = {}
+        incomplete_parents: Set[str] = set()
+        source_parents: Dict[str, str] = {}
         min_dates: Dict[str, datetime] = {}
 
         def _to_dt(value: Any) -> Optional[datetime]:
@@ -1955,16 +2033,32 @@ class DataSyncService:
 
             item_name = s.get("item_name") or s.get("name") or s.get("monday_id")
 
-            val = self._parse_numeric_value(s.get("cust_order_value_material"))
-            if val is not None:
-                totals[pid] = round(totals.get(pid, 0.0) + float(val), 2)
+            hidden_id = str(s.get("hidden_item_id") or "").strip()
+            if hidden_id:
+                if hidden_id in source_parents:
+                    incomplete_parents.update((pid, source_parents[hidden_id]))
+                    logger.warning("Order rollup withheld for duplicate source | hidden=%s parent=%s", hidden_id, pid)
+                else:
+                    source_parents[hidden_id] = pid
+
+            try:
+                amounts = []
+                for field in ("cust_order_value_material", "cust_additional_charges"):
+                    if s.get(field) is None:
+                        raise ValueError(f"Missing {field}")
+                    amounts.append(self._parse_order_amount(s[field]))
+                decimal_totals[pid] = decimal_totals.get(pid, Decimal("0")) + sum(amounts)
                 logger.info(
-                    "Order rollup input | parent=%s subitem=%s cust_order_value_material=%s running_total=%s",
+                    "Order rollup input | parent=%s subitem=%s material=%s charges=%s running_total=%s",
                     pid,
                     item_name,
-                    val,
-                    totals[pid],
+                    amounts[0],
+                    amounts[1],
+                    decimal_totals[pid],
                 )
+            except ValueError as exc:
+                incomplete_parents.add(pid)
+                logger.warning("Order rollup withheld | parent=%s subitem=%s: %s", pid, item_name, exc)
 
             d_dt = _to_dt(s.get("date_order_received"))
             if d_dt and (pid not in min_dates or d_dt < min_dates[pid]):
@@ -1977,6 +2071,15 @@ class DataSyncService:
                     min_dates[pid].date().isoformat(),
                 )
 
+        totals: Dict[str, float] = {}
+        for pid, amount in decimal_totals.items():
+            if pid in incomplete_parents:
+                continue
+            rounded_amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            try:
+                totals[pid] = float(self._parse_order_amount(rounded_amount))
+            except ValueError:
+                logger.warning("Order rollup withheld for out-of-range total | parent=%s", pid)
         min_date_map = {pid: dt.date().isoformat() for pid, dt in min_dates.items()}
 
         for pid in sorted(set(totals) | set(min_date_map)):
@@ -1992,6 +2095,19 @@ class DataSyncService:
             len(totals), len(min_date_map), len(subitems_data or []),
         )
         return totals, min_date_map
+
+    def _parse_order_amount(self, value: Any) -> Decimal:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return Decimal("0")
+        if isinstance(value, bool):
+            raise ValueError("Invalid order amount")
+        try:
+            amount = Decimal(str(value).strip())
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("Invalid order amount") from exc
+        if not amount.is_finite() or abs(amount) > Decimal("9999999999.99"):
+            raise ValueError("Order amount is not finite or exceeds NUMERIC(12,2)")
+        return amount
     
     def _rollup_invoice_totals_from_subitems(
         self,

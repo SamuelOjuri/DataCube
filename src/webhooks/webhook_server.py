@@ -136,13 +136,9 @@ def _lookup_parents_for_hidden(
     }
 
     try:
-        direct_rows = (
-            supabase_client.client.table("subitems")
-            .select("parent_monday_id, item_name, hidden_item_id")
-            .eq("hidden_item_id", hidden_item_id)
-            .execute()
-            .data
-            or []
+        direct_rows = sync_service._load_subitems_by_relation(
+            "hidden_item_id", [hidden_item_id],
+            "monday_id, parent_monday_id, item_name, hidden_item_id",
         )
         matched_parent_ids |= _collect_parent_ids_from_rows(direct_rows)
     except Exception as exc:  # noqa: BLE001
@@ -877,6 +873,25 @@ async def handle_column_changed_minimal(
         logger.warning(f"No column ID in payload for item {item_id}")
         return
 
+    if board_id == PARENT_BOARD_ID and column_id == PARENT_COLUMNS["total_order_value"]:
+        _queue_rehydrate_job(item_id, "parent_order_mirror_change")
+        return
+
+    if board_id == SUBITEM_BOARD_ID and column_id in {
+        SUBITEM_COLUMNS["cust_order_value_material"], SUBITEM_COLUMNS["hidden_item_id"],
+    }:
+        parent_id = _lookup_parent_project_id(item_id)
+        if parent_id:
+            _queue_rehydrate_job(parent_id, "subitem_order_change")
+        return
+
+    if board_id == HIDDEN_ITEMS_BOARD_ID and column_id in {
+        HIDDEN_ITEMS_COLUMNS["cust_order_value_material"],
+        HIDDEN_ITEMS_COLUMNS["cust_additional_charges"],
+    }:
+        _queue_hidden_rehydrate_jobs(item_id, f"hidden_order_change:{column_id}")
+        return
+
     analysis_targets: Set[str] = set()
     trigger_columns = ANALYSIS_TRIGGER_COLUMNS.get(board_id, set())
 
@@ -1362,11 +1377,6 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
                 "field": "follow_up_date",
                 "transform": parse_date_value,
             },
-            PARENT_COLUMNS["total_order_value"]: {
-                "table": "projects",
-                "field": "total_order_value",
-                "transform": parse_numeric_value,
-            },
         },
         SUBITEM_BOARD_ID: {
             SUBITEM_COLUMNS["account"]: {
@@ -1464,6 +1474,11 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
             hidden_covm_col: {
                 "table": "hidden_items",
                 "field": "cust_order_value_material",
+                "transform": parse_numeric_value,
+            },
+            HIDDEN_ITEMS_COLUMNS["cust_additional_charges"]: {
+                "table": "hidden_items",
+                "field": "cust_additional_charges",
                 "transform": parse_numeric_value,
             },
         },

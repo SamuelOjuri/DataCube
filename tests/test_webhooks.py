@@ -19,17 +19,23 @@ import hmac
 import json
 import logging
 import os
+import importlib
+import sys
+from unittest.mock import Mock, patch
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
 import httpx
+import pytest
 
 from src.config import (
     PARENT_BOARD_ID,
     SUBITEM_BOARD_ID,
+    HIDDEN_ITEMS_BOARD_ID,
     PARENT_COLUMNS,
     SUBITEM_COLUMNS,
+    HIDDEN_ITEMS_COLUMNS,
     WEBHOOK_SECRET,
 )
 from src.database.supabase_client import SupabaseClient
@@ -246,6 +252,58 @@ async def test_subitem_update() -> None:
 async def main() -> None:
     await test_parent_update()
     await test_subitem_update()
+
+
+@pytest.fixture
+def order_webhook_server(monkeypatch):
+    module_name = "src.webhooks.webhook_server"
+    was_imported = module_name in sys.modules
+    with patch("src.database.supabase_client.SupabaseClient"), patch("src.database.sync_service.DataSyncService"):
+        server = importlib.import_module(module_name)
+    monkeypatch.setattr(server, "supabase_client", Mock())
+    monkeypatch.setattr(server, "sync_service", Mock())
+    monkeypatch.setattr(server, "_queue_rehydrate_job", Mock())
+    monkeypatch.setattr(server, "_queue_hidden_rehydrate_jobs", Mock())
+    monkeypatch.setattr(server, "_lookup_parent_project_id", Mock(return_value="p1"))
+    yield server
+    if not was_imported:
+        sys.modules.pop(module_name, None)
+        package = sys.modules.get("src.webhooks")
+        if package is not None and getattr(package, "webhook_server", None) is server:
+            delattr(package, "webhook_server")
+
+
+def test_order_parent_mirror_queues_recompute_without_overwriting_total(order_webhook_server):
+    server = order_webhook_server
+    asyncio.run(server.handle_column_changed_minimal(PARENT_BOARD_ID, "p1", {
+        "event": {"columnId": PARENT_COLUMNS["total_order_value"], "value": {"value": "100"}}
+    }))
+    server._queue_rehydrate_job.assert_called_once_with("p1", "parent_order_mirror_change")
+    server.supabase_client.client.table.assert_not_called()
+    assert server.get_enhanced_column_field_mapping(PARENT_BOARD_ID, PARENT_COLUMNS["total_order_value"]) is None
+
+
+@pytest.mark.parametrize("field", ["cust_order_value_material", "cust_additional_charges"])
+@pytest.mark.parametrize("value", [{"value": "25.50"}, None, {"value": "invalid"}])
+def test_order_hidden_changes_refetch_both_components(order_webhook_server, field, value):
+    server = order_webhook_server
+    column_id = HIDDEN_ITEMS_COLUMNS[field]
+    asyncio.run(server.handle_column_changed_minimal(HIDDEN_ITEMS_BOARD_ID, "h1", {
+        "event": {"columnId": column_id, "value": value}
+    }))
+    server._queue_hidden_rehydrate_jobs.assert_called_once_with("h1", f"hidden_order_change:{column_id}")
+    server.supabase_client.client.table.assert_not_called()
+    assert server.get_enhanced_column_field_mapping(HIDDEN_ITEMS_BOARD_ID, column_id)["field"] == field
+
+
+@pytest.mark.parametrize("field", ["cust_order_value_material", "hidden_item_id"])
+def test_order_subitem_changes_refetch_authoritative_hidden_values(order_webhook_server, field):
+    server = order_webhook_server
+    asyncio.run(server.handle_column_changed_minimal(SUBITEM_BOARD_ID, "s1", {
+        "event": {"columnId": SUBITEM_COLUMNS[field], "value": {"value": "999"}}
+    }))
+    server._queue_rehydrate_job.assert_called_once_with("p1", "subitem_order_change")
+    server.supabase_client.client.table.assert_not_called()
 
 
 if __name__ == "__main__":
