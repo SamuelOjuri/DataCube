@@ -291,6 +291,7 @@ HIDDEN_ITEMS_COLUMNS = {
     'contact_id': 'order_contact_email_mkktmg6g',
     'date_order_received': 'date7__1',
     'cust_order_value_material': 'numbers98__1',
+    'cust_additional_charges': 'numbers3__1',
 }
 
 # Mirror resolution mappings

@@ -185,6 +185,12 @@ CREATE TABLE hidden_items (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+ALTER TABLE public.hidden_items
+    ADD COLUMN IF NOT EXISTS cust_additional_charges NUMERIC(12,2);
+
+ALTER TABLE public.subitems
+    ADD COLUMN IF NOT EXISTS cust_additional_charges NUMERIC(12,2);
+
 -- Sync tracking table
 CREATE TABLE sync_log (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
