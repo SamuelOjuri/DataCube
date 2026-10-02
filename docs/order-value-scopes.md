@@ -1,5 +1,10 @@
 # Scoped order-value correction
 
+A separate [scoped-read workflow](order-value-scopes-targeted.md) now supports
+targeted financial/database reads and `--all-pending` for a whole reviewed run.
+The workflow described below is retained unchanged so already-started apply and
+verify commands keep their existing code fingerprints and artifact compatibility.
+
 `scripts/order_value_scopes.py` adds a separate online workflow. The existing
 `backfill_order_values.py` and `reconcile_order_values.py` apply commands retain
 their maintenance-window requirements and their original artifact fingerprints.
