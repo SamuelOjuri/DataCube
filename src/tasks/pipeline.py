@@ -2034,7 +2034,7 @@ def _iter_projects(
 
     while True:
         query = (
-            db.client.table("projects")
+            db.client.table("reportable_projects")
             .select("monday_id,date_created")
             .gte("date_created", cutoff)
             .order("monday_id", desc=False)
@@ -2122,7 +2122,10 @@ def _process_projects(
             logger.exception("LLM analysis failed for %s: %s", project_id, exc)
             continue
 
-        if result.get("success"):
+        if result.get("skipped"):
+            stats["skipped"] += 1
+            logger.info("Skipped %s: %s", project_id, result.get("reason"))
+        elif result.get("success"):
             stats["updated"] += 1
             logger.info(
                 "Stored analysis for %s | rating=%s | conversion=%.3f | gestation=%s",
@@ -2154,7 +2157,7 @@ def _iter_projects_paginated(
 
     while True:
         batch = (
-            db.client.table("projects")
+            db.client.table("reportable_projects")
             .select("monday_id,date_created")
             .gte("date_created", since)
             .order("monday_id", desc=False)

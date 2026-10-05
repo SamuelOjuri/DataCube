@@ -71,6 +71,8 @@ def test_refresh_materialized_views_uses_guarded_sql_function(monkeypatch) -> No
 
     executed_sql = [sql for sql, _params in connection.cursor_instance.executed]
     assert "SELECT refresh_analytics_views();" in executed_sql
+    for relation in ("conversion_metrics", "conversion_metrics_recent", "mv_pipeline_forecast_monthly_12m_v1"):
+        assert f"REFRESH MATERIALIZED VIEW public.{relation};" in executed_sql
     assert connection.commits == 1
     assert connection.closed is True
 

@@ -31,7 +31,7 @@ class SupabaseDataExtractor:
         """Get projects data from Supabase as DataFrame"""
         
         # Query Supabase
-        query = self.supabase.client.table('projects').select('*')
+        query = self.supabase.client.table('reportable_projects').select('*')
         
         if filters:
             for key, value in filters.items():
@@ -69,7 +69,7 @@ class SupabaseDataExtractor:
         """Get enhanced context for a specific project"""
         
         # Get project details with related data
-        project = self.supabase.client.table('projects')\
+        project = self.supabase.client.table('reportable_projects')\
             .select('*, subitems(*)')\
             .eq('monday_id', project_id)\
             .single()\
@@ -85,7 +85,7 @@ class SupabaseDataExtractor:
         ).execute()
         
         # Get similar projects
-        similar = self.supabase.client.table('projects')\
+        similar = self.supabase.client.table('reportable_projects')\
             .select('*')\
             .eq('category', project.data['category'])\
             .eq('type', project.data['type'])\

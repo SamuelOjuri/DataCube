@@ -300,6 +300,7 @@ def test_scheduled_timeline_failure_is_not_reported_as_success():
     monday.get_item_updates.return_value = []
     monday.create_item_update.side_effect = ConnectionError('unavailable')
     service = MondayUpdateService(db_client=Mock(), monday_client=monday)
+    service.db.is_project_reporting_excluded.return_value = False
     assert service.sync_project('101', {'rating_score': 80})['success'] is False
     monday.get_item_updates.side_effect = ConnectionError('lookup unavailable')
     monday.create_item_update.reset_mock()

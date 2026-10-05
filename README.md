@@ -18,6 +18,10 @@
 
 ## Data Quality Checks
 
+Redundant default-name projects use audited reporting exclusions while source
+records and history remain intact. See [project placeholder treatment](docs/project-placeholders.md)
+for the reporting view, review queue, migration and exact-ID archive workflow.
+
 Run `python scripts/data_quality_checks.py` to see mirroring coverage and numeric null counts before relying on webhook-triggered analysis. The script requires Supabase service credentials in your environment.
 
 ## Automation & Background Jobs

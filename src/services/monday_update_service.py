@@ -38,6 +38,8 @@ class MondayUpdateService:
         Ensure Monday columns reflect the latest numeric analysis for the item.
         """
         project_id = str(project_id)
+        if self.db.is_project_reporting_excluded(project_id):
+            return {"success": True, "skipped": True, "reason": "redundant_placeholder"}
         payload = analysis or self.db.get_latest_analysis_result(project_id)
         if not payload:
             logger.warning("No analysis payload found for project %s", project_id)

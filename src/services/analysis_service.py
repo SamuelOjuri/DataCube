@@ -212,7 +212,7 @@ class AnalysisService:
             if fields and any(key.get(field) in (None, "") for field in fields):
                 continue
 
-            q = self.db.client.table('projects').select('*').gte('date_created', recency_cutoff)
+            q = self.db.client.table('reportable_projects').select('*').gte('date_created', recency_cutoff)
             for field in fields:
                 # 'product_type' in key maps to 'product_key' column in projects table
                 col = 'product_key' if field == 'product_type' else field
@@ -291,13 +291,16 @@ class AnalysisService:
     def _fetch_global_df(self) -> pd.DataFrame:
         """Fetch global dataset with configurable lookback period."""
         recency_cutoff = (datetime.now().date() - timedelta(days=self.lookback_days)).isoformat()
-        rows = self.db.client.table('projects').select('*').gte('date_created', recency_cutoff).limit(10000).execute().data or []
+        rows = self.db.client.table('reportable_projects').select('*').gte('date_created', recency_cutoff).limit(10000).execute().data or []
         return pd.DataFrame(rows)
 
     def analyze_and_store(self, monday_id: str, with_llm: Optional[bool] = None) -> Dict[str, Any]:
+        if self.db.is_project_reporting_excluded(monday_id):
+            return {'success': True, 'skipped': True,
+                    'reason': 'redundant_placeholder', 'result': {}}
         if with_llm is None:
             with_llm = self.llm_enabled
-        proj = self.db.client.table('projects').select('*').eq('monday_id', monday_id).single().execute().data
+        proj = self.db.client.table('reportable_projects').select('*').eq('monday_id', monday_id).single().execute().data
         if not proj:
             return {'success': False, 'error': 'project not found'}
 

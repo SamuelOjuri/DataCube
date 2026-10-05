@@ -58,6 +58,15 @@ def refresh_materialized_views(*, task_logger: Optional[logging.Logger] = None) 
                         refreshed += 1
                 if refreshed != 3:
                     raise MaintenanceUnavailable('Required materialized views are missing')
+            # These aggregates also depend on the reporting population. Refresh
+            # them when a reviewed placeholder becomes a real project or is released.
+            for relation in (
+                "public.conversion_metrics",
+                "public.conversion_metrics_recent",
+                "public.mv_pipeline_forecast_monthly_12m_v1",
+            ):
+                if _relation_exists(cur, relation):
+                    cur.execute(f"REFRESH MATERIALIZED VIEW {relation};")
             conn.commit()
             log.info("Materialized view refresh complete")
     except Exception as exc:

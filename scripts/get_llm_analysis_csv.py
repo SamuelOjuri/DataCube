@@ -35,19 +35,19 @@ logger = logging.getLogger("llm_test")
 def fetch_projects(db: SupabaseClient, limit: int = 100) -> List[Dict[str, Any]]:
     # Prefer recent projects; fall back to any if date ordering fails
     try:
-        res = db.client.table('projects')\
+        res = db.client.table('reportable_projects')\
             .select('*')\
             .order('date_created', desc=True)\
             .limit(limit)\
             .execute()
         rows = res.data or []
         if len(rows) < limit:
-            more = db.client.table('projects').select('*').limit(limit - len(rows)).execute().data or []
+            more = db.client.table('reportable_projects').select('*').limit(limit - len(rows)).execute().data or []
             seen = {r['monday_id'] for r in rows}
             rows += [r for r in more if r.get('monday_id') not in seen]
         return rows[:limit]
     except Exception:
-        res = db.client.table('projects').select('*').limit(limit).execute()
+        res = db.client.table('reportable_projects').select('*').limit(limit).execute()
         return res.data or []
 
 
@@ -122,7 +122,7 @@ def fetch_segment_df(db: SupabaseClient, key: Dict[str, Any], lookback_days: Opt
         # Skip tiers that require keys missing on this project
         if fields and any(key.get(f) in (None, '') for f in fields):
             continue
-        q = db.client.table('projects').select('*').gte('date_created', recency_cutoff)
+        q = db.client.table('reportable_projects').select('*').gte('date_created', recency_cutoff)
         for f in fields:
             col = 'product_key' if f == 'product_type' else f
             q = q.eq(col, key.get(f))
@@ -236,7 +236,7 @@ def fetch_global_df(db: SupabaseClient, lookback_days: Optional[int] = None) -> 
     # Use provided lookback_days or fall back to config default
     days_back = lookback_days or ANALYSIS_LOOKBACK_DAYS
     recency_cutoff = (datetime.now().date() - timedelta(days=days_back)).isoformat()
-    rows = db.client.table('projects').select('*').gte('date_created', recency_cutoff).limit(10000).execute().data or []
+    rows = db.client.table('reportable_projects').select('*').gte('date_created', recency_cutoff).limit(10000).execute().data or []
     return pd.DataFrame(rows)
 
 

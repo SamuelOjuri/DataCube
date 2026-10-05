@@ -60,7 +60,7 @@ def _iter_project_batches(
 
     while True:
         query = (
-            db.client.table("projects")
+            db.client.table("reportable_projects")
             .select("monday_id,date_created")
             .gte("date_created", cutoff)
             .order("monday_id", desc=False)

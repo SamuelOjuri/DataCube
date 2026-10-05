@@ -59,7 +59,7 @@ def stream_projects(
 
     while True:
         query = (
-            db.client.table("projects")
+            db.client.table("reportable_projects")
             .select("*")
             .order(order_field, desc=False)
             .limit(batch_size)

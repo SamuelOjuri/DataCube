@@ -56,7 +56,7 @@ def fetch_projects_by_ids(db: SupabaseClient, project_ids: List[str]) -> Dict[st
 
     for batch in chunked(project_ids, size=50):
         query = (
-            db.client.table("projects")
+            db.client.table("reportable_projects")
             .select("*")
             .in_("monday_id", batch)
             .execute()

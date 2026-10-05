@@ -26,7 +26,7 @@ start = 0
 start_time = time.time()
 
 # Get first page and total
-res = db.client.table('projects')\
+res = db.client.table('reportable_projects')\
     .select('monday_id', count='exact')\
     .gte('date_created', cutoff)\
     .order('monday_id')\
@@ -66,7 +66,7 @@ log_progress(processed)
 start = PAGE
 page_idx = 1
 while start < total:
-    res = db.client.table('projects')\
+    res = db.client.table('reportable_projects')\
         .select('monday_id')\
         .gte('date_created', cutoff)\
         .order('monday_id')\

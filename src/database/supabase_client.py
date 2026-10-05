@@ -268,6 +268,13 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Failed to save cursor checkpoint for board {board_id}: {e}")
     
+    def is_project_reporting_excluded(self, project_id: str) -> bool:
+        """Read the effective decision; errors must not silently enable analysis."""
+        rows = (self.client.table('project_reporting_review')
+                .select('reporting_excluded').eq('monday_id', str(project_id))
+                .limit(1).execute().data or [])
+        return bool(rows and rows[0]['reporting_excluded'])
+
     def get_projects_for_analysis(
         self, 
         filters: Dict = None, 
@@ -275,7 +282,7 @@ class SupabaseClient:
     ) -> List[Dict]:
         """Get projects for analysis with optional filters"""
         try:
-            query = self.client.table('projects').select('*')
+            query = self.client.table('reportable_projects').select('*')
             
             if filters:
                 for key, value in filters.items():
