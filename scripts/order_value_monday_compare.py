@@ -148,6 +148,10 @@ class ComparisonMondayClient(backfill.MondayClient):
     def execute_query(self, query, variables=None):
         if not query.lstrip().startswith('query CompareMonday('):
             raise ValueError('Comparison transport only accepts the exact-ID read query')
+        return self._execute_read(query, variables)
+
+    def _execute_read(self, query, variables=None):
+        """Shared transport; callers validate their narrowly allowed read query."""
         with self.session.post(self.api_url, json={'query': query, 'variables': variables or {}},
                                headers=self.headers, timeout=(10, 45)) as response:
             try:

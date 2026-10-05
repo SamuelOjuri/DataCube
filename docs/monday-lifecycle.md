@@ -56,9 +56,10 @@ missed deletions; the daily marker check covers already known deletions/restores
 
 ## Processing and safeguards
 
-- Only fresh, successfully returned `state=deleted` evidence on the expected board
-  authorizes deletion. Missing results, API errors, moved items, and API archives
-  do not. The business Status label `Archived` is never a deletion signal.
+- The default path requires fresh, successfully returned `state=deleted` evidence
+  on the expected board. An explicit single-subitem activity-log recovery is also
+  available below. Missing results alone, API errors, moved items, and API archives
+  never authorize deletion. The business Status label `Archived` is not a deletion signal.
 - Delete transactions contain marker changes, before-row audit history, actual
   deletion, durable refresh jobs and a durable post-deletion source verification.
   They use 750 ms lock, 4 second statement and 10 second transaction timeouts.
@@ -146,6 +147,86 @@ Only reasons containing `state=deleted` are selected; archives and unavailable
 items remain excluded from deletion. Each selected ID receives a fresh Monday
 check. Review `plan.json` for deferred IDs, then use the same queue/status steps.
 
+## Activity-log recovery: missing subitem in project 18747
+
+Use this explicit exception only for one stored subitem whose exact deletion
+event can still be read from Monday. It does not apply to projects, hidden sources,
+bulk CSV selections, or items currently returned by Monday. The ordinary staging
+and webhook paths never infer deletion from absence or automatically enable it.
+
+For subitem `3201675663` (`18747_26.01 - A-FB`), the known deletion event is
+`c544b619-f673-463c-87df-fec7efc46d2d`, recorded on 2 September 2026 at 14:28:01 UTC.
+The parent is `3199168336`. Active sibling `3200638626` is a separate record.
+Run from the repository root, with the existing Monday and PostgreSQL credentials:
+
+```powershell
+$activityRunDir = 'outputs/monday_lifecycle/18747_activity_' + (Get-Date -Format 'yyyyMMdd_HHmmss')
+& .\report.venv\Scripts\python.exe -m scripts.monday_lifecycle stage `
+    --board 1825117144 --item-id 3201675663 --parent-id 3199168336 `
+    --activity-log-id c544b619-f673-463c-87df-fec7efc46d2d `
+    --activity-log-from '2026-09-01T00:00:00Z' --run-dir $activityRunDir
+if ($LASTEXITCODE -ne 0) { throw 'Activity recovery staging failed.' }
+Get-Content -LiteralPath (Join-Path $activityRunDir 'manifest.json')
+Import-Csv -LiteralPath (Join-Path $activityRunDir 'review.csv') | Format-Table
+```
+
+Stage is read-only for both remote systems. A successful selection creates:
+
+- `review.csv`: exact subitem and parent IDs, evidence basis, deletion event ID
+  and UTC timestamp, and the number of stored rows to delete.
+- `plan.json`: the complete stored row, the deletion event, fresh activity history,
+  and the parent membership checks made before and after reading that history.
+- `manifest.json`: target database identity, code/artifact fingerprints, run ID,
+  and selected/deferred counts. `selected=1, deferred=0` means eligible for review,
+  not that anything has been queued or deleted.
+
+The reader exhausts item-filtered activity pages on both the subitem and parent
+boards from the supplied start through the current check. It requires accessible,
+active boards, an active parent on the expected board, and absence of the selected
+ID from both direct reads and the parent's complete current child list. The exact
+deletion must identify the selected item, subitem board, parent and parent board.
+Any later or simultaneous activity for the subitem stops recovery, including
+unknown event types. Later parent lifecycle or unfamiliar actions also stop it;
+ordinary parent field/name edits and subscriptions are allowed. API/permission
+errors, missing events, malformed data, inconsistent/duplicate pagination, changed
+membership and the ten-page-per-board limit all fail closed.
+
+Activity logs are queried using the documented [board activity log API](https://developer.monday.com/api-reference/reference/activity-logs).
+They cover available history on these two boards, not a global account-wide audit.
+There is no atomic transaction shared by Monday and PostgreSQL. Incomplete history
+or an inaccessible source requires manual investigation, not a forced deletion.
+
+After reviewing the single-row plan, deploy the updated worker code **before**
+queueing it. No additional database migration is needed when the existing lifecycle
+migration is installed. Queueing is a database write and an enabled worker may
+process it immediately:
+
+```powershell
+$activityManifest = Get-Content -Raw -LiteralPath (Join-Path $activityRunDir 'manifest.json') | ConvertFrom-Json
+if ($activityManifest.selected -ne 1 -or $activityManifest.deferred -ne 0) {
+    throw 'Review the deferred reason in plan.json; no deletion is ready.'
+}
+& .\report.venv\Scripts\python.exe -m scripts.monday_lifecycle queue `
+    --run-dir $activityRunDir --confirm-run-id $activityManifest.run_id
+if ($LASTEXITCODE -ne 0) { throw 'Activity recovery queueing failed.' }
+& .\report.venv\Scripts\python.exe -m scripts.monday_lifecycle status --run-id $activityManifest.run_id
+```
+
+The worker re-reads the same event and later history, rechecks current membership,
+and rejects a stored row that changed since review. It never fabricates a current
+Monday `state=deleted` response. The transaction records the original row and
+fresh activity evidence, deletes only that subitem, installs the normal stale-write
+guard, and queues parent refresh and source verification. All writes roll back
+together on failure. Parent, sibling and hidden-source records are retained.
+
+Immediate and daily verification jobs retain the reviewed activity reference and
+re-read it when the item remains missing. A returned active item uses the normal
+restoration path. If the historical event expires or becomes inaccessible, the
+check remains in `review` with the deletion marker intact. A failed parent refresh
+also remains visible separately; do not treat a processed deletion as proof that
+every follow-up succeeded. Restage after changing the code, stored row or reviewed
+event; do not edit artifacts or manually insert a replacement job to bypass checks.
+
 ## Operations and verification
 
 ```sql
@@ -185,5 +266,5 @@ on an explicitly supplied loopback PostgreSQL server:
 
 ```powershell
 $env:ORDER_SCOPE_TEST_DSN = 'host=127.0.0.1 port=55439 dbname=postgres user=postgres'
-& .\report.venv\Scripts\python.exe -m pytest tests/test_monday_lifecycle.py tests/test_monday_lifecycle_postgres.py -q
+& .\report.venv\Scripts\python.exe -m pytest tests/test_monday_lifecycle.py tests/test_monday_lifecycle_activity.py tests/test_monday_lifecycle_postgres.py tests/test_monday_lifecycle_activity_postgres.py -q
 ```

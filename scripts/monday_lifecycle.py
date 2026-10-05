@@ -21,6 +21,7 @@ def digest(value):
 def code_digest():
     root = Path(__file__).resolve().parents[1]
     names = ['scripts/monday_lifecycle.py', 'src/services/monday_lifecycle.py',
+             'src/services/monday_lifecycle_activity.py',
              'src/services/monday_lifecycle_refresh.py', 'src/database/schema/monday_lifecycle.sql']
     from scripts.order_value_monday_compare import code_fingerprint
     return digest({'files': {n: hashlib.sha256((root / n).read_bytes()).hexdigest() for n in names},
@@ -57,10 +58,28 @@ def selected_targets(args):
     return sorted(targets)
 
 
+def activity_request(args, targets):
+    from src.services import monday_lifecycle_activity as activity
+    log_id = getattr(args, 'activity_log_id', None)
+    since = getattr(args, 'activity_log_from', None)
+    parent = getattr(args, 'parent_id', None)
+    if not any((log_id, since, parent)):
+        return None
+    if (not all((log_id, since, parent)) or args.review_csv or len(targets) != 1
+            or targets[0][0] != life.SUBITEM_BOARD_ID):
+        raise ValueError('Activity recovery requires one explicit subitem, --parent-id, '
+                         '--activity-log-id and --activity-log-from; no review CSV')
+    request = dict(mode=activity.MODE, board_id=targets[0][0], item_id=targets[0][1],
+                   parent_id=parent, log_id=log_id, **{'from': since})
+    activity.validate_request(request)
+    return request
+
+
 def stage(connection, monday, args):
     if args.run_dir.exists():
         raise ValueError('Use a new run directory')
     targets = selected_targets(args)
+    recovery = activity_request(args, targets)
     evidence = life.read_items(monday, {i for _, i in targets})
     selected, deferred = [], []
     # No transaction spans the Monday network read; this SQL transaction is read-only.
@@ -69,22 +88,40 @@ def stage(connection, monday, args):
         target = target_digest(connection)
         for board, item in targets:
             try:
-                life.require_item(evidence, item, life.BOARDS[board], 'deleted')
+                if not recovery:
+                    life.require_item(evidence, item, life.BOARDS[board], 'deleted')
                 before = life.deletion_snapshot(connection, life.BOARDS[board], item)
                 selected.append(dict(board_id=board, item_id=item, before=before))
             except life.ReviewRequired as exc:
                 deferred.append(dict(board_id=board, item_id=item, reason=str(exc)))
+    # Activity network reads never run inside the database transaction.
+    if recovery and selected:
+        from src.services import monday_lifecycle_activity as activity
+        entry = selected.pop()
+        try:
+            activity.require_snapshot(recovery, entry['before'])
+            proof = activity.capture(monday, recovery)
+            entry.update(activity_recovery=proof['request'], activity_evidence=proof)
+            selected.append(entry)
+        except life.ReviewRequired as exc:
+            deferred.append(dict(board_id=recovery['board_id'], item_id=recovery['item_id'], reason=str(exc)))
     plan = dict(selected=selected, deferred=deferred, evidence=evidence)
     args.run_dir.mkdir(parents=True)
     (args.run_dir / 'plan.json').write_text(json.dumps(plan, indent=2, default=str), encoding='utf-8')
     with (args.run_dir / 'review.csv').open('w', encoding='utf-8-sig', newline='') as stream:
-        writer = csv.DictWriter(stream, fieldnames=['board_id','item_id','table','stored_rows','dependent_subitems'])
+        writer = csv.DictWriter(stream, fieldnames=['board_id','item_id','table','stored_rows','dependent_subitems',
+            'evidence_basis','parent_id','activity_log_id','deleted_at_utc'])
         writer.writeheader()
         for entry in selected:
             table = life.BOARDS[entry['board_id']]
             writer.writerow(dict(board_id=entry['board_id'], item_id=entry['item_id'], table=table,
                 stored_rows=len(entry['before'][table]),
-                dependent_subitems=len(entry['before']['subitems']) if table != 'subitems' else 0))
+                dependent_subitems=len(entry['before']['subitems']) if table != 'subitems' else 0,
+                evidence_basis='activity_log' if entry.get('activity_recovery') else 'current_state',
+                parent_id=entry.get('activity_recovery', {}).get('parent_id', ''),
+                activity_log_id=entry.get('activity_recovery', {}).get('log_id', ''),
+                deleted_at_utc=activity.event_time(entry['activity_evidence']['deletion_event']).isoformat()
+                    if entry.get('activity_recovery') else ''))
     manifest = dict(run_id=str(uuid4()), prepared_at=datetime.now(timezone.utc).isoformat(),
                     target=target, code=code_digest(), sha256=digest(plan),
                     review_sha256=hashlib.sha256((args.run_dir / 'review.csv').read_bytes()).hexdigest(),
@@ -109,8 +146,18 @@ def queue_run(connection, args):
             if life.deletion_snapshot(connection, life.BOARDS[board], item) != entry['before']:
                 raise ValueError(f'Supabase target {item} changed since staging; stage again')
             key = f"recovery:{manifest['run_id']}:{board}:{item}"
+            payload = {'recovery_run_id': manifest['run_id'], 'review_sha256': manifest['sha256']}
+            recovery = entry.get('activity_recovery')
+            if recovery:
+                from src.services import monday_lifecycle_activity as activity
+                activity.require_snapshot(recovery, entry['before'])
+                if (board != recovery['board_id'] or item != recovery['item_id']
+                        or entry['activity_evidence']['request'] != recovery
+                        or activity.fingerprint(entry['activity_evidence']['deletion_event']) != recovery['deletion_sha256']):
+                    raise ValueError('Activity recovery differs from the staged selection')
+                payload.update(activity_recovery=recovery, reviewed_before=entry['before'])
             life.enqueue(connection, 'delete', board, item, key=key,
-                         payload={'recovery_run_id': manifest['run_id'], 'review_sha256': manifest['sha256']})
+                         parent=recovery['parent_id'] if recovery else None, payload=payload)
             keys.append(key)
     return dict(queued=len(keys), event_keys=keys,
                 note='Worker rechecks current Monday state and related rows before deleting')
@@ -125,6 +172,9 @@ def main(argv=None):
     p.add_argument('--item-id', action='append')
     p.add_argument('--review-csv', type=Path)
     p.add_argument('--run-dir', type=Path, required=True)
+    p.add_argument('--activity-log-id', help='Opt in to recovery of one missing subitem using this deletion event')
+    p.add_argument('--activity-log-from', help='ISO timestamp with timezone before the deletion; history is read through now')
+    p.add_argument('--parent-id', help='Exact reviewed parent for activity-log recovery')
     p = subs.add_parser('queue')
     p.add_argument('--run-dir', type=Path, required=True)
     p.add_argument('--confirm-run-id', required=True)
@@ -142,8 +192,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     with life.connect() as connection:
         if args.command == 'stage':
-            from scripts.order_value_monday_compare import ComparisonMondayClient
-            result = stage(connection, ComparisonMondayClient(), args)
+            from src.services.monday_lifecycle_activity import LifecycleMondayClient
+            monday = LifecycleMondayClient()
+            try:
+                result = stage(connection, monday, args)
+            finally:
+                monday.session.close()
         elif args.command == 'queue':
             result = queue_run(connection, args)
         elif args.command == 'worker':

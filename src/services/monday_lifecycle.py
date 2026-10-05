@@ -109,13 +109,17 @@ def schedule_rechecks(connection):
     This queries the indexed marker queue, never all business tables or boards.
     """
     with connection.transaction():
-        rows = connection.execute('SELECT table_name,monday_id,former_parent_id '
-            'FROM public.monday_item_lifecycle WHERE blocked AND recheck_after<=now() '
-            'ORDER BY recheck_after FOR UPDATE SKIP LOCKED LIMIT 10').fetchall()
+        rows = connection.execute("SELECT l.table_name,l.monday_id,l.former_parent_id, "
+            "e.payload->'activity_recovery' AS activity_recovery "
+            'FROM public.monday_item_lifecycle l LEFT JOIN public.monday_lifecycle_events e '
+            'ON e.event_key=l.last_event_key WHERE l.blocked AND l.recheck_after<=now() '
+            'ORDER BY l.recheck_after FOR UPDATE OF l SKIP LOCKED LIMIT 10').fetchall()
         for row in rows:
             board = next(b for b, t in BOARDS.items() if t == row['table_name'])
-            enqueue(connection, 'reconcile', board, row['monday_id'], parent=row['former_parent_id'],
-                    payload={'verification_only': True, 'cause': 'periodic_tombstone_check'})
+            payload = {'verification_only': True, 'cause': 'periodic_tombstone_check'}
+            if row['activity_recovery']:
+                payload['activity_recovery'] = row['activity_recovery']
+            enqueue(connection, 'reconcile', board, row['monday_id'], parent=row['former_parent_id'], payload=payload)
             connection.execute("UPDATE public.monday_item_lifecycle SET recheck_after=now()+interval '1 day' "
                 'WHERE table_name=%s AND monday_id=%s', (row['table_name'], row['monday_id']))
         return len(rows)
@@ -209,9 +213,13 @@ def audit(connection, job, action, table, item, before, evidence):
         (job['event_key'], action, table, item, Jsonb(before), Jsonb(evidence)))
 
 
-def apply_deletion(connection, job, before, evidence):
+def apply_deletion(connection, job, before, evidence, *, activity_proof=None):
     table, item = BOARDS[job['board_id']], job['item_id']
-    require_item(evidence, item, table, 'deleted')
+    if activity_proof is None:
+        require_item(evidence, item, table, 'deleted')
+    else:
+        from . import monday_lifecycle_activity as activity
+        activity.require_proof(activity_proof, job, before, evidence)
     if table == 'projects':
         # A stored child might have moved in Monday. Never cascade-delete it on
         # the assumption that old Supabase membership is still authoritative.
@@ -230,7 +238,8 @@ def apply_deletion(connection, job, before, evidence):
         marker(connection, table, item, True, job)
         for name, row in targets:
             marker(connection, name, row['monday_id'], True, job, parent=row.get('parent_monday_id'))
-            proof = {'deleted_root': evidence[item], 'deleted_item': evidence[row['monday_id']]}
+            proof = ({'basis': 'activity_log', 'activity': activity_proof} if activity_proof is not None else
+                     {'deleted_root': evidence[item], 'deleted_item': evidence[row['monday_id']]})
             audit(connection, job, 'delete', name, row['monday_id'], row, proof)
         if not targets:
             audit(connection, job, 'delete_already_absent', table, item, None, evidence)
@@ -258,10 +267,14 @@ def apply_deletion(connection, job, before, evidence):
                         key=f"{job['event_key']}:refresh:{parent}", payload={'cause': job['event_key']})
         # Source verification is itself durable, so a restart after COMMIT does
         # not lose the check for a restoration concurrent with the deletion.
+        verification_payload = {'verification_only': True, 'cause': job['event_key']}
+        if activity_proof is not None:
+            verification_payload['activity_recovery'] = activity_proof['request']
         enqueue(connection, 'reconcile', job['board_id'], item,
                 parent=job.get('parent_id'), key=f"{job['event_key']}:verify",
-                payload={'verification_only': True, 'cause': job['event_key']})
-        finish(connection, job, 'processed', {'deleted': item, 'table': table, 'refresh_projects': sorted(parents)})
+                payload=verification_payload)
+        finish(connection, job, 'processed', {'deleted': item, 'table': table, 'refresh_projects': sorted(parents),
+               'evidence_basis': 'activity_log' if activity_proof is not None else 'current_state'})
 
 
 def process_job(connection, monday, job):
@@ -277,11 +290,35 @@ def process_job(connection, monday, job):
     if table == 'projects':
         ids.update(r['monday_id'] for r in before['subitems'])
     evidence = read_items(monday, ids)
-    observed = require_item(evidence, item, table)
-    state = observed['state']
     blocked = connection.execute('SELECT blocked FROM public.monday_item_lifecycle '
         'WHERE table_name=%s AND monday_id=%s', (table, item)).fetchone()
     blocked = bool(blocked and blocked['blocked'])
+    recovery = job['payload'].get('activity_recovery')
+    if recovery and (job['kind'] == 'delete' or item not in evidence):
+        from . import monday_lifecycle_activity as activity
+        verification = job['kind'] == 'reconcile' and job['payload'].get('verification_only')
+        if verification:
+            if not blocked or before[table]:
+                raise ReviewRequired('Activity verification requires an absent row and an existing deletion marker')
+        else:
+            activity.require_snapshot(recovery, before)
+            if before != job['payload'].get('reviewed_before'):
+                raise ReviewRequired('Stored row changed since activity recovery staging; stage again')
+        proof = activity.capture(monday, recovery)
+        activity.require_proof(proof, job, before, evidence, verification=verification)
+        if verification:
+            with write_transaction(connection, job):
+                current_marker = connection.execute('SELECT blocked FROM public.monday_item_lifecycle '
+                    'WHERE table_name=%s AND monday_id=%s', (table, item)).fetchone()
+                if read_rows(connection, table, 'monday_id', [item]) or not current_marker or not current_marker['blocked']:
+                    raise ValueError('Lifecycle state changed during activity verification')
+                audit(connection, job, 'verify_activity_deletion', table, item, None, proof)
+                finish(connection, job, 'processed', {'deletion_verified': item, 'evidence_basis': 'activity_log'})
+        else:
+            apply_deletion(connection, job, before, evidence, activity_proof=proof)
+        return
+    observed = require_item(evidence, item, table)
+    state = observed['state']
     if state == 'deleted':
         if (job['payload'].get('verification_only') and not before[table] and blocked):
             with write_transaction(connection, job):
@@ -323,8 +360,8 @@ def run_once(connection=None, monday=None):
                 return False
         try:
             if monday is None:
-                from scripts.order_value_monday_compare import ComparisonMondayClient
-                class BoundedMonday(ComparisonMondayClient):
+                from .monday_lifecycle_activity import LifecycleMondayClient
+                class BoundedMonday(LifecycleMondayClient):
                     def __init__(self):
                         super().__init__()
                         self.deadline = time.monotonic() + 600
