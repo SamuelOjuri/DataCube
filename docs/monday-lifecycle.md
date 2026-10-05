@@ -4,6 +4,73 @@ Finance owns Monday data. Deleting a Monday item now has a durable, exact-ID pat
 to deleting its Supabase counterpart. This release includes code and a migration;
 deploying Python alone does not enable the feature.
 
+## Archive support: preparatory database migration
+
+Apply [monday_lifecycle_archive_state.sql](../src/database/schema/monday_lifecycle_archive_state.sql)
+in the Supabase SQL Editor as the database owner, after the existing
+`monday_lifecycle.sql` migration. Run the entire file, including `BEGIN` and
+`COMMIT`. PostgreSQL 17+ and the existing lifecycle tables with RLS enabled are
+required. Do not run the full historical `schema.sql`.
+
+This is schema preparation, not activation of archive handling. It adds four
+nullable columns to `monday_item_lifecycle`:
+
+| Column | Meaning |
+|---|---|
+| `monday_state` | Verified API `active`, `archived` or `deleted`; NULL means unverified |
+| `state_verified_at` | When the state was checked, not when the archive occurred |
+| `state_event_key` | Durable lifecycle event/audit correlation key for the observation |
+| `state_evidence` | Nonempty JSON object containing the observation evidence |
+
+An observation must supply all four fields together. Business labels such as
+Archive/Archived, an absent API result, and `blocked=false` do not establish an
+API state. The old deletion marker is deliberately independent: this migration
+neither derives states from it nor changes its meaning. Event keys have no
+cascading foreign key, so audit correlation can survive queue retention.
+
+There are no business-data updates, state backfills, new grants, archive jobs,
+new worker protocols, reporting filters or financial recalculations in this
+migration. Existing deletion guards, scope guards, queue constraints and audit
+history are unchanged. The partial index prepares future exact-ID archive
+rechecks using the existing `recheck_after` scheduling column.
+
+The migration can be rerun. Unexpected preexisting column definitions or
+invalid observations stop it and roll back its changes. Lock waits are bounded
+to five seconds and statements to thirty seconds; a timeout means retry the
+whole file in a quieter window, not remove its safeguards.
+If the editor leaves a transaction open or aborted after an error, run
+`ROLLBACK;` before retrying. Do not continue with individual statements.
+
+After applying, these read-only checks should return four nullable columns
+without defaults, one validated constraint, and one valid index:
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'monday_item_lifecycle'
+  AND column_name IN
+      ('monday_state', 'state_verified_at', 'state_event_key', 'state_evidence')
+ORDER BY column_name;
+
+SELECT conname, convalidated
+FROM pg_constraint
+WHERE conrelid = 'public.monday_item_lifecycle'::regclass
+  AND conname = 'monday_item_lifecycle_state_observation_check';
+
+SELECT c.relname, i.indisvalid
+FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.oid = to_regclass('public.monday_item_lifecycle_archived_rechecks');
+```
+
+Do not manually populate the new fields or equate NULL with active. The next
+application release must validate fresh exact-ID API evidence, update lifecycle
+metadata and transition audits atomically, handle archive/reactivation, and
+apply lifecycle-aware current membership consistently across sync and rollups.
+Historical values and reports must remain available. Deploy all relevant
+workers before enabling that behaviour; applying this migration alone does not
+resolve any manual-review archive cases.
+
 ## Deployment order
 
 1. Apply `src/database/schema/monday_lifecycle.sql` in Supabase SQL Editor as the
@@ -276,6 +343,13 @@ on an explicitly supplied loopback PostgreSQL server:
 ```powershell
 $env:ORDER_SCOPE_TEST_DSN = 'host=127.0.0.1 port=55439 dbname=postgres user=postgres'
 & .\report.venv\Scripts\python.exe -m pytest tests/test_monday_lifecycle.py tests/test_monday_lifecycle_activity.py tests/test_monday_lifecycle_postgres.py tests/test_monday_lifecycle_activity_postgres.py -q
+```
+
+The preparatory archive migration has focused idempotency, data-preservation,
+constraint, RLS and existing-worker compatibility coverage:
+
+```powershell
+& .\report.venv\Scripts\python.exe -m pytest tests\test_monday_archive_schema_postgres.py -q
 ```
 
 ## Worker monitoring
