@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "selected": [
+    {
+      "item_name": "18326",
+      "project_name": "Cospace Harlow",
+      "parent_id": "2915886260",
+      "item_id": "2916255740",
+      "subitem_name": "18326_26.02 - A",
+      "preserve_item_id": "2916256531",
+      "log_id": "95424202-0237-4b8f-a67f-940037a347b9",
+      "deleted_at_utc": "2026-05-14T13:51:02.193017+00:00",
+      "creation_log_id": "46e30ec5-87e4-425d-bf9e-0346fd46ce3a",
+      "created_at_utc": "2026-05-14T12:58:02.381096+00:00"
+    },
+    {
+      "item_name": "15957",
+      "project_name": "119 High Street Southampton",
+      "parent_id": "1771987887",
+      "item_id": "2902522882",
+      "subitem_name": "15957_24.02 - E",
+      "preserve_item_id": "2902535739",
+      "log_id": "4e710194-847f-44f6-81ba-dff5ae8494b0",
+      "deleted_at_utc": "2026-05-08T15:43:22.368788+00:00",
+      "creation_log_id": "969d4af5-64ea-436d-85d9-eecf231aa433",
+      "created_at_utc": "2026-05-08T15:34:47.080466+00:00"
+    }
+  ]
+}

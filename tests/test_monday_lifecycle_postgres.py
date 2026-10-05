@@ -33,6 +33,7 @@ def db(database):
     connection.execute('ALTER TABLE subitems ADD COLUMN item_name text, ADD COLUMN quote_amount numeric(12,2), '
                        'ADD COLUMN order_status text, ADD COLUMN new_enquiry_value numeric(12,2)')
     connection.execute(Path('src/database/schema/monday_lifecycle.sql').read_text())
+    connection.execute(Path('src/database/schema/monday_lifecycle_scoped_cleanup.sql').read_text())
     return connection, dsn
 
 

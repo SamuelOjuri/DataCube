@@ -25,6 +25,7 @@ DELETE_EVENTS = {'delete_pulse', 'delete_item', 'item_deleted', 'delete_subitem'
 RESTORE_EVENTS = {'restore_pulse', 'restore_item', 'item_restored', 'restore_subitem', 'subitem_restored'}
 MAX_ROWS = 500
 MAX_ATTEMPTS = 12
+CLEANUP_POLICY = 'enquiry_active_open_v1'
 
 
 class ReviewRequired(ValueError):
@@ -99,7 +100,10 @@ def claim(connection, *, event_prefixes=None):
             raise ValueError('Scoped lifecycle claims require literal recovery UUID prefixes') from None
     restriction = ' AND event_key LIKE ANY(%s)' if event_prefixes is not None else ''
     params = ([p + '%' for p in event_prefixes],) if event_prefixes is not None else None
-    return connection.execute('''
+    with connection.transaction():
+        # Transaction-local capability: older processes cannot claim scoped jobs.
+        connection.execute("SELECT set_config('datacube.lifecycle_worker_protocol','scoped_cleanup_v1',true)")
+        return connection.execute('''
         WITH candidate AS (
             SELECT event_key FROM public.monday_lifecycle_events
             WHERE ((status IN ('pending','retry') AND next_attempt_at<=now())
@@ -290,6 +294,10 @@ def apply_deletion(connection, job, before, evidence, *, activity_proof=None):
 
 
 def process_job(connection, monday, job):
+    policy = job['payload'].get('cleanup_policy')
+    if policy is not None and (policy != CLEANUP_POLICY or
+                               job['payload'].get('refresh_mode') != 'new_enquiry_sum'):
+        raise ReviewRequired('Unsupported or inconsistent cleanup policy')
     if job['attempts'] > MAX_ATTEMPTS:
         raise ReviewRequired('Retry limit reached; inspect evidence and requeue this event')
     if job['kind'] == 'refresh':
@@ -302,6 +310,8 @@ def process_job(connection, monday, job):
     if table == 'projects':
         ids.update(r['monday_id'] for r in before['subitems'])
     evidence = read_items(monday, ids)
+    if policy and item in evidence and evidence[item].get('state') != 'deleted':
+        raise ReviewRequired('Reviewed old ID has returned; scoped cleanup cannot restore or refresh it')
     blocked = connection.execute('SELECT blocked FROM public.monday_item_lifecycle '
         'WHERE table_name=%s AND monday_id=%s', (table, item)).fetchone()
     blocked = bool(blocked and blocked['blocked'])

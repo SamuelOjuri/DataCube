@@ -5,13 +5,17 @@ the subitem's **API lifecycle state is `active`** and its **parent project's
 `status_category` is `Open`**. The visible business Status is not the active
 filter. Earlier all-parent previews are superseded and must be staged again.
 This is the user's requested calculation, not proof of the parent mirror's
-undocumented aggregation setting. No cleanup has been applied.
+undocumented aggregation setting. The original 31 deletions have now been
+processed and verified. Do not rerun those deletions. Three parent refreshes
+used the broader refresh path and require audit review; see
+[the follow-up workflow](monday-review-cleanup-next.md).
 
 `python -m scripts.monday_review_cleanup` stages and queues the 31 exact
 subitem IDs in `scripts/monday_review_cleanup_31_targets.json`. These belong to
 27 projects from the 5 October 2026 read-only investigation. The two deletion
-events without parent details and the five unconfirmed missing records are
-excluded. Monday is always read-only.
+events without parent details are handled by the separate `--batch linked2`
+workflow. The five unconfirmed missing records remain excluded. Monday is
+always read-only.
 
 For Open parents, **New Enq Value = SUM of New Enquiry Value for current
 API-active subitems**. Won/Lost parents are explicitly skipped and keep their
@@ -74,8 +78,10 @@ for a fresh run.
 
 ## Queue and process the reviewed plan
 
-These commands **write to DataCube**. Deploy the updated lifecycle worker and
-comparison code before queueing if a remote lifecycle worker is enabled. An
+These commands **write to DataCube**. Install
+`src/database/schema/monday_lifecycle_scoped_cleanup.sql` and deploy/restart
+the updated lifecycle workers before queueing. The database rejects claims
+from older worker code for newly scoped cleanup jobs. An
 enabled worker may process a newly queued job immediately. The updated worker
 understands the enquiry-only refresh mode used by this batch.
 
@@ -108,7 +114,10 @@ jobs continue to use their existing full refresh behavior.
 Completion requires all 31 deletions processed and verified, all 27 parent
 refreshes successful (including explicit non-Open skips), no selected subitems
 left, and no pending/retry/review
-jobs in this run. Exit code 2 means incomplete/review required, not success.
+jobs in this run. It also checks the refresh results and audit actions stayed
+within scope. `jobs_complete=true` with `scope_compliant=false` means the jobs
+finished but their refresh scope needs review. Exit code 2 means
+incomplete/review required, not success.
 Individual review reasons remain visible; a successful deletion does not hide
 a failed enquiry refresh. Queueing the same intact run again is idempotent.
 

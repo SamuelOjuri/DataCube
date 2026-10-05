@@ -19,6 +19,7 @@ class Monday:
         self.extra_events = {}
         for index, pid in enumerate(sorted({r['parent_id'] for r in rows})):
             child, hidden = str(9000000000 + index), str(9100000000 + index)
+            child = next((r['preserve_item_id'] for r in rows if r['parent_id'] == pid and 'preserve_item_id' in r), child)
             source = json.loads(json.dumps(full_source()).replace('"101"', '"' + pid + '"')
                 .replace('"201"', '"' + child + '"').replace('"301"', '"' + hidden + '"'))
             source['projects'][pid]['subitems'] = [dict(id=child, state='active',
@@ -32,6 +33,15 @@ class Monday:
                 user_id='1', created_at=str(int(timestamp.timestamp() * 10_000_000)),
                 data=json.dumps(dict(pulse_id=int(row['item_id']), parent_item_id=int(row['parent_id']),
                                      board_id=int(life.SUBITEM_BOARD_ID), parent_board_id=int(life.PARENT_BOARD_ID))))
+            if row.get('creation_log_id'):
+                payload = json.loads(self.events[row['item_id']]['data'])
+                creation = deepcopy(self.events[row['item_id']])
+                creation.update(id=row['creation_log_id'], event='create_pulse',
+                    created_at=str(int(activity.utc_date(row['created_at_utc']).timestamp() * 10_000_000)),
+                    data=json.dumps(dict(payload, is_subtasks_action=True)))
+                self.extra_events[row['item_id']] = creation
+                del payload['parent_item_id'], payload['parent_board_id']
+                self.events[row['item_id']]['data'] = json.dumps(payload)
 
     def execute_query(self, query, variables):
         if query == activity.ACTIVITY_QUERY:

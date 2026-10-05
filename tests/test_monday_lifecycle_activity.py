@@ -292,3 +292,62 @@ def test_activity_transport_only_adds_the_exact_reviewed_read_query():
         assert client._execute_read.call_count == 1
     finally:
         client.session.close()
+
+
+def linked_example():
+    monday = Monday()
+    deletion = monday.histories[life.SUBITEM_BOARD_ID][0]
+    data = json.loads(deletion['data'])
+    del data['parent_item_id'], data['parent_board_id']
+    deletion['data'] = json.dumps(data)
+    monday.histories[life.SUBITEM_BOARD_ID].append(event('creation-1', 'create_pulse', seconds=-60,
+                                                       is_subtasks_action=True))
+    req = dict(request(), mode=activity.LINKED_MODE, creation_log_id='creation-1', preserve_item_id='202')
+    return monday, req
+
+
+def test_linked_creation_and_deletion_pin_both_events_and_keep_surviving_id():
+    monday, req = linked_example()
+    proof = activity.capture(monday, req)
+    assert proof['creation_event']['id'] == 'creation-1'
+    assert proof['request']['preserve_item_id'] == '202'
+    assert all(proof['request'][key] for key in ('creation_sha256', 'deletion_sha256'))
+    assert activity.capture(monday, proof['request'])['request'] == proof['request']
+    # The original 31-item proof remains strict about parent fields on deletion.
+    with pytest.raises(life.ReviewRequired, match='exact subitem, board and parent'):
+        activity.capture(monday, request())
+
+
+@pytest.mark.parametrize('fault', ['no_creation', 'wrong_parent', 'wrong_board', 'creation_after_deletion',
+    'changed_creation', 'missing_survivor', 'survivor_archived', 'moved', 'restored',
+    'unknown_action', 'conflicting_delete_parent', 'old_id_returned'])
+def test_linked_recovery_rejects_incomplete_or_ambiguous_proof(fault):
+    monday, req = linked_example()
+    req = activity.capture(monday, req)['request']
+    events = monday.histories[life.SUBITEM_BOARD_ID]
+    if fault == 'no_creation':
+        events.pop()
+    elif fault in {'wrong_parent', 'wrong_board'}:
+        payload = json.loads(events[1]['data'])
+        payload['parent_item_id' if fault == 'wrong_parent' else 'board_id'] = 999
+        events[1]['data'] = json.dumps(payload)
+    elif fault == 'creation_after_deletion':
+        events[1]['created_at'] = str(int(events[0]['created_at']) + 1)
+        events.reverse()
+    elif fault == 'changed_creation':
+        events[1]['user_id'] = '2'
+    elif fault == 'missing_survivor':
+        monday.rows['101']['subitems'][0]['id'] = '203'
+    elif fault == 'survivor_archived':
+        monday.rows['101']['subitems'][0]['state'] = 'archived'
+    elif fault in {'moved', 'restored', 'unknown_action'}:
+        events.insert(1, event('intervening', {'moved':'move_pulse', 'restored':'restore_pulse',
+                                           'unknown_action':'new_action'}[fault], seconds=-30))
+    elif fault == 'conflicting_delete_parent':
+        data = json.loads(events[0]['data'])
+        data['parent_item_id'] = 999
+        events[0]['data'] = json.dumps(data)
+    else:
+        monday.rows['201'] = dict(parent(), id='201', board={'id':life.SUBITEM_BOARD_ID})
+    with pytest.raises(life.ReviewRequired):
+        activity.capture(monday, req)

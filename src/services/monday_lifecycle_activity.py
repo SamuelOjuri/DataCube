@@ -13,6 +13,7 @@ from scripts.order_value_monday_compare import ComparisonMondayClient
 from . import monday_lifecycle as life
 
 MODE = 'subitem-activity-deletion-v1'
+LINKED_MODE = 'subitem-activity-deletion-linked-parent-v1'
 PAGE_SIZE = 100
 MAX_PAGES = 10  # Per board; fail closed rather than accept truncated history.
 MAX_PROOF_AGE = timedelta(minutes=5)
@@ -55,9 +56,12 @@ def utc_date(value):
 
 def validate_request(request):
     required = {'mode', 'board_id', 'item_id', 'parent_id', 'log_id', 'from'}
+    linked = isinstance(request, dict) and request.get('mode') == LINKED_MODE
+    if linked:
+        required |= {'creation_log_id', 'preserve_item_id'}
     if (not isinstance(request, dict) or not required <= request.keys()
-            or request.keys() - required - {'deletion_sha256'}
-            or request['mode'] != MODE or request['board_id'] != life.SUBITEM_BOARD_ID):
+            or request.keys() - required - ({'deletion_sha256', 'creation_sha256'} if linked else {'deletion_sha256'})
+            or request['mode'] not in {MODE, LINKED_MODE} or request['board_id'] != life.SUBITEM_BOARD_ID):
         raise life.ReviewRequired('Activity recovery supports only an explicit subitem deletion')
     for key in ('item_id', 'parent_id'):
         if not isinstance(request[key], str) or not re.fullmatch(r'[0-9]+', request[key]):
@@ -68,6 +72,16 @@ def validate_request(request):
         raise life.ReviewRequired('Specify the exact deletion activity log ID')
     if 'deletion_sha256' in request and not re.fullmatch(r'[a-f0-9]{64}', str(request['deletion_sha256'])):
         raise life.ReviewRequired('Invalid reviewed deletion fingerprint')
+    if linked:
+        if (not isinstance(request['creation_log_id'], str)
+                or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', request['creation_log_id'])
+                or request['creation_log_id'] == request['log_id']
+                or not isinstance(request['preserve_item_id'], str)
+                or not re.fullmatch(r'[0-9]+', request['preserve_item_id'])
+                or request['preserve_item_id'] in {request['item_id'], request['parent_id']}):
+            raise life.ReviewRequired('Linked recovery needs an exact creation event and distinct surviving ID')
+        if 'creation_sha256' in request and not re.fullmatch(r'[a-f0-9]{64}', str(request['creation_sha256'])):
+            raise life.ReviewRequired('Invalid reviewed creation fingerprint')
     if utc_date(request['from']) >= datetime.now(timezone.utc):
         raise life.ReviewRequired('Activity history must start before the deletion')
 
@@ -97,6 +111,10 @@ def current_membership(monday, request):
                 or (child.get('parent_item') or {}).get('id') != request['parent_id']
                 or child.get('state') != 'active'):
             raise life.ReviewRequired('Current parent membership conflicts with the reviewed deletion')
+    if len({str(c.get('id')) for c in members}) != len(members):
+        raise life.ReviewRequired('Duplicate current membership IDs')
+    if request.get('preserve_item_id') and request['preserve_item_id'] not in {str(c['id']) for c in members}:
+        raise life.ReviewRequired('The reviewed surviving ID is no longer an active child of this parent')
     return rows
 
 
@@ -204,21 +222,66 @@ def parent_removal_observation(request, event, board_id):
             and after < before and not references(remaining_payload, request['item_id']))
 
 
+def require_creation(request, histories, deletion):
+    """Link immutable IDs through creation, never through a matching name."""
+    matches = [e for e in histories[life.SUBITEM_BOARD_ID] if e['id'] == request['creation_log_id']]
+    if len(matches) != 1:
+        raise life.ReviewRequired('Exact creation event was not returned in fresh activity history')
+    creation = matches[0]
+    data = json.loads(creation['data'])
+    if (creation['event'] != 'create_pulse' or creation['entity'] != 'pulse'
+            or str(data.get('pulse_id')) != request['item_id']
+            or str(data.get('board_id')) != life.SUBITEM_BOARD_ID
+            or str(data.get('parent_item_id')) != request['parent_id']
+            or str(data.get('parent_board_id')) != life.PARENT_BOARD_ID
+            or data.get('is_subtasks_action') is not True
+            or data.get('is_undo_action') not in (None, False)
+            or int(creation['created_at']) >= int(deletion['created_at'])):
+        raise life.ReviewRequired('Creation event does not establish the exact subitem and parent before deletion')
+    if request.get('creation_sha256') not in (None, fingerprint(creation)):
+        raise life.ReviewRequired('Creation activity differs from the reviewed event')
+    for board, events in histories.items():
+        for event in events:
+            if board == life.SUBITEM_BOARD_ID and event['id'] in {creation['id'], deletion['id']}:
+                continue
+            if not int(creation['created_at']) <= int(event['created_at']) <= int(deletion['created_at']):
+                continue
+            payload = json.loads(event['data'])
+            if references(payload, request['item_id']):
+                # Allow only ordinary edits to this exact child between the two
+                # events. Parent membership edits, moves and unknown actions defer.
+                if (event['event'] not in PARENT_METADATA_EVENTS or event['entity'] != 'pulse'
+                        or board != life.SUBITEM_BOARD_ID
+                        or str(payload.get('pulse_id')) != request['item_id']
+                        or str(payload.get('board_id')) != life.SUBITEM_BOARD_ID
+                        or ('parent_item_id' in payload and str(payload['parent_item_id']) != request['parent_id'])
+                        or ('parent_board_id' in payload and str(payload['parent_board_id']) != life.PARENT_BOARD_ID)
+                        or payload.get('is_undo_action') not in (None, False)):
+                    raise life.ReviewRequired('Intervening subitem lifecycle or membership activity requires review')
+            elif references(payload, request['parent_id']) and event['event'] not in PARENT_METADATA_EVENTS:
+                raise life.ReviewRequired('Intervening parent lifecycle activity requires review')
+    return creation
+
+
 def require_deletion(request, histories):
     matches = [e for e in histories[life.SUBITEM_BOARD_ID] if e['id'] == request['log_id']]
     if len(matches) != 1:
         raise life.ReviewRequired('Exact deletion event was not returned in fresh activity history')
     deletion = matches[0]
     payload = json.loads(deletion['data'])
+    linked = request['mode'] == LINKED_MODE
     if (deletion['event'] not in life.DELETE_EVENTS or deletion['entity'] != 'pulse'
             or str(payload.get('pulse_id')) != request['item_id']
             or str(payload.get('board_id')) != request['board_id']
-            or str(payload.get('parent_item_id')) != request['parent_id']
-            or str(payload.get('parent_board_id')) != life.PARENT_BOARD_ID
+            or ((not linked or 'parent_item_id' in payload) and str(payload.get('parent_item_id')) != request['parent_id'])
+            or ((not linked or 'parent_board_id' in payload) and str(payload.get('parent_board_id')) != life.PARENT_BOARD_ID)
+            or payload.get('is_undo_action') not in (None, False)
             or ('item_id' in payload and str(payload['item_id']) != request['item_id'])):
         raise life.ReviewRequired('Deletion event does not match the exact subitem, board and parent')
     if request.get('deletion_sha256') not in (None, fingerprint(deletion)):
         raise life.ReviewRequired('Deletion activity differs from the reviewed event')
+    if linked:
+        require_creation(request, histories, deletion)
     for board_id, events in histories.items():
         for event in events:
             if board_id == request['board_id'] and event['id'] == deletion['id']:
@@ -247,7 +310,13 @@ def capture(monday, request):
     after_items = current_membership(monday, request)
     if before_items != after_items:
         raise life.ReviewRequired('Parent or membership changed during activity recovery checks')
-    return dict(request={**request, 'deletion_sha256': fingerprint(deletion)},
+    pinned = {**request, 'deletion_sha256': fingerprint(deletion)}
+    extra = {}
+    if request['mode'] == LINKED_MODE:
+        creation = require_creation(request, histories, deletion)
+        pinned['creation_sha256'] = fingerprint(creation)
+        extra['creation_event'] = creation
+    return dict(request=pinned, **extra,
                 deletion_event=deletion, histories=histories, history_to=until,
                 before_items=before_items, after_items=after_items,
                 checked_at=datetime.now(timezone.utc).isoformat())
@@ -262,6 +331,10 @@ def require_proof(proof, job, before, items, *, verification=False):
             or 'deletion_sha256' not in request
             or fingerprint(proof['deletion_event']) != request['deletion_sha256']):
         raise life.ReviewRequired('Activity proof differs from the reviewed recovery')
+    if request['mode'] == LINKED_MODE and (
+            not request.get('creation_sha256') or
+            fingerprint(proof.get('creation_event')) != request['creation_sha256']):
+        raise life.ReviewRequired('Creation proof differs from the reviewed recovery')
     now = datetime.now(timezone.utc)
     if not timedelta(0) <= now - utc_date(proof['history_to']) <= MAX_PROOF_AGE:
         raise life.ReviewRequired('Activity proof is stale; capture again')

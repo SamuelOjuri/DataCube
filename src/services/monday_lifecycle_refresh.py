@@ -187,7 +187,7 @@ def build_values(pid, source, before, contract):
     return reconcile.normalize_updates(values, contract), issues
 
 
-def write_values(connection, values, before, contract):
+def write_values(connection, values, before, contract, *, job=None):
     for table in ('projects', 'hidden_items', 'subitems'):
         old = {r['monday_id'] for r in before[table]}
         for row in values[table]:
@@ -220,6 +220,11 @@ def write_values(connection, values, before, contract):
                 expected = 'Won' if stage == 'Won - Closed (Invoiced)' else 'Lost' if stage == 'Lost' else 'Open'
                 if actual['status_category'] != expected:
                     raise ValueError('Generated status_category differs from defined schema')
+            if job is not None:
+                baseline = next((r for r in before[table] if r['monday_id'] == row['monday_id']), {})
+                life.audit(connection, job, 'refresh_field_changes', table, row['monday_id'], baseline,
+                    {'after_row': actual, 'changes': {k: {'before': baseline.get(k), 'after': actual.get(k)}
+                        for k in sorted(set(baseline) | set(actual)) if baseline.get(k) != actual.get(k)}})
 
 
 def refresh_new_enquiry(connection, monday, job, pid):
@@ -250,7 +255,7 @@ def refresh_new_enquiry(connection, monday, job, pid):
         if changed:
             life.audit(connection, job, 'refresh_new_enquiry', 'projects', pid, before['projects'][0],
                        {'rule': compare.ENQUIRY_RULE, 'source': source})
-            write_values(connection, {'projects': [normalized], 'hidden_items': [], 'subitems': []}, before, contract)
+            write_values(connection, {'projects': [normalized], 'hidden_items': [], 'subitems': []}, before, contract, job=job)
         round_number = int(job['payload'].get('verification_round', 0))
         if changed and round_number < 3:
             life.enqueue(connection, 'refresh', life.PARENT_BOARD_ID, pid,
@@ -267,6 +272,10 @@ def refresh_new_enquiry(connection, monday, job, pid):
 
 def refresh_project(connection, monday, job, *, pid=None):
     pid = pid or job['item_id']
+    if job['payload'].get('cleanup_policy') is not None and (
+            job['payload']['cleanup_policy'] != life.CLEANUP_POLICY
+            or job['payload'].get('refresh_mode') != 'new_enquiry_sum'):
+        raise life.ReviewRequired('Scoped cleanup cannot run a full refresh')
     if job['payload'].get('refresh_mode') == 'new_enquiry_sum':
         return refresh_new_enquiry(connection, monday, job, pid)
     source = fetch_project(monday, pid)
@@ -287,7 +296,7 @@ def refresh_project(connection, monday, job, *, pid=None):
                 evidence = life.require_item(source[table], item, table, 'active')
                 life.marker(connection, table, item, False, job)
                 life.audit(connection, job, 'refresh_or_restore', table, item, old.get(item), evidence)
-        write_values(connection, values, before, contract)
+        write_values(connection, values, before, contract, job=job)
         changed_hidden = {r['monday_id'] for r in values['hidden_items']}
         other_parents = {r.get('parent_monday_id') for r in before['subitems']
                          if r.get('hidden_item_id') in changed_hidden} - {None, '', pid}
@@ -343,7 +352,7 @@ def restore_item(connection, monday, job, observed):
             life.marker(connection, 'hidden_items', item, False, job)
             life.audit(connection, job, 'restore', 'hidden_items', item,
                        before['hidden_items'][0] if before['hidden_items'] else None, evidence)
-            write_values(connection, {'projects': [], 'hidden_items': values, 'subitems': []}, before, contract)
+            write_values(connection, {'projects': [], 'hidden_items': values, 'subitems': []}, before, contract, job=job)
             parents = {r['parent_id'] for r in connection.execute('''
                 SELECT DISTINCT a.before_row->>'parent_monday_id' AS parent_id
                 FROM public.monday_lifecycle_audit a

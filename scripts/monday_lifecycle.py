@@ -23,7 +23,8 @@ def code_digest():
     root = Path(__file__).resolve().parents[1]
     names = ['scripts/monday_lifecycle.py', 'src/services/monday_lifecycle.py',
              'src/services/monday_lifecycle_activity.py',
-             'src/services/monday_lifecycle_refresh.py', 'src/database/schema/monday_lifecycle.sql']
+             'src/services/monday_lifecycle_refresh.py', 'src/database/schema/monday_lifecycle.sql',
+             'src/database/schema/monday_lifecycle_scoped_cleanup.sql']
     from scripts.order_value_monday_compare import code_fingerprint
     return digest({'files': {n: hashlib.sha256((root / n).read_bytes()).hexdigest() for n in names},
                    'shared_comparison_code': code_fingerprint()})
@@ -64,7 +65,9 @@ def activity_request(args, targets):
     log_id = getattr(args, 'activity_log_id', None)
     since = getattr(args, 'activity_log_from', None)
     parent = getattr(args, 'parent_id', None)
-    if not any((log_id, since, parent)):
+    creation = getattr(args, 'activity_creation_log_id', None)
+    survivor = getattr(args, 'preserve_item_id', None)
+    if not any((log_id, since, parent, creation, survivor)):
         return None
     if (not all((log_id, since, parent)) or args.review_csv or len(targets) != 1
             or targets[0][0] != life.SUBITEM_BOARD_ID):
@@ -72,6 +75,8 @@ def activity_request(args, targets):
                          '--activity-log-id and --activity-log-from; no review CSV')
     request = dict(mode=activity.MODE, board_id=targets[0][0], item_id=targets[0][1],
                    parent_id=parent, log_id=log_id, **{'from': since})
+    if creation or survivor:
+        request.update(mode=activity.LINKED_MODE, creation_log_id=creation, preserve_item_id=survivor)
     activity.validate_request(request)
     return request
 
@@ -176,6 +181,8 @@ def main(argv=None):
     p.add_argument('--activity-log-id', help='Opt in to recovery of one missing subitem using this deletion event')
     p.add_argument('--activity-log-from', help='ISO timestamp with timezone before the deletion; history is read through now')
     p.add_argument('--parent-id', help='Exact reviewed parent for activity-log recovery')
+    p.add_argument('--activity-creation-log-id', help='Exact creation event linking the old subitem to its parent')
+    p.add_argument('--preserve-item-id', help='Reviewed surviving child ID required by linked creation/deletion recovery')
     p = subs.add_parser('queue')
     p.add_argument('--run-dir', type=Path, required=True)
     p.add_argument('--confirm-run-id', required=True)
