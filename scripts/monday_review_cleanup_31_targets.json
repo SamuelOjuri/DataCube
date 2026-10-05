@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "source": "outputs/order_value_backfill/manual_review_34_readonly_20261005/findings.json",
+  "selected": [
+    {
+      "item_id": "3182178903",
+      "parent_id": "3159872420",
+      "item_name": "18687",
+      "subitem_name": "18687_26.01 - C",
+      "log_id": "292d164a-6074-41fb-8b49-8c66141bffbf",
+      "deleted_at_utc": "2026-08-24T14:16:21.307272+00:00"
+    },
+    {
+      "item_id": "3002886227",
+      "parent_id": "3002770448",
+      "item_name": "18466",
+      "subitem_name": "18466_26.01 - A",
+      "log_id": "f34a7f72-ae25-485f-bea5-670d3c0acd06",
+      "deleted_at_utc": "2026-06-16T15:12:14.454122+00:00"
+    },
+    {
+      "item_id": "2998366650",
+      "parent_id": "2991741448",
+      "item_name": "18453",
+      "subitem_name": "18453_26.01 - C",
+      "log_id": "38813af3-8bb4-4f48-8597-a8ab3a0d37d5",
+      "deleted_at_utc": "2026-06-15T14:26:50.835090+00:00"
+    },
+    {
+      "item_id": "3121749851",
+      "parent_id": "2964337986",
+      "item_name": "18408",
+      "subitem_name": "18408_26.04 - A",
+      "log_id": "aadc0b40-42c6-4c21-b4f7-f4a61873197e",
+      "deleted_at_utc": "2026-07-29T09:44:33.967835+00:00"
+    },
+    {
+      "item_id": "2960786242",
+      "parent_id": "2957607534",
+      "item_name": "18395",
+      "subitem_name": "18395_26.01 - A",
+      "log_id": "15905bf8-8010-43b3-84db-a07c039f22dc",
+      "deleted_at_utc": "2026-06-02T16:00:04.003937+00:00"
+    },
+    {
+      "item_id": "3016772961",
+      "parent_id": "2923669122",
+      "item_name": "18342",
+      "subitem_name": "18342_26.01 - B-FB",
+      "log_id": "96159e84-7cd7-4c97-9945-de479fca164c",
+      "deleted_at_utc": "2026-06-23T08:38:58.989213+00:00"
+    },
+    {
+      "item_id": "2932365088",
+      "parent_id": "2918178053",
+      "item_name": "18337",
+      "subitem_name": "18337_26.01 - B",
+      "log_id": "a26828ea-e3c0-4371-abcf-fd92a19d009d",
+      "deleted_at_utc": "2026-05-21T10:10:42.682972+00:00"
+    },
+    {
+      "item_id": "3007678315",
+      "parent_id": "2790643973",
+      "item_name": "18085",
+      "subitem_name": "18085_26.02 - C",
+      "log_id": "5ea1bdc8-f302-436e-b12f-da3d06579e91",
+      "deleted_at_utc": "2026-06-18T15:41:02.734166+00:00"
+    },
+    {
+      "item_id": "2686607939",
+      "parent_id": "2653363266",
+      "item_name": "17835",
+      "subitem_name": "17835_26.02 - A",
+      "log_id": "ac3b6623-7a5f-4ece-aacc-9f73fe023af3",
+      "deleted_at_utc": "2026-02-10T10:00:38.884987+00:00"
+    },
+    {
+      "item_id": "2686687446",
+      "parent_id": "2653363266",
+      "item_name": "17835",
+      "subitem_name": "17835_26.03 - A",
+      "log_id": "8a0bc934-39c7-4ebc-82f9-41d055ef47a8",
+      "deleted_at_utc": "2026-02-10T10:00:38.889039+00:00"
+    },
+    {
+      "item_id": "3065560227",
+      "parent_id": "5045321800",
+      "item_name": "17529",
+      "subitem_name": "Test",
+      "log_id": "a6703336-5c92-4be6-a301-02da7424504e",
+      "deleted_at_utc": "2026-07-10T09:41:10.075635+00:00"
+    },
+    {
+      "item_id": "2125557809",
+      "parent_id": "2118634736",
+      "item_name": "17363",
+      "subitem_name": "17363_25.01 - B - ROOF 3",
+      "log_id": "de6dfef8-a0b5-49c2-8f08-72b2304e44b8",
+      "deleted_at_utc": "2025-09-26T12:18:56.504068+00:00"
+    },
+    {
+      "item_id": "2125558509",
+      "parent_id": "2118634736",
+      "item_name": "17363",
+      "subitem_name": "17363_25.01 - B - CO2",
+      "log_id": "394958cb-cf05-4264-b6f5-5c41247ff3f8",
+      "deleted_at_utc": "2025-09-26T12:19:00.666420+00:00"
+    },
+    {
+      "item_id": "2125559325",
+      "parent_id": "2118634736",
+      "item_name": "17363",
+      "subitem_name": "17363_25.01 - B - ROOF 6",
+      "log_id": "e1c53196-74e8-4ec5-9eb8-da63e5f2bdae",
+      "deleted_at_utc": "2025-09-26T12:19:00.825882+00:00"
+    },
+    {
+      "item_id": "2125576498",
+      "parent_id": "2118634736",
+      "item_name": "17363",
+      "subitem_name": "17363_25.01 - B - ROOF 6",
+      "log_id": "8ecd7566-0ed4-48f8-9386-2b3cf6dad038",
+      "deleted_at_utc": "2025-09-26T12:19:00.980404+00:00"
+    },
+    {
+      "item_id": "3189659263",
+      "parent_id": "2047634979",
+      "item_name": "17214",
+      "subitem_name": "17214_26.01 - A",
+      "log_id": "12aaf0b5-f5e6-4651-8ba6-ebfef0d27f78",
+      "deleted_at_utc": "2026-08-27T12:15:42.175783+00:00"
+    },
+    {
+      "item_id": "2047782086",
+      "parent_id": "2033749884",
+      "item_name": "17185",
+      "subitem_name": "17185_25.01 - B - Flatboard",
+      "log_id": "c2224ccf-cfce-4634-9fa7-ac58f21e5e15",
+      "deleted_at_utc": "2026-02-16T10:18:11.704003+00:00"
+    },
+    {
+      "item_id": "3024658106",
+      "parent_id": "2030150964",
+      "item_name": "17178",
+      "subitem_name": "17178_25.01 - J -CO2 remaining areas-JULY DD",
+      "log_id": "cd41f98c-e972-4b68-b321-c3a49b7b8e8c",
+      "deleted_at_utc": "2026-06-26T14:50:27.944162+00:00"
+    },
+    {
+      "item_id": "2016307986",
+      "parent_id": "2013490311",
+      "item_name": "17142",
+      "subitem_name": "0",
+      "log_id": "5eaa747b-96c4-4e9f-87f3-e90bccabd452",
+      "deleted_at_utc": "2026-03-12T14:36:39.777361+00:00"
+    },
+    {
+      "item_id": "5066978238",
+      "parent_id": "2012791137",
+      "item_name": "17139",
+      "subitem_name": "PO060472",
+      "log_id": "54da2188-f4ca-4ff5-a49f-90e6f6a47f38",
+      "deleted_at_utc": "2026-03-05T15:17:07.138499+00:00"
+    },
+    {
+      "item_id": "2924369670",
+      "parent_id": "1987249923",
+      "item_name": "17083",
+      "subitem_name": "17083_25.01 - C",
+      "log_id": "1f53d082-cdba-4e53-a264-47da666d8907",
+      "deleted_at_utc": "2026-05-19T12:35:03.134429+00:00"
+    },
+    {
+      "item_id": "2924262405",
+      "parent_id": "1961783599",
+      "item_name": "17036",
+      "subitem_name": "17036_25.03 - H",
+      "log_id": "6e19fec2-93e1-407f-a37d-7374e106cf3c",
+      "deleted_at_utc": "2026-05-18T12:23:46.995043+00:00"
+    },
+    {
+      "item_id": "3011247303",
+      "parent_id": "1770216092",
+      "item_name": "16312",
+      "subitem_name": "16312_25.03 - A- re-order",
+      "log_id": "fa88ad4a-3dbe-420b-86d5-530bba957c5e",
+      "deleted_at_utc": "2026-06-19T14:04:00.205193+00:00"
+    },
+    {
+      "item_id": "1772048857",
+      "parent_id": "1772044906",
+      "item_name": "15413",
+      "subitem_name": "15413_24.01 - B",
+      "log_id": "389f2eff-0c39-4ed6-be40-6707c7439e2b",
+      "deleted_at_utc": "2026-02-19T09:52:13.575246+00:00"
+    },
+    {
+      "item_id": "3063413509",
+      "parent_id": "1772097493",
+      "item_name": "15081",
+      "subitem_name": "15081_26.01 - A",
+      "log_id": "803ed1f5-5699-4325-bc1d-cba14240310b",
+      "deleted_at_utc": "2026-07-09T13:24:00.061294+00:00"
+    },
+    {
+      "item_id": "5048875747",
+      "parent_id": "1774528705",
+      "item_name": "12616",
+      "subitem_name": "12616_24.08 - C - AB Order",
+      "log_id": "76d3e869-153b-46b5-853f-6b725f8a83b5",
+      "deleted_at_utc": "2025-10-17T11:55:31.876884+00:00"
+    },
+    {
+      "item_id": "3022602075",
+      "parent_id": "1774583025",
+      "item_name": "12509",
+      "subitem_name": "12509_26.01 - A",
+      "log_id": "2db2805a-3346-4cbf-b3c4-17946d0b8241",
+      "deleted_at_utc": "2026-06-24T13:10:09.480293+00:00"
+    },
+    {
+      "item_id": "1775621429",
+      "parent_id": "1775618362",
+      "item_name": "11726",
+      "subitem_name": "11726_23.01 - A",
+      "log_id": "16eb325c-1063-452b-b1a3-9aadd1c68f74",
+      "deleted_at_utc": "2026-02-19T11:14:07.621567+00:00"
+    },
+    {
+      "item_id": "3105609972",
+      "parent_id": "1776167926",
+      "item_name": "10796",
+      "subitem_name": "10796_22.01 - B (for Kev Ford)",
+      "log_id": "e0e9a551-cf92-487a-a712-917ea1bb517a",
+      "deleted_at_utc": "2026-07-22T15:35:31.302997+00:00"
+    },
+    {
+      "item_id": "2964050952",
+      "parent_id": "1776390707",
+      "item_name": "10306",
+      "subitem_name": "10306_26.01 - A",
+      "log_id": "cf24b47f-b50d-4eff-b37e-b61e1362e706",
+      "deleted_at_utc": "2026-06-03T13:02:45.229763+00:00"
+    },
+    {
+      "item_id": "3059563148",
+      "parent_id": "1779253139",
+      "item_name": "5229",
+      "subitem_name": "5229_26.08 - C",
+      "log_id": "220295af-56d9-485f-bb64-1dcfa297e31f",
+      "deleted_at_utc": "2026-07-08T11:16:52.722051+00:00"
+    }
+  ]
+}

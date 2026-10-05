@@ -165,6 +165,45 @@ def references(value, item_id):
     return str(value) == item_id
 
 
+def parent_removal_observation(request, event, board_id):
+    """A parent Subitems update can describe the deletion, not a restoration.
+
+    Accept only an exact typed membership update which removes this ID, adds
+    no IDs, and references the deleted ID solely in the previous membership.
+    The complete event stays in the audit proof. Other later activity blocks.
+    """
+    payload = json.loads(event['data'])
+    if (board_id != life.PARENT_BOARD_ID or event.get('entity') != 'pulse'
+            or event.get('event') != 'update_column_value'
+            or str(payload.get('board_id')) != life.PARENT_BOARD_ID
+            or str(payload.get('pulse_id')) != request['parent_id']
+            or ('item_id' in payload and str(payload['item_id']) != request['parent_id'])
+            or payload.get('column_id') != 'subitems__1' or payload.get('column_type') != 'subtasks'
+            or payload.get('is_undo_action') not in (None, False)):
+        return False
+    memberships = []
+    for key in ('previous_value', 'value'):
+        value = payload.get(key)
+        entries = value.get('linkedPulseIds') if isinstance(value, dict) else None
+        if not isinstance(entries, list):
+            return False
+        ids = []
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {'linkedPulseId'}:
+                return False
+            item_id = str(entry['linkedPulseId'])
+            if not re.fullmatch(r'[0-9]+', item_id):
+                return False
+            ids.append(item_id)
+        if len(ids) != len(set(ids)):
+            return False
+        memberships.append(set(ids))
+    before, after = memberships
+    remaining_payload = {k: v for k, v in payload.items() if k not in ('previous_value', 'previous_textual_value')}
+    return (request['item_id'] in before and request['item_id'] not in after
+            and after < before and not references(remaining_payload, request['item_id']))
+
+
 def require_deletion(request, histories):
     matches = [e for e in histories[life.SUBITEM_BOARD_ID] if e['id'] == request['log_id']]
     if len(matches) != 1:
@@ -183,6 +222,9 @@ def require_deletion(request, histories):
     for board_id, events in histories.items():
         for event in events:
             if board_id == request['board_id'] and event['id'] == deletion['id']:
+                continue
+            if (int(event['created_at']) > int(deletion['created_at'])
+                    and parent_removal_observation(request, event, board_id)):
                 continue
             # Any later action on this ID is ambiguous, including unrecognised
             # restore/move aliases. Tied timestamps fail closed as well.

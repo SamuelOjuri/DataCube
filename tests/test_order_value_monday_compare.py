@@ -47,6 +47,7 @@ def fixture_data():
         **{h[f]: {'__typename': 'DateValue', 'date': None} for f in compare.DATE_FIELDS},
         h['status']: {'__typename': 'StatusValue', 'label': 'Archived'}})
     child = item('subitems', '201', {
+        s['new_enquiry_value']: {'__typename': 'FormulaValue', 'display_value': '90'},
         s['hidden_item_id']: {'type': 'board_relation', 'linked_item_ids': ['301']},
         s['quote_amount']: mirror([('301', number('90'))]),
         s['amount_invoiced']: mirror([('301', number('105'))]),
@@ -190,7 +191,7 @@ def test_cleared_source_stays_null_and_empty_parent_is_compared():
     assert not record['issues']
     assert record['after']['projects'][0]['item_name'] == 'nonnumeric project'
     assert record['after']['projects'][0]['total_order_value'] is None
-    assert record['after']['projects'][0]['new_enquiry_value'] is None
+    assert record['after']['projects'][0]['new_enquiry_value'] == '0.00'
 
 
 def test_stale_child_kept_and_not_used_in_invoice_total():

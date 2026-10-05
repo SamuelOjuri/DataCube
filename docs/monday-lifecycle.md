@@ -185,8 +185,12 @@ boards from the supplied start through the current check. It requires accessible
 active boards, an active parent on the expected board, and absence of the selected
 ID from both direct reads and the parent's complete current child list. The exact
 deletion must identify the selected item, subitem board, parent and parent board.
-Any later or simultaneous activity for the subitem stops recovery, including
-unknown event types. Later parent lifecycle or unfamiliar actions also stop it;
+Later or simultaneous activity for the subitem stops recovery, including
+unknown event types. One narrowly checked exception is a later parent Subitems
+update whose typed membership removes the deleted ID, adds no IDs, and refers
+to that ID only in its previous membership. Its full event remains in the audit.
+This observation reflects the deletion; it cannot authorize a restore or move.
+Later parent lifecycle or unfamiliar actions also stop recovery;
 ordinary parent field/name edits and subscriptions are allowed. API/permission
 errors, missing events, malformed data, inconsistent/duplicate pagination, changed
 membership and the ten-page-per-board limit all fail closed.
@@ -228,6 +232,11 @@ every follow-up succeeded. Restage after changing the code, stored row or review
 event; do not edit artifacts or manually insert a replacement job to bypass checks.
 
 ## Operations and verification
+
+For the explicit 31-subitem selection reviewed on 5 October 2026, use the
+[batch cleanup workflow](monday-review-cleanup-31.md). It stages the existing
+single-subitem proof independently for each reviewed ID and performs a targeted
+parent enquiry-value refresh using the confirmed current-subitem SUM rule.
 
 ```sql
 SELECT event_key, kind, item_id, status, attempts, last_error, result

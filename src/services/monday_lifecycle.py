@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 from psycopg import sql
@@ -90,17 +90,25 @@ def enqueue(connection, kind, board, item, *, parent=None, payload=None, key=Non
     return key
 
 
-def claim(connection):
+def claim(connection, *, event_prefixes=None):
+    if event_prefixes is not None:
+        try:
+            if not event_prefixes or any(p != f'recovery:{UUID(p[9:-1])}:' for p in event_prefixes):
+                raise ValueError
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError('Scoped lifecycle claims require literal recovery UUID prefixes') from None
+    restriction = ' AND event_key LIKE ANY(%s)' if event_prefixes is not None else ''
+    params = ([p + '%' for p in event_prefixes],) if event_prefixes is not None else None
     return connection.execute('''
         WITH candidate AS (
             SELECT event_key FROM public.monday_lifecycle_events
             WHERE ((status IN ('pending','retry') AND next_attempt_at<=now())
-                OR (status='processing' AND lease_until<now()))
+                OR (status='processing' AND lease_until<now()))''' + restriction + '''
             ORDER BY next_attempt_at,received_at FOR UPDATE SKIP LOCKED LIMIT 1
         ) UPDATE public.monday_lifecycle_events e SET status='processing',
             attempts=e.attempts+1,lease_token=gen_random_uuid(),lease_until=now()+interval '20 minutes'
         FROM candidate c WHERE e.event_key=c.event_key RETURNING e.*
-    ''').fetchone()
+    ''', params).fetchone()
 
 
 def schedule_rechecks(connection):
@@ -264,8 +272,11 @@ def apply_deletion(connection, job, before, evidence, *, activity_proof=None):
                     raise RuntimeError('Hidden deletion unexpectedly altered a surviving child; rolling back')
         if table != 'projects':
             for parent in sorted(parents):
+                refresh_payload = {'cause': job['event_key']}
+                if job['payload'].get('refresh_mode') == 'new_enquiry_sum':
+                    refresh_payload['refresh_mode'] = 'new_enquiry_sum'
                 enqueue(connection, 'refresh', PARENT_BOARD_ID, parent,
-                        key=f"{job['event_key']}:refresh:{parent}", payload={'cause': job['event_key']})
+                        key=f"{job['event_key']}:refresh:{parent}", payload=refresh_payload)
         # Source verification is itself durable, so a restart after COMMIT does
         # not lose the check for a restoration concurrent with the deletion.
         verification_payload = {'verification_only': True, 'cause': job['event_key']}
@@ -348,13 +359,15 @@ def process_job(connection, monday, job):
         raise ReviewRequired(f'Monday API state {state!r}; archive is not a deletion or restoration')
 
 
-def run_once(connection=None, monday=None):
+def run_once(connection=None, monday=None, *, event_prefixes=None):
     own = connection is None
     own_monday = monday is None
     connection = connection or connect()
     try:
-        job = claim(connection)
+        job = claim(connection, event_prefixes=event_prefixes) if event_prefixes is not None else claim(connection)
         if not job:
+            if event_prefixes is not None:
+                return False
             schedule_rechecks(connection)
             job = claim(connection)
             if not job:

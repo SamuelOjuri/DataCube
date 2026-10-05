@@ -83,6 +83,19 @@ def test_capture_discovers_exact_source_columns_and_never_queries_nested_values(
     assert total == 100
 
 
+def test_metadata_only_read_does_not_request_all_columns_via_empty_ids():
+    source, *_ = flat_data()
+    class Monday:
+        def execute_query(self, query, variables):
+            assert 'column_values(ids: $columns) @skip(if: true)' in query
+            row = deepcopy(source['projects']['101'])
+            row.pop('column_values')
+            return {'data': {'items': [row]}}
+    result = compare.fetch_items(Monday(), ['101'], [], parents=True)
+    assert result['101']['column_values'] == []
+    assert result['101']['subitems'] == source['projects']['101']['subitems']
+
+
 @pytest.mark.parametrize('fault', ['missing_source', 'wrong_board', 'missing_column', 'ambiguous_columns', 'cycle'])
 def test_bad_reference_withholds_only_unproven_fields(fault):
     evidence, before, contract, boundary = flat_data()
@@ -125,7 +138,7 @@ def test_list_and_legacy_settings_formats():
     assert compare.mirror_columns(value) == {'123': 'numbers'}
 
 
-def test_unknown_aggregate_is_not_silently_assumed():
+def test_confirmed_enquiry_rule_uses_current_membership_not_extra_mirror_links():
     evidence, before, contract, boundary = flat_data()
     child = deepcopy(evidence['subitems']['201'])
     child['id'] = '202'
@@ -135,8 +148,97 @@ def test_unknown_aggregate_is_not_silently_assumed():
     value['mirrored_items'].append({**value['mirrored_items'][0], 'linked_item': {'id': '202'}})
     set_column(parent, compare.PARENT_COLUMNS['new_enq_value_mirror'], value)
     record = compare.build_record(['101'], evidence, before, contract, boundary)
-    assert any('confirmed SUM' in i['reason'] for i in record['issues'])
+    assert not any(i['field'] == 'new_enquiry_value' for i in record['issues'])
+    # 202 is a mirror dependency, not a current member. Only 201 contributes.
     assert record['after']['projects'][0]['new_enquiry_value'] == before['projects'][0]['new_enquiry_value']
+
+
+def test_enquiry_sum_counts_every_current_child_including_zero_and_archived_business_status():
+    evidence, before, contract, boundary = flat_data()
+    parent = evidence['projects']['101']
+    set_column(parent, compare.PARENT_COLUMNS['new_enq_value_mirror'],
+               reference('201', compare.BOARDS['subitems'], compare.SUBITEM_COLUMNS['new_enquiry_value'], function=None))
+    for cid, amount in [('202', '0'), ('203', '19.75')]:
+        child = deepcopy(evidence['subitems']['201'])
+        child['id'] = cid
+        set_column(child, compare.SUBITEM_COLUMNS['new_enquiry_value'],
+                   {'__typename': 'FormulaValue', 'display_value': amount})
+        evidence['subitems'][cid] = child
+        parent['subitems'].append({'id': cid, 'parent_item': {'id': '101'}})
+    original = deepcopy(evidence)
+    assert compare.project_new_enquiry_total(evidence, parent) == 109.75
+    assert evidence == original
+
+
+@pytest.mark.parametrize('fault', ['missing_child', 'moved_child', 'unknown_state', 'missing_formula',
+                                  'bad_formula', 'duplicate_member', 'missing_membership', 'state_drift'])
+def test_incomplete_new_enquiry_evidence_withholds_the_entire_total(fault):
+    evidence, before, contract, boundary = flat_data()
+    parent, child = evidence['projects']['101'], evidence['subitems']['201']
+    if fault == 'missing_child':
+        evidence['subitems'].clear()
+    elif fault == 'moved_child':
+        child['parent_item']['id'] = '999'
+    elif fault == 'unknown_state':
+        child['state'] = 'unknown'
+    elif fault == 'state_drift':
+        parent['subitems'][0]['state'] = 'archived'
+    elif fault == 'missing_formula':
+        child['column_values'] = [c for c in child['column_values'] if c['id'] != compare.SUBITEM_COLUMNS['new_enquiry_value']]
+    elif fault == 'bad_formula':
+        compare.col(child, compare.SUBITEM_COLUMNS['new_enquiry_value'])['display_value'] = '#ERROR!'
+    elif fault == 'duplicate_member':
+        parent['subitems'].append(deepcopy(parent['subitems'][0]))
+    else:
+        parent.pop('subitems')
+    with pytest.raises(ValueError):
+        compare.project_new_enquiry_total(evidence, parent)
+
+
+@pytest.mark.parametrize('state', ['archived', 'deleted'])
+def test_enquiry_sum_excludes_nonactive_api_children_without_reading_their_formula(state):
+    evidence, *_ = flat_data()
+    parent, child = evidence['projects']['101'], evidence['subitems']['201']
+    child['state'] = state
+    child['column_values'] = []
+    assert compare.project_new_enquiry_total(evidence, parent) == 0
+
+
+@pytest.mark.parametrize('stage,expected', [
+    ('Won - Closed (Invoiced)', None), ('Lost', None),
+    ('Open Enquiry', 90), ('Won - Open (Order Received)', 90),
+    ('Won Closed', 90), ('lost', 90), ('Archived', 90), (None, 90), ('', 90),
+])
+def test_enquiry_eligibility_uses_exact_parent_schema_rule(stage, expected):
+    evidence, before, contract, boundary = flat_data()
+    parent = evidence['projects']['101']
+    compare.col(parent, compare.PARENT_COLUMNS['pipeline_stage'])['label'] = stage
+    assert compare.project_new_enquiry_total(evidence, parent) == expected
+    if expected is None:
+        before['projects'][0]['new_enquiry_value'] = '777.00'
+        record = compare.build_record(['101'], evidence, before, contract, boundary)
+        assert record['after']['projects'][0]['new_enquiry_value'] == '777.00'
+        assert not any(i['field'] == 'new_enquiry_value' for i in record['issues'])
+        assert all('new_enquiry_value' not in r for r in record['updates']['projects'])
+
+
+def test_missing_parent_stage_is_not_assumed_open():
+    evidence, *_ = flat_data()
+    parent = evidence['projects']['101']
+    parent['column_values'] = []
+    with pytest.raises(ValueError, match='not returned'):
+        compare.project_new_enquiry_total(evidence, parent)
+
+
+def test_empty_and_blank_enquiry_sum_is_zero_but_generic_mirrors_stay_strict():
+    evidence, *_ = flat_data()
+    parent = evidence['projects']['101']
+    compare.col(evidence['subitems']['201'], compare.SUBITEM_COLUMNS['new_enquiry_value'])['display_value'] = ''
+    assert compare.project_new_enquiry_total(evidence, parent) == 0
+    parent['subitems'] = []
+    assert compare.project_new_enquiry_total(evidence, parent) == 0
+    with pytest.raises(ValueError, match='confirmed SUM'):
+        compare.numeric(mirror([('201', number('1')), ('202', number('2'))], function=None))
 
 
 def test_verify_retains_the_original_union_of_requested_columns(monkeypatch):

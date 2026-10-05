@@ -37,6 +37,7 @@ outputs/
 outputs/analysis/
 *.csv
 *.json
+!scripts/monday_review_cleanup_31_targets.json
 !scripts/order_value_missing_subitems_2.json
 !scripts/project_placeholder_review_20261005.json
 

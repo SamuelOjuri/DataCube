@@ -222,8 +222,53 @@ def write_values(connection, values, before, contract):
                     raise ValueError('Generated status_category differs from defined schema')
 
 
+def refresh_new_enquiry(connection, monday, job, pid):
+    """Targeted recovery: API-active children summed only for Open parents."""
+    source = compare.capture_new_enquiry(monday, pid)
+    parent = source['projects'][pid]
+    amount = compare.project_new_enquiry_total(source, parent)
+    before = {'projects': life.read_rows(connection, 'projects', 'monday_id', [pid]),
+              'hidden_items': [], 'subitems': []}
+    if len(before['projects']) != 1:
+        raise life.ReviewRequired('Enquiry-only refresh requires one existing parent')
+    category = compare.require_stored_enquiry_category(parent, before['projects'][0])
+    eligible = category == 'Open'
+    contract = reconcile.read_contract(connection)
+    column = contract['projects'].get('new_enquiry_value')
+    if not column or column['type'] != 'numeric' or column['generated'] != 'NEVER':
+        raise life.ReviewRequired('New enquiry value is not a writable numeric column')
+    normalized = reconcile.normalize_updates({'projects': [
+        {'monday_id': pid, 'new_enquiry_value': amount if eligible else
+         before['projects'][0].get('new_enquiry_value')}]}, contract)['projects'][0]
+    changed = eligible and not same_value(before['projects'][0].get('new_enquiry_value'), normalized['new_enquiry_value'], column)
+    if compare.capture_new_enquiry(monday, pid) != source:
+        raise ValueError('Monday changed during enquiry refresh; retry with fresh evidence')
+    with life.write_transaction(connection, job):
+        if (life.read_rows(connection, 'projects', 'monday_id', [pid]) != before['projects']
+                or reconcile.read_contract(connection) != contract):
+            raise ValueError('Stored parent/schema changed during enquiry refresh')
+        if changed:
+            life.audit(connection, job, 'refresh_new_enquiry', 'projects', pid, before['projects'][0],
+                       {'rule': compare.ENQUIRY_RULE, 'source': source})
+            write_values(connection, {'projects': [normalized], 'hidden_items': [], 'subitems': []}, before, contract)
+        round_number = int(job['payload'].get('verification_round', 0))
+        if changed and round_number < 3:
+            life.enqueue(connection, 'refresh', life.PARENT_BOARD_ID, pid,
+                key=f"{job['event_key']}:verify_refresh", payload={'cause': job['event_key'],
+                    'verification_round': round_number + 1, 'refresh_mode': 'new_enquiry_sum'})
+        issues = [{'reason': 'Enquiry value keeps changing; inspect concurrent writers'}] if changed and round_number >= 3 else []
+        life.finish(connection, job, 'review' if issues else 'processed',
+            {'project_id': pid, 'rows_written': int(changed), 'issues': issues,
+             'new_enquiry_value': normalized['new_enquiry_value'], 'refresh_mode': 'new_enquiry_sum',
+             'eligible': eligible, 'status_category': category,
+             'skipped_reason': '' if eligible else 'Parent status_category is not Open; value preserved',
+             'verification_queued': bool(changed and round_number < 3)})
+
+
 def refresh_project(connection, monday, job, *, pid=None):
     pid = pid or job['item_id']
+    if job['payload'].get('refresh_mode') == 'new_enquiry_sum':
+        return refresh_new_enquiry(connection, monday, job, pid)
     source = fetch_project(monday, pid)
     before = read_snapshot(connection, pid, source)
     contract = reconcile.read_contract(connection)

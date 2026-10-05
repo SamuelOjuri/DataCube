@@ -183,14 +183,27 @@ certifies every column in the database.
 
 | Table | Fields compared |
 |---|---|
-| projects | Item name, project name, pipeline stage, order total, enquiry mirror, derived invoice total |
+| projects | Item name, project name, pipeline stage, order total, derived enquiry SUM, derived invoice total |
 | subitems | Item name, representable parent/source links, material and additional charges from the explicit single hidden source, quote, invoice, invoice/order dates, mapped order status |
 | hidden_items | Item name, material, additional charges, quote, invoice, invoice/order dates, status |
 
-Parent order and enquiry values come from directly read typed source values,
-following the mirror's exact linked IDs, source-column settings and configured
-SUM aggregation. Unknown aggregation, formatted numbers, unreadable contributions
-or cyclic/excessively deep references are explicitly deferred.
+Parent order values come from directly read typed source values, following the
+mirror's exact linked IDs, source-column settings and configured SUM aggregation.
+Unknown aggregation, formatted numbers, unreadable contributions or
+cyclic/excessively deep references are explicitly deferred for generic mirrors.
+
+As clarified by the user on 5 October 2026, enquiry SUM applies to **Open parent
+projects** and counts only their **current API-active subitems' New Enquiry
+Value**. Parent category follows the exact generated SQL CASE; Won/Lost parents
+keep their existing enquiry values. This is a requested business calculation,
+not verification of Monday's undocumented parent mirror aggregation.
+Comparison and lifecycle refresh read each eligible child's formula directly,
+using Decimal arithmetic. Stored extras, extra mirror dependencies and explicitly
+API-archived/deleted children do not contribute. Blank typed values and an empty
+eligible membership sum to zero. Missing/moved/unknown-state children or
+unreadable formula values withhold the total. Business Status labels such as
+Archived do not exclude API-active children. Other financial totals retain
+their existing rules and do not acquire this Open-parent filter.
 The code does not parse comma-separated mirror display text as a number: Monday
 documents that text as a summary and provides `mirrored_items` references
 ([Monday mirror API](https://developer.monday.com/api-reference/reference/mirror)).

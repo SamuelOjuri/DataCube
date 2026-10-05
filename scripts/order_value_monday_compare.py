@@ -2,8 +2,9 @@
 
 This is an update-only backfill, not a general Monday replica. Missing rows,
 lifecycle changes and multi-source scalar relationships are reported explicitly.
-Finance owns Monday values: no status exclusion, name inference, formula repair,
-or unique-source financial deduplication is performed here.
+Finance owns Monday values. The enquiry-only rule uses API-active children of
+Open projects; other financial values have no business-status exclusion.
+No name inference, formula repair or financial deduplication is performed here.
 """
 from __future__ import annotations
 
@@ -40,6 +41,8 @@ DATE_FIELDS = ('invoice_date', 'date_order_received')
 PARENT_FIELDS = ('project_name', 'pipeline_stage', 'total_order_value', 'new_enq_value_mirror')
 SOURCE_FIELDS = (*MONEY_FIELDS, *DATE_FIELDS, 'status')
 CHILD_FIELDS = ('hidden_item_id', 'quote_amount', 'amount_invoiced', *DATE_FIELDS, 'order_status')
+ENQUIRY_RULE = ('SUM of current API-active subitem New Enquiry Values for parent '
+                "status_category='Open'; preserve Won/Lost parent values")
 BOARDS = {'projects': backfill.PARENT_BOARD_ID, 'subitems': backfill.SUBITEM_BOARD_ID,
           'hidden_items': backfill.HIDDEN_ITEMS_BOARD_ID}
 READ_BATCH_SIZE = 10
@@ -303,6 +306,11 @@ def fetch_items(monday, ids, columns, *, parents=False, mirror_depth=None):
         }
     }'''.replace('VALUES', selection).replace('CHILDREN',
         'subitems { id state board { id } parent_item { id } }' if parents else '')
+    if not columns:
+        # Monday treats ids: [] as ALL columns. Metadata-only lifecycle reads
+        # must not include volatile, unrelated formula/mirror payloads.
+        query = query.replace('column_values(ids: $columns)',
+                              'column_values(ids: $columns) @skip(if: true)')
     ids = sorted(set(ids))
     label = 'parents' if parents else 'subitems' if references else 'hidden sources'
     for offset in range(0, len(ids), READ_BATCH_SIZE):
@@ -318,6 +326,8 @@ def fetch_items(monday, ids, columns, *, parents=False, mirror_depth=None):
         if set(rows) - set(batch):
             raise ValueError('Unexpected Monday item IDs')
         for item in rows.values():
+            if not columns:
+                item['column_values'] = []  # Deliberately not requested above.
             if not {'name', 'state', 'updated_at', 'board', 'parent_item', 'column_values'} <= item.keys():
                 raise ValueError('Incomplete Monday item metadata')
             backfill.indexed(item['column_values'], 'id')
@@ -461,6 +471,9 @@ def capture(monday, project_ids, extra_children=(), *, read_columns=None):
     mirrored_children, child_columns = mirror_dependencies(parents.values(), backfill.SUBITEM_BOARD_ID)
     child_ids.update(mirrored_children)
     child_columns.update(SUBITEM_COLUMNS[f] for f in CHILD_FIELDS)
+    # Explicit enquiry rule uses each eligible child's own formula. This does
+    # not claim the parent mirror's undocumented aggregation was verified.
+    child_columns.add(SUBITEM_COLUMNS['new_enquiry_value'])
     child_columns.update((read_columns or {}).get('subitems', []))
     children = fetch_items(monday, child_ids, child_columns)
     source_ids = set()
@@ -551,6 +564,75 @@ def scalar(value, kind):
     return value[field] or None
 
 
+def project_enquiry_category(parent):
+    """Match schema.sql's exact parent-project CASE, including NULL -> Open."""
+    if ((parent.get('board') or {}).get('id') != BOARDS['projects']
+            or parent.get('state') != 'active' or parent.get('parent_item') is not None):
+        raise ValueError('New enquiry total requires a current active project')
+    stage = scalar(col(parent, PARENT_COLUMNS['pipeline_stage']), 'status')
+    return 'Won' if stage == 'Won - Closed (Invoiced)' else 'Lost' if stage == 'Lost' else 'Open'
+
+
+def require_stored_enquiry_category(parent, stored):
+    """The targeted refresh cannot silently repair a stale parent category."""
+    category = project_enquiry_category(parent)
+    if stored.get('status_category') != category:
+        raise ValueError('Stored parent status_category differs from Monday; reconcile the parent stage first')
+    return category
+
+
+def project_new_enquiry_total(evidence, parent):
+    """SUM current API-active children for Open parents; None means skip parent.
+
+    User clarified the two filters on 2026-10-05. Business Status labels such
+    as Archived do not exclude API-active children. Missing/unreadable evidence
+    withholds the total; explicitly nonactive children do not contribute.
+    Won/Lost parents retain their stored enquiry value, rather than being zeroed.
+    """
+    if project_enquiry_category(parent) != 'Open':
+        return None
+    members = parent.get('subitems')
+    if not isinstance(members, list):
+        raise ValueError('Current Monday child membership is unavailable')
+    seen, total = set(), Decimal(0)
+    for member in members:
+        cid = member.get('id')
+        if (not isinstance(cid, str) or not cid.isascii() or not cid.isdigit()
+                or cid in seen or (member.get('parent_item') or {}).get('id') != parent['id']):
+            raise ValueError('Duplicate or inconsistent current Monday child membership')
+        seen.add(cid)
+        child = evidence.get('subitems', {}).get(cid)
+        if (not child or child.get('id') != cid
+                or (child.get('board') or {}).get('id') != BOARDS['subitems']
+                or (child.get('parent_item') or {}).get('id') != parent['id']):
+            raise ValueError(f'Incomplete current Monday new enquiry evidence for child {cid}')
+        if child.get('state') not in ('active', 'archived', 'deleted'):
+            raise ValueError(f'Unknown Monday lifecycle state for child {cid}')
+        if 'state' in member and member['state'] != child['state']:
+            raise ValueError(f'Child lifecycle state changed during capture: {cid}')
+        if child['state'] != 'active':
+            continue
+        amount = numeric(resolved_col(evidence, child, SUBITEM_COLUMNS['new_enquiry_value']))
+        if amount is not None:
+            total += amount
+    return total
+
+
+def capture_new_enquiry(monday, pid):
+    """Read parent category, current membership and each child's formula."""
+    parents = fetch_items(monday, [pid], [PARENT_COLUMNS['pipeline_stage']], parents=True)
+    parent = parents.get(pid)
+    if parent is None or not isinstance(parent.get('subitems'), list):
+        raise ValueError('Current Monday project/membership is unavailable')
+    ids = [c['id'] for c in parent['subitems']]
+    if len(ids) != len(set(ids)) or len(ids) > scopes.MAX_SCOPE_ROWS:
+        raise ValueError('Invalid or oversized current child membership')
+    children = fetch_items(monday, ids, [SUBITEM_COLUMNS['new_enquiry_value']])
+    evidence = dict(projects=parents, subitems=children, hidden_items={})
+    project_new_enquiry_total(evidence, parent)
+    return evidence
+
+
 def project_projection(pid, evidence, before, contract):
     """Partial, explicit field proposals plus an exhaustive list of limitations."""
     proposed = {t: {} for t in scopes.TABLES}
@@ -605,8 +687,14 @@ def project_projection(pid, evidence, before, contract):
     put('projects', pid, 'item_name', lambda: parent['name'])
     for field, kind in [('project_name', 'text'), ('pipeline_stage', 'status')]:
         put('projects', pid, field, lambda f=field, k=kind: scalar(source_col(parent, PARENT_COLUMNS[f]), k))
-    for field, source in [('total_order_value', 'total_order_value'), ('new_enquiry_value', 'new_enq_value_mirror')]:
-        put('projects', pid, field, lambda s=source: numeric(source_col(parent, PARENT_COLUMNS[s])))
+    put('projects', pid, 'total_order_value', lambda: numeric(source_col(parent, PARENT_COLUMNS['total_order_value'])))
+    try:
+        enquiry_total = project_new_enquiry_total(evidence, parent)
+    except (ValueError, InvalidOperation) as exc:
+        issue('projects', pid, 'new_enquiry_value', str(exc))
+    else:
+        if enquiry_total is not None:
+            put('projects', pid, 'new_enquiry_value', lambda: enquiry_total)
     current_ids = {r['id'] for r in parent['subitems']}
     for row in before['subitems']:
         if row.get('parent_monday_id') == pid and row['monday_id'] not in current_ids:

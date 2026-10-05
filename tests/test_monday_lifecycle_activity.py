@@ -117,6 +117,53 @@ def test_ordinary_later_parent_edits_do_not_block_the_deleted_subitem():
     assert activity.capture(monday, request())['deletion_event']['id'] == 'deletion-1'
 
 
+def removal_event():
+    return event('parent-removal', 'update_column_value', seconds=1, pulse_id=101,
+                 board_id=int(life.PARENT_BOARD_ID), column_id='subitems__1', column_type='subtasks',
+                 previous_value={'linkedPulseIds': [{'linkedPulseId': 201}, {'linkedPulseId': 202}]},
+                 value={'linkedPulseIds': [{'linkedPulseId': 202}]})
+
+
+def test_parent_membership_removal_confirms_deletion_and_remains_in_audit_history():
+    monday = Monday()
+    removed = removal_event()
+    monday.histories[life.PARENT_BOARD_ID] = [removed]
+    proof = activity.capture(monday, request())
+    assert proof['histories'][life.PARENT_BOARD_ID] == [removed]
+
+
+@pytest.mark.parametrize('fault', ['readded', 'added_other', 'wrong_column', 'wrong_board', 'wrong_parent',
+                                  'malformed', 'duplicate', 'undo', 'other_reference', 'later_restore'])
+def test_only_unambiguous_parent_membership_removal_is_allowed(fault):
+    monday = Monday()
+    row = removal_event()
+    data = json.loads(row['data'])
+    if fault == 'readded':
+        data['value']['linkedPulseIds'].append({'linkedPulseId': 201})
+    elif fault == 'added_other':
+        data['value']['linkedPulseIds'].append({'linkedPulseId': 203})
+    elif fault == 'wrong_column':
+        data['column_id'] = 'connect_boards'
+    elif fault == 'wrong_board':
+        data['board_id'] = 123
+    elif fault == 'wrong_parent':
+        data['pulse_id'] = 999
+    elif fault == 'malformed':
+        data['value'] = None
+    elif fault == 'duplicate':
+        data['previous_value']['linkedPulseIds'].append({'linkedPulseId': 201})
+    elif fault == 'undo':
+        data['is_undo_action'] = True
+    elif fault == 'other_reference':
+        data['other_item'] = 201
+    row['data'] = json.dumps(data)
+    monday.histories[life.PARENT_BOARD_ID] = [row]
+    if fault == 'later_restore':
+        monday.histories[life.SUBITEM_BOARD_ID].insert(0, event('restore', 'restore_pulse', seconds=2))
+    with pytest.raises(life.ReviewRequired):
+        activity.capture(monday, request())
+
+
 def test_unidentifiable_later_activity_cannot_be_silently_ignored():
     monday = Monday()
     unknown = event('later', 'restore_pulse', seconds=1)
