@@ -13,6 +13,7 @@ from .routes.forecast import router as forecast_router
 from ..config import PARENT_BOARD_ID
 from ..database.supabase_client import SupabaseClient
 from ..services.queue_worker import get_task_queue
+from ..services.monday_lifecycle import worker as lifecycle_worker
 from ..tasks.pipeline import backfill_llm, rehydrate_delta, rehydrate_recent, sync_projects_to_monday
 from ..tasks.postgres_maintenance import (
     refresh_conversion_views,
@@ -317,6 +318,7 @@ async def _scheduled_refresh_conversion_views() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     logging.getLogger("apscheduler").setLevel(logging.INFO)
+    lifecycle_worker.start()
     get_task_queue().start()
 
     if not _scheduler.running:
@@ -365,6 +367,7 @@ async def _startup() -> None:
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
+    await lifecycle_worker.stop()
     if _scheduler.running:
         _scheduler.shutdown(wait=False)
     await get_task_queue().stop()

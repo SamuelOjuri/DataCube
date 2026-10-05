@@ -199,6 +199,15 @@ def expected_state(before, updates):
             if update['monday_id'] not in indexed:
                 raise ScopeConflict('Online scopes cannot insert missing rows')
             indexed[update['monday_id']].update(update)
+            if table == 'projects' and 'status_category' in indexed[update['monday_id']]:
+                row = indexed[update['monday_id']]
+                # Match the GENERATED ALWAYS expression in schema/schema.sql
+                # exactly. Predict the read-back value; never add it to updates.
+                # Won - Open, alternate labels and NULL all take ELSE 'Open'.
+                row['status_category'] = (
+                    'Won' if row.get('pipeline_stage') == 'Won - Closed (Invoiced)'
+                    else 'Lost' if row.get('pipeline_stage') == 'Lost' else 'Open'
+                )
             if table == 'projects' and 'invoicing_spread_days' in indexed[update['monday_id']]:
                 row = indexed[update['monday_id']]
                 first, last = row.get('first_date_invoiced'), row.get('last_date_invoiced')

@@ -14,6 +14,7 @@ from collections import defaultdict
 from ..database.supabase_client import SupabaseClient
 from ..database.sync_service import DataSyncService
 from ..services.queue_worker import get_task_queue
+from ..services import monday_lifecycle
 from ..config import (
     WEBHOOK_SECRET,
     PARENT_BOARD_ID,
@@ -50,6 +51,16 @@ logger = logging.getLogger(__name__)
 # Global instances
 supabase_client = SupabaseClient()
 sync_service = DataSyncService()
+
+
+@app.on_event('startup')
+async def start_lifecycle_worker():
+    monday_lifecycle.worker.start()
+
+
+@app.on_event('shutdown')
+async def stop_lifecycle_worker():
+    await monday_lifecycle.worker.stop()
 
 
 def _queue_rehydrate_job(project_id: str, reason: str) -> None:
@@ -568,6 +579,24 @@ async def handle_monday_webhook(
 
         event_data = data.get('event', {}) or {}
 
+        # Deletions/restorations bypass the in-memory dedupe and background task
+        # path. Acknowledge only after the immutable event is stored durably.
+        try:
+            lifecycle_event = monday_lifecycle.event_from_payload(data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if lifecycle_event is not None:
+            if not monday_lifecycle.enabled():
+                raise HTTPException(status_code=503, detail='Monday lifecycle processing is not enabled')
+            try:
+                key = await asyncio.to_thread(monday_lifecycle.persist_event,
+                                               supabase_client.client, lifecycle_event)
+            except Exception as exc:
+                logger.error('Lifecycle event persistence failed: %s', type(exc).__name__)
+                raise HTTPException(status_code=503, detail='Lifecycle event could not be saved; retry delivery') from exc
+            processing_metrics['successful_webhooks'] += 1
+            return JSONResponse({'status': 'accepted', 'event_key': key, 'durable': True}, status_code=202)
+
         event_id_raw = event_data.get('id')
         event_type_raw = event_data.get('type')
         EVENT_ALIASES = {
@@ -745,8 +774,8 @@ async def process_webhook_event_optimized(
         elif event_type == "create_item":
             await handle_item_created(board_id, item_id, payload, webhook_log_id=webhook_log_id)
 
-        elif event_type == "delete_item":
-            await handle_item_deleted(board_id, item_id)
+        elif event_type in monday_lifecycle.DELETE_EVENTS | monday_lifecycle.RESTORE_EVENTS:
+            await handle_item_deleted(board_id, item_id, payload, event_type=event_type)
 
         elif event_type == "update_name":
             await handle_item_name_updated(board_id, item_id, payload)
@@ -1004,38 +1033,15 @@ async def handle_column_changed_minimal(
         logger.error(f"Failed to update {field_name} for item {item_id}: {exc}")
         raise
 
-async def handle_item_deleted(board_id: str, item_id: str):
-    """Handle item deletion with proper table mapping"""
-    logger.info(f"Processing deleted item: {item_id} in board: {board_id}")
-
-    parent_to_refresh: Set[str] = set()
-    if board_id == SUBITEM_BOARD_ID:
-        parent = _lookup_parent_for_subitem(str(item_id))
-        if parent:
-            parent_to_refresh.add(parent)
-    elif board_id == HIDDEN_ITEMS_BOARD_ID:
-        parent_to_refresh |= _lookup_parents_for_hidden(str(item_id))
-
-    try:
-        # Delete from appropriate table based on board_id
-        if board_id == PARENT_BOARD_ID:  # Parent board
-            result = supabase_client.client.table('projects').delete().eq('monday_id', item_id).execute()
-            logger.info(f"Deleted project {item_id}: {len(result.data)} rows affected")
-
-        elif board_id == SUBITEM_BOARD_ID:  # Subitems board
-            result = supabase_client.client.table('subitems').delete().eq('monday_id', item_id).execute()
-            logger.info(f"Deleted subitem {item_id}: {len(result.data)} rows affected")
-
-        elif board_id == HIDDEN_ITEMS_BOARD_ID:  # Hidden items board
-            result = supabase_client.client.table('hidden_items').delete().eq('monday_id', item_id).execute()
-            logger.info(f"Deleted hidden item {item_id}: {len(result.data)} rows affected")
-
-    except Exception as e:
-        logger.error(f"Failed to delete item {item_id} from board {board_id}: {e}")
-        raise
-    finally:
-        for parent in parent_to_refresh:
-            _queue_rehydrate_job(parent, "child_delete")
+async def handle_item_deleted(board_id: str, item_id: str, payload=None, *, event_type='delete_item'):
+    """Compatibility entry point: queue evidence checking, never delete blindly."""
+    if not monday_lifecycle.enabled():
+        raise RuntimeError('Monday lifecycle processing is not enabled')
+    data = dict(payload or {})
+    data['event'] = {**(data.get('event') or {}), 'type': event_type,
+                     'boardId': board_id, 'itemId': item_id}
+    event = monday_lifecycle.event_from_payload(data)
+    await asyncio.to_thread(monday_lifecycle.persist_event, supabase_client.client, event)
 
 async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict) -> None:
     """Handle item name updates"""

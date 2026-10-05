@@ -37,6 +37,7 @@ outputs/
 outputs/analysis/
 *.csv
 *.json
+!scripts/order_value_missing_subitems_2.json
 
 # Logs and temporary files
 *.log

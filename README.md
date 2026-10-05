@@ -22,6 +22,7 @@ Run `python scripts/data_quality_checks.py` to see mirroring coverage and numeri
 
 ## Automation & Background Jobs
 
+- Monday deletion/restoration uses a durable inbox and database write guards. Apply the migration and enable the worker as described in [the lifecycle deployment and recovery guide](docs/monday-lifecycle.md).
 - Webhook processing now enqueues long-running work (rehydrate, reanalyse, Monday sync) via the in-process queue at `src/services/queue_worker.py`.
 - Periodic catch-ups (hourly delta hydrate, nightly LLM backfill, 25-minute Monday sync) are scheduled through APScheduler in `src/api/app.py`.
 - A daily forecast snapshot job captures pipeline state for trend analysis and Power BI consumption.
