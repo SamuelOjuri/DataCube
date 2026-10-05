@@ -15,6 +15,10 @@ from ..database.supabase_client import SupabaseClient
 from ..database.sync_service import DataSyncService
 from ..services.queue_worker import get_task_queue
 from ..services import monday_lifecycle
+from ..services.worker_monitor import monitor
+from ..services.worker_store import accept_webhook
+from ..services.webhook_worker import worker as webhook_worker
+from ..api.routes.health import router as health_router
 from ..config import (
     WEBHOOK_SECRET,
     PARENT_BOARD_ID,
@@ -37,6 +41,8 @@ app = FastAPI(
     version="2.0.0"
 )
 
+app.include_router(health_router)
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -51,30 +57,32 @@ logger = logging.getLogger(__name__)
 # Global instances
 supabase_client = SupabaseClient()
 sync_service = DataSyncService()
+sync_service.strict_writes = True
 
 
 @app.on_event('startup')
 async def start_lifecycle_worker():
+    monitor.start('webhook')
     monday_lifecycle.worker.start()
+    get_task_queue().start()
+    webhook_worker.start()
 
 
 @app.on_event('shutdown')
 async def stop_lifecycle_worker():
-    await monday_lifecycle.worker.stop()
+    try:
+        await asyncio.gather(webhook_worker.stop(), get_task_queue().stop(), monday_lifecycle.worker.stop())
+    finally:
+        await monitor.stop()
 
 
 def _queue_rehydrate_job(project_id: str, reason: str) -> None:
-    try:
-        get_task_queue().enqueue_rehydrate(project_id, source=reason)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to enqueue rehydrate job for %s: %s", project_id, exc)
+    # Let persistence failures propagate so the durable parent job is retried.
+    get_task_queue().enqueue_rehydrate(project_id, source=reason)
 
 
 def _queue_push_job(project_id: str, reason: str) -> None:
-    try:
-        get_task_queue().enqueue_push_to_monday(project_id, reason=reason)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to enqueue Monday sync for %s: %s", project_id, exc)
+    get_task_queue().enqueue_push_to_monday(project_id, reason=reason)
 
 
 HIDDEN_SUBITEM_FALLBACK_LIMIT = 250
@@ -98,7 +106,7 @@ def _load_hidden_snapshot(hidden_item_id: str) -> Optional[Dict[str, Any]]:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to load hidden item snapshot for %s: %s", hidden_item_id, exc)
-        return None
+        raise
 
     return rows[0] if rows else None
 
@@ -154,6 +162,7 @@ def _lookup_parents_for_hidden(
         matched_parent_ids |= _collect_parent_ids_from_rows(direct_rows)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed direct hidden link lookup for %s: %s", hidden_item_id, exc)
+        raise
 
     candidate_subitems: Dict[tuple[str, str, str], Dict[str, Any]] = {}
 
@@ -175,7 +184,7 @@ def _lookup_parents_for_hidden(
                 name,
                 exc,
             )
-            continue
+            raise
 
         for row in rows:
             key = (
@@ -203,7 +212,7 @@ def _lookup_parents_for_hidden(
                 prefix,
                 exc,
             )
-            continue
+            raise
 
         for row in rows:
             key = (
@@ -266,7 +275,7 @@ def _lookup_parents_for_hidden(
                     field_name,
                     exc,
                 )
-                continue
+                raise
 
             for row in rows:
                 project_id = _clean_text(row.get("monday_id"))
@@ -350,7 +359,9 @@ def _lookup_parent_for_subitem(subitem_id: str) -> Optional[str]:
 request_counts = defaultdict(list)
 processing_metrics = {
     'total_webhooks': 0,
-    'successful_webhooks': 0,
+    'accepted_webhooks': 0,
+    'completed_webhooks': 0,
+    'processing_failures': 0,
     'failed_webhooks': 0,
     'duplicate_webhooks': 0,
     'rate_limited_requests': 0,
@@ -440,6 +451,7 @@ def _lookup_parent_project_id(subitem_id: str) -> Optional[str]:
         logger.warning(
             "Failed to lookup parent project for subitem %s: %s", subitem_id, exc
         )
+        raise
     return None
 
 def _mark_analysis_warning(
@@ -564,7 +576,6 @@ async def handle_monday_webhook(
         challenge_value = data.get('challenge')
         if challenge_value:
             processing_metrics['challenge_requests'] += 1
-            processing_metrics['successful_webhooks'] += 1
             logger.info(
                 "Responding to Monday challenge for IP %s with value %s",
                 client_ip,
@@ -594,7 +605,7 @@ async def handle_monday_webhook(
             except Exception as exc:
                 logger.error('Lifecycle event persistence failed: %s', type(exc).__name__)
                 raise HTTPException(status_code=503, detail='Lifecycle event could not be saved; retry delivery') from exc
-            processing_metrics['successful_webhooks'] += 1
+            processing_metrics['accepted_webhooks'] += 1
             return JSONResponse({'status': 'accepted', 'event_key': key, 'durable': True}, status_code=202)
 
         event_id_raw = event_data.get('id')
@@ -625,55 +636,15 @@ async def handle_monday_webhook(
             processing_metrics['failed_webhooks'] += 1
             raise HTTPException(status_code=400, detail="Missing required fields")
 
-        # New dedupe/uniqueness logic
-        dedupe_token = event_id or event_data.get('triggerUuid') or event_data.get('originalTriggerUuid')
-        if not dedupe_token and event_data:
-            changed_at = event_data.get('changedAt')
-            column_id = event_data.get('columnId')
-            if changed_at:
-                dedupe_token = f"{event_type}:{changed_at}:{column_id or ''}"
-        if dedupe_token is not None:
-            dedupe_token = str(dedupe_token)
-
-        if is_duplicate_event(dedupe_token, event_type, item_id):
-            logger.info("Ignoring duplicate event: %s", dedupe_token)
-            return JSONResponse({"status": "duplicate", "ignored": True}, status_code=200)
-
-        webhook_log_id: Optional[str] = None
+        if board_id not in {PARENT_BOARD_ID, SUBITEM_BOARD_ID, HIDDEN_ITEMS_BOARD_ID} or not item_id.isdecimal():
+            raise HTTPException(status_code=400, detail='Invalid webhook target')
         try:
-            result = supabase_client.client.table('webhook_events').insert({
-                'event_id': event_id,
-                'board_id': board_id,
-                'item_id': item_id,
-                'event_type': event_type,
-                'webhook_payload': data,
-                'received_at': datetime.now().isoformat(),
-                'status': 'pending',
-                'client_ip': client_ip,
-                'processing_time_ms': None
-            }).execute()
-            if result.data:
-                webhook_log_id = result.data[0]['id']
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to log webhook event: %s", exc)
-
-        background_tasks.add_task(
-            process_webhook_event_with_retry,
-            event_type,
-            board_id,
-            item_id,
-            data,
-            webhook_log_id,
-            start_time
-        )
-
-        processing_metrics['successful_webhooks'] += 1
-
-        return JSONResponse({
-            "status": "accepted",
-            "event_id": event_id,
-            "processing_time_ms": round((time.time() - start_time) * 1000, 2)
-        }, status_code=202)
+            job_id = await asyncio.to_thread(accept_webhook, event_type, board_id, item_id, data, client_ip)
+        except Exception as exc:
+            logger.error('Webhook persistence failed: %s', type(exc).__name__)
+            raise HTTPException(status_code=503, detail='Webhook could not be saved; retry delivery') from exc
+        processing_metrics['accepted_webhooks'] += 1
+        return JSONResponse({'status': 'accepted', 'event_id': event_id, 'job_id': job_id, 'durable': True}, status_code=202)
 
     except HTTPException:
         raise
@@ -681,74 +652,6 @@ async def handle_monday_webhook(
         logger.error("Unexpected error in webhook handler: %s", exc)
         processing_metrics['failed_webhooks'] += 1
         raise HTTPException(status_code=500, detail="Internal server error")
-
-async def process_webhook_event_with_retry(
-    event_type: str,
-    board_id: str,
-    item_id: str,
-    payload: Dict[str, Any],
-    webhook_log_id: Optional[str] = None,
-    start_time: float = None,
-    max_retries: int = 3
-):
-    """Process webhook event with retry logic and comprehensive error handling"""
-
-    retry_count = 0
-    last_error = None
-
-    while retry_count <= max_retries:
-        try:
-            logger.debug(
-                "Processing %s for item %s on board %s (attempt %s/%s)",
-                event_type,
-                item_id,
-                board_id,
-                retry_count + 1,
-                max_retries + 1,
-            )
-            await process_webhook_event_optimized(
-                event_type, board_id, item_id, payload, webhook_log_id=webhook_log_id
-            )
-
-            # Mark as processed successfully
-            if webhook_log_id:
-                processing_time = round((time.time() - start_time) * 1000, 2) if start_time else None
-                supabase_client.client.table('webhook_events')\
-                    .update({
-                        'status': 'processed',
-                        'processed_at': datetime.now().isoformat(),
-                        'processing_time_ms': processing_time,
-                        'retry_count': retry_count
-                    })\
-                    .eq('id', webhook_log_id)\
-                    .execute()
-
-            logger.info(f"Successfully processed {event_type} for item {item_id} (attempts: {retry_count + 1})")
-            return
-
-        except Exception as e:
-            last_error = e
-            retry_count += 1
-
-            if retry_count <= max_retries:
-                wait_time = min(2 ** retry_count, 30)  # Exponential backoff, max 30s
-                logger.warning(f"Webhook processing failed (attempt {retry_count}), retrying in {wait_time}s: {e}")
-                await asyncio.sleep(wait_time)
-            else:
-                logger.error(f"Webhook processing failed after {max_retries} attempts: {e}")
-
-    # Mark as failed after all retries
-    if webhook_log_id:
-        processing_time = round((time.time() - start_time) * 1000, 2) if start_time else None
-        _mark_analysis_warning(
-            webhook_log_id,
-            f"{event_type} processing failed after {retry_count} attempts: {last_error}",
-            status='failed',
-            extra_fields={
-                'processing_time_ms': processing_time,
-                'retry_count': retry_count,
-            },
-        )
 
 async def process_webhook_event_optimized(
     event_type: str,
@@ -998,7 +901,9 @@ async def handle_column_changed_minimal(
                         board_id,
                     )
                     analysis_started = time.time()
-                    svc.analyze_and_store(target_id)
+                    analysis_result = svc.analyze_and_store(target_id)
+                    if not analysis_result.get('success'):
+                        raise RuntimeError('Webhook analysis failed')
                     logger.info(
                         "Analysis complete for project %s after %s change (%.2f ms)",
                         target_id,
@@ -1016,6 +921,7 @@ async def handle_column_changed_minimal(
                         webhook_log_id,
                         f"analysis failed for {target_id} after {column_id} update: {exc}",
                     )
+                    raise
 
         elif analysis_targets and board_id == SUBITEM_BOARD_ID:
             for target_id in analysis_targets:
@@ -1491,32 +1397,6 @@ def get_enhanced_column_field_mapping(board_id: str, column_id: str) -> Optional
     }
 
     return mappings.get(board_id, {}).get(column_id)
-
-@app.get("/health")
-async def health_check():
-    """Enhanced health check with system status"""
-    try:
-        # Test Supabase connection
-        test_result = supabase_client.client.table('webhook_events').select('count').limit(1).execute()
-        supabase_healthy = test_result is not None
-    except Exception:
-        supabase_healthy = False
-
-    return {
-        "status": "healthy" if supabase_healthy else "degraded",
-        "timestamp": datetime.now().isoformat(),
-        "supabase_connection": "ok" if supabase_healthy else "error",
-        "metrics": {
-            "total_webhooks": processing_metrics['total_webhooks'],
-            "success_rate": round(
-                processing_metrics['successful_webhooks'] / max(processing_metrics['total_webhooks'], 1) * 100, 2
-            ),
-            "avg_processing_time_ms": round(
-                sum(processing_metrics['processing_times'][-100:]) /
-                max(len(processing_metrics['processing_times'][-100:]), 1) * 1000, 2
-            ) if processing_metrics['processing_times'] else 0
-        }
-    }
 
 @app.get("/metrics")
 async def get_metrics():

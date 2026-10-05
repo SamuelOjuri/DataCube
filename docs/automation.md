@@ -9,8 +9,9 @@ webhook-driven flow, scheduled background jobs, and the pipeline forecast layer.
   - Provide callable functions for rehydrate flows, LLM backfill, Monday sync, and
     project-by-ID refreshes.
 - **Queue worker** (`src/services/queue_worker.py`)
-  - In-process async worker that runs rehydrate → analyse → Monday push jobs.
-  - Persists job status to the `job_queue` table for observability.
+  - Durable PostgreSQL consumer that runs rehydration, analysis and Monday column pushes.
+  - Claims, retries and recovers `job_queue` records across process restarts.
+  - Ordinary webhook receipts are durably queued before HTTP acknowledgement.
 - **Webhook integration** (`src/webhooks/webhook_server.py`)
   - Subitem/hidden item updates enqueue rehydrate jobs for affected parent projects.
   - Parent item updates still perform immediate analysis and enqueue a Monday push,
@@ -34,7 +35,11 @@ webhook-driven flow, scheduled background jobs, and the pipeline forecast layer.
     - **6-hour recent rehydrate** (`rehydrate_recent`) — broader catch-up rehydrate.
     - **30-minute materialized view refresh** (`refresh_conversion_views`) — runs `refresh_analytics_views()`, including smoothing signal refresh before smoothed monthly allocation refresh.
     - **Daily forecast snapshot maintenance** (`forecast_snapshot_maintenance`, default 03:10 UTC) — creates today's base and smoothing snapshots and deletes expired rows.
-  - Queue worker is started alongside the FastAPI app.
+    - **Daily webhook cleanup** (`webhook_cleanup`, default 03:40 UTC).
+  - Database locks and occurrence records prevent duplicate scheduled runs across replicas.
+  - Queue workers and monitoring start with the corresponding FastAPI application.
+
+For migration, health checks, alerts and safe recovery, see [Worker monitoring](worker-monitoring.md).
 
 ## Customer Order Value
 

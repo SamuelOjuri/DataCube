@@ -1,11 +1,15 @@
 import logging
 import os
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import psycopg
 
 logger = logging.getLogger(__name__)
+
+
+class MaintenanceUnavailable(RuntimeError):
+    """Required maintenance objects are not deployed; do not report success."""
 
 DEFAULT_FORECAST_RETENTION_DAYS = int(
     os.getenv("FORECAST_SNAPSHOT_RETENTION_DAYS", os.getenv("RETENTION_DAYS", "730"))
@@ -42,6 +46,7 @@ def refresh_materialized_views(*, task_logger: Optional[logging.Logger] = None) 
                 cur.execute("SELECT refresh_analytics_views();")
             else:
                 log.warning("refresh_analytics_views() not found; falling back to direct refreshes")
+                refreshed = 0
                 for relation in (
                     "public.mv_pipeline_velocity_stats_v1",
                     "public.mv_quote_conversion_stats_v1",
@@ -50,6 +55,9 @@ def refresh_materialized_views(*, task_logger: Optional[logging.Logger] = None) 
                     if _relation_exists(cur, relation):
                         log.info("Refreshing materialized view %s", relation)
                         cur.execute(f"REFRESH MATERIALIZED VIEW {relation};")
+                        refreshed += 1
+                if refreshed != 3:
+                    raise MaintenanceUnavailable('Required materialized views are missing')
             conn.commit()
             log.info("Materialized view refresh complete")
     except Exception as exc:
@@ -76,13 +84,13 @@ def create_pipeline_forecast_snapshot(
     task_logger: Optional[logging.Logger] = None,
 ) -> int:
     log = task_logger or logger
-    target_date = snapshot_date or date.today()
+    target_date = snapshot_date or datetime.now(timezone.utc).date()
     conn = psycopg.connect(_get_dsn())
     try:
         with conn.cursor() as cur:
             if not _function_exists(cur, "public.create_pipeline_forecast_snapshot(date)"):
                 log.warning("create_pipeline_forecast_snapshot(date) not found; skipping base snapshot")
-                return 0
+                raise MaintenanceUnavailable('Base snapshot function missing')
             log.info("Creating pipeline forecast snapshot for %s", target_date.isoformat())
             cur.execute(
                 "SELECT create_pipeline_forecast_snapshot(%s::date);",
@@ -111,7 +119,7 @@ def create_pipeline_smoothing_forecast_snapshot(
     task_logger: Optional[logging.Logger] = None,
 ) -> int:
     log = task_logger or logger
-    target_date = snapshot_date or date.today()
+    target_date = snapshot_date or datetime.now(timezone.utc).date()
     conn = psycopg.connect(_get_dsn())
     try:
         with conn.cursor() as cur:
@@ -119,7 +127,7 @@ def create_pipeline_smoothing_forecast_snapshot(
                 log.warning(
                     "create_pipeline_smoothing_forecast_snapshot(date) not found; skipping smoothing snapshot"
                 )
-                return 0
+                raise MaintenanceUnavailable('Smoothing snapshot function missing')
             log.info("Creating pipeline smoothing forecast snapshot for %s", target_date.isoformat())
             cur.execute(
                 "SELECT create_pipeline_smoothing_forecast_snapshot(%s::date);",
@@ -155,7 +163,7 @@ def cleanup_old_pipeline_forecast_snapshots(
                 log.warning(
                     "cleanup_old_pipeline_forecast_snapshots(integer) not found; skipping base cleanup"
                 )
-                return 0
+                raise MaintenanceUnavailable('Base cleanup function missing')
             cur.execute(
                 "SELECT cleanup_old_pipeline_forecast_snapshots(%s::integer);",
                 (retain_days,),
@@ -192,7 +200,7 @@ def cleanup_old_pipeline_smoothing_forecast_snapshots(
                 log.warning(
                     "cleanup_old_pipeline_smoothing_forecast_snapshots(integer) not found; skipping smoothing cleanup"
                 )
-                return 0
+                raise MaintenanceUnavailable('Smoothing cleanup function missing')
             cur.execute(
                 "SELECT cleanup_old_pipeline_smoothing_forecast_snapshots(%s::integer);",
                 (retain_days,),

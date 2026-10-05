@@ -82,6 +82,7 @@ class MondayUpdateService:
                         update_action = "create"
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Unable to sync Monday update for %s: %s", project_id, exc)
+                    return {"success": False, "error": "timeline_update_failed", "columns": columns_res}
 
         return {
             "success": True,
@@ -189,7 +190,8 @@ class MondayUpdateService:
             updates = self.monday.get_item_updates(item_id, limit=10)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to inspect updates for item %s: %s", item_id, exc)
-            return None
+            # An unavailable lookup does not prove that no update exists.
+            raise
 
         for update in updates:
             text = (update.get("text_body") or update.get("body") or "").strip()

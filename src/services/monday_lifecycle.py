@@ -16,6 +16,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ..config import PARENT_BOARD_ID, SUBITEM_BOARD_ID, HIDDEN_ITEMS_BOARD_ID
+from .worker_monitor import monitor
 
 LOG = logging.getLogger(__name__)
 BOARDS = {str(PARENT_BOARD_ID): 'projects', str(SUBITEM_BOARD_ID): 'subitems',
@@ -358,6 +359,7 @@ def run_once(connection=None, monday=None):
             job = claim(connection)
             if not job:
                 return False
+        monitor.update('lifecycle', 'busy', job=job['event_key'])
         try:
             if monday is None:
                 from .monday_lifecycle_activity import LifecycleMondayClient
@@ -374,6 +376,7 @@ def run_once(connection=None, monday=None):
                         return super().execute_query(query, variables)
                 monday = BoundedMonday()
             process_job(connection, monday, job)
+            monitor.update('lifecycle', 'idle', success=True)
         except Exception as exc:
             # Exception class/message only for evidence/logic failures; transport
             # exceptions may contain credential-bearing DSNs or URLs.
@@ -381,6 +384,7 @@ def run_once(connection=None, monday=None):
             status = 'review' if isinstance(exc, ReviewRequired) or job['attempts'] >= MAX_ATTEMPTS else 'retry'
             finish(connection, job, status, {'error_type': type(exc).__name__}, error=message)
             LOG.warning('Lifecycle %s for %s: %s', status, job['item_id'], message)
+            monitor.update('lifecycle', 'degraded', error=exc)
         return True
     finally:
         if own_monday and monday is not None:
@@ -393,20 +397,31 @@ class LifecycleWorker:
     def __init__(self):
         self.task = None
         self.stopping = False
+        self.inflight = None
 
     def start(self):
+        if self.task is not None and not self.task.done():
+            return
+        if self.inflight is not None and not self.inflight.done():
+            raise RuntimeError('Lifecycle thread is still running')
+        monitor.register('lifecycle', enabled=enabled(), budget=1200)
         if enabled() and (self.task is None or self.task.done()):
             if not os.getenv('SUPABASE_DB_URL'):
                 raise RuntimeError('Enabled lifecycle worker requires SUPABASE_DB_URL')
             self.stopping = False
             self.task = asyncio.create_task(self.run(), name='monday-lifecycle')
+            monitor.bind('lifecycle', self.task)
 
     async def run(self):
         while not self.stopping:
             try:
-                worked = await asyncio.to_thread(run_once)
+                self.inflight = asyncio.create_task(asyncio.to_thread(run_once))
+                worked = await asyncio.shield(self.inflight)
+                if not worked:
+                    monitor.update('lifecycle', 'idle')
             except Exception as exc:
                 LOG.error('Lifecycle worker unavailable: %s', type(exc).__name__)
+                monitor.update('lifecycle', 'degraded', error=exc)
                 worked = False
             if not worked:
                 await asyncio.sleep(5)
@@ -414,13 +429,11 @@ class LifecycleWorker:
     async def stop(self):
         self.stopping = True
         if self.task:
-            # Cancelling the waiter does not cancel an SQL transaction in its
-            # thread. Lease fencing and atomic commits make restart safe.
-            self.task.cancel()
-            try:
+            # Do not cancel/restart an in-flight database thread.
+            done, _ = await asyncio.wait([self.task], timeout=10)
+            if done:
                 await self.task
-            except asyncio.CancelledError:
-                pass
+                monitor.update('lifecycle', 'stopped')
 
 
 worker = LifecycleWorker()

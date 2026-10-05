@@ -10,6 +10,9 @@ from fastapi import FastAPI
 
 from .routes.analysis import router as analysis_router
 from .routes.forecast import router as forecast_router
+from .routes.health import router as health_router
+from ..services.worker_monitor import monitor
+from ..services.scheduled_workers import ScheduledWorkers
 from ..config import PARENT_BOARD_ID
 from ..database.supabase_client import SupabaseClient
 from ..services.queue_worker import get_task_queue
@@ -21,10 +24,12 @@ from ..tasks.postgres_maintenance import (
 )
 
 app = FastAPI()
+app.include_router(health_router)
 app.include_router(analysis_router)  # exposes /analysis/{monday_id}/run
 app.include_router(forecast_router)  # exposes /forecast/pipeline and /forecast/snapshot
 
-_scheduler = AsyncIOScheduler()
+_scheduler = AsyncIOScheduler(timezone='UTC')
+_scheduled_workers = ScheduledWorkers(_scheduler)
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -92,7 +97,7 @@ async def _scheduled_forecast_snapshot_maintenance() -> None:
     loop = asyncio.get_running_loop()
     started = time.perf_counter()
     try:
-        await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
             lambda: run_daily_forecast_snapshot_maintenance(
                 logger=log,
@@ -104,13 +109,15 @@ async def _scheduled_forecast_snapshot_maintenance() -> None:
             time.perf_counter() - started,
             FORECAST_SNAPSHOT_RETENTION_DAYS,
         )
+        return result
     except Exception:
         log.exception("Forecast snapshot maintenance job failed")
+        raise
 
 async def _scheduled_delta_rehydrate() -> None:
     log = logging.getLogger("scheduler.delta_rehydrate")
     try:
-        await rehydrate_delta(
+        return await rehydrate_delta(
             days_back=3,
             chunk_size=REHYDRATE_CHUNK_SIZE,
             batch_prefix_limit=REHYDRATE_BATCH_PREFIX_LIMIT,
@@ -118,12 +125,13 @@ async def _scheduled_delta_rehydrate() -> None:
         )
     except Exception:  # noqa: BLE001
         log.exception("Delta rehydrate job failed")
+        raise
 
 
 async def _scheduled_recent_rehydrate() -> None:
     log = logging.getLogger("scheduler.recent_rehydrate")
     try:
-        await rehydrate_recent(
+        return await rehydrate_recent(
             days_back=3,
             chunk_size=REHYDRATE_CHUNK_SIZE,
             batch_prefix_limit=REHYDRATE_BATCH_PREFIX_LIMIT,
@@ -131,6 +139,7 @@ async def _scheduled_recent_rehydrate() -> None:
         )
     except Exception:
         log.exception("Recent rehydrate job failed")
+        raise
 
 
 async def _scheduled_llm_backfill() -> None:
@@ -138,7 +147,7 @@ async def _scheduled_llm_backfill() -> None:
     loop = asyncio.get_running_loop()
     cutoff = (datetime.utcnow() - timedelta(days=7)).date().isoformat()
     try:
-        await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
             lambda: backfill_llm(
                 cutoff=cutoff,
@@ -150,8 +159,10 @@ async def _scheduled_llm_backfill() -> None:
                 logger=log,
             ),
         )
+        return result
     except Exception:  # noqa: BLE001
         log.exception("LLM backfill job failed")
+        raise
 
 
 async def _scheduled_monday_sync() -> None:
@@ -216,7 +227,7 @@ async def _scheduled_monday_sync() -> None:
                 break
     except Exception:
         log.exception("Failed to load projects with updated analysis results")
-        return
+        raise
 
     if not project_rows:
         log.info("No analysis updates since %s; skipping Monday sync", updated_after)
@@ -241,7 +252,7 @@ async def _scheduled_monday_sync() -> None:
         )
         supabase.update_sync_log(
             log_id,
-            "completed",
+            "failed" if stats.get('errors') or stats.get('missing') else "completed",
             stats={
                 "projects_considered": len(project_ids),
                 "last_analysis_timestamp": last_processed_ts,
@@ -249,6 +260,7 @@ async def _scheduled_monday_sync() -> None:
                 "stats": stats,
             },
         )
+        return stats
     except Exception as exc:  # noqa: BLE001
         supabase.update_sync_log(
             log_id,
@@ -257,6 +269,7 @@ async def _scheduled_monday_sync() -> None:
             error=str(exc),
         )
         log.exception("Monday sync job failed")
+        raise
 
 async def _scheduled_webhook_cleanup() -> None:
     log = logging.getLogger("scheduler.webhook_cleanup")
@@ -298,79 +311,53 @@ async def _scheduled_webhook_cleanup() -> None:
             WEBHOOK_PURGE_OLDER_THAN_DAYS,
             time.perf_counter() - started,
         )
+        return {'deleted': total_deleted, 'batches': batches_run}
     except Exception:
         log.exception("Webhook cleanup job failed")
+        raise
 
 async def _scheduled_refresh_conversion_views() -> None:
     log = logging.getLogger("scheduler.refresh_conversion_views")
     loop = asyncio.get_running_loop()
     started = time.perf_counter()
     try:
-        await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
             lambda: refresh_conversion_views(logger=log, concurrently=True),
         )
         log.info("Materialized view refresh job finished (elapsed=%.2fs)", time.perf_counter() - started)
+        return result
     except Exception:
         log.exception("Materialized view refresh job failed")
+        raise
 
 
 @app.on_event("startup")
 async def _startup() -> None:
     logging.getLogger("apscheduler").setLevel(logging.INFO)
+    monitor.start('api')
     lifecycle_worker.start()
     get_task_queue().start()
-
+    scheduler_enabled = os.getenv('SCHEDULER_ENABLED', 'true').lower() in {'true', '1', 'yes'}
+    if not scheduler_enabled:
+        monitor.register('scheduler', enabled=False)
+        return
     if not _scheduler.running:
-        _scheduler.add_job(_scheduled_delta_rehydrate, "interval", hours=1, id="delta_rehydrate")
-        _scheduler.add_job(_scheduled_llm_backfill, "cron", hour=2, minute=15, id="llm_backfill")
-        _scheduler.add_job(_scheduled_monday_sync, "interval", minutes=25, id="monday_sync")
-        _scheduler.add_job(
-            _scheduled_recent_rehydrate,
-            "interval",
-            hours=6,
-            id="recent_rehydrate",
-            misfire_grace_time=300,
-            coalesce=True,
-            max_instances=1,
-        )
-        _scheduler.add_job(
-            _scheduled_refresh_conversion_views,
-            "interval",
-            minutes=30,
-            id="refresh_conversion_views",
-            misfire_grace_time=180,
-            max_instances=1,
-        )
-        _scheduler.add_job(
-            _scheduled_forecast_snapshot_maintenance,
-            "cron",
-            hour=FORECAST_SNAPSHOT_CRON_HOUR_UTC,
-            minute=FORECAST_SNAPSHOT_CRON_MINUTE_UTC,
-            id="forecast_snapshot_maintenance",
-            misfire_grace_time=900,
-            coalesce=True,
-            max_instances=1,
-        )
-        _scheduler.add_job(
-            _scheduled_webhook_cleanup,
-            "cron",
-            hour=WEBHOOK_PURGE_CRON_HOUR_UTC,
-            minute=WEBHOOK_PURGE_CRON_MINUTE_UTC,
-            id="webhook_cleanup",
-            misfire_grace_time=900,
-            coalesce=True,
-            max_instances=1,
-        )
-        _scheduler.start()
+        _scheduled_workers.add('delta_rehydrate', _scheduled_delta_rehydrate, seconds=3600)
+        _scheduled_workers.add('llm_backfill', _scheduled_llm_backfill, hour=2, minute=15)
+        _scheduled_workers.add('monday_sync', _scheduled_monday_sync, seconds=1500)
+        _scheduled_workers.add('recent_rehydrate', _scheduled_recent_rehydrate, seconds=21600)
+        _scheduled_workers.add('refresh_conversion_views', _scheduled_refresh_conversion_views, seconds=1800, grace=180)
+        _scheduled_workers.add('forecast_snapshot_maintenance', _scheduled_forecast_snapshot_maintenance,
+                               hour=FORECAST_SNAPSHOT_CRON_HOUR_UTC, minute=FORECAST_SNAPSHOT_CRON_MINUTE_UTC, grace=900)
+        _scheduled_workers.add('webhook_cleanup', _scheduled_webhook_cleanup,
+                               hour=WEBHOOK_PURGE_CRON_HOUR_UTC, minute=WEBHOOK_PURGE_CRON_MINUTE_UTC, grace=900)
+        await _scheduled_workers.start()
 
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
-    await lifecycle_worker.stop()
-    if _scheduler.running:
-        _scheduler.shutdown(wait=False)
-    await get_task_queue().stop()
-
-
-
+    try:
+        await asyncio.gather(_scheduled_workers.stop(), get_task_queue().stop(), lifecycle_worker.stop())
+    finally:
+        await monitor.stop()

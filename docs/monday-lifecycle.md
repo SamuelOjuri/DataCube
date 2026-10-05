@@ -268,3 +268,10 @@ on an explicitly supplied loopback PostgreSQL server:
 $env:ORDER_SCOPE_TEST_DSN = 'host=127.0.0.1 port=55439 dbname=postgres user=postgres'
 & .\report.venv\Scripts\python.exe -m pytest tests/test_monday_lifecycle.py tests/test_monday_lifecycle_activity.py tests/test_monday_lifecycle_postgres.py tests/test_monday_lifecycle_activity_postgres.py -q
 ```
+
+## Worker monitoring
+
+The application worker and standalone `worker --loop` publish instance heartbeats.
+Apply the worker-operations migration before deploying this version and configure
+the independent watchdog as described in [Worker monitoring](worker-monitoring.md).
+Lifecycle claims, evidence checks and deletion safeguards remain in effect.

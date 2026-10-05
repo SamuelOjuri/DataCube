@@ -52,6 +52,8 @@ _RE_PAREN_SP = re.compile(r"(?<!\s)\(")
 class DataSyncService:
     """Enhanced service for syncing data between Monday and Supabase"""
 
+    strict_writes = False
+
     def __init__(self):
         validate_invoice_rollup_contract()
         self.monday_client = MondayClient()
@@ -2447,8 +2449,12 @@ class DataSyncService:
                     )
                 else:
                     logger.error(f"Failed to upsert projects batch: {result.get('error')}")
+                    if self.strict_writes:
+                        raise RuntimeError("Projects batch write failed")
             except Exception as e:
                 logger.error(f"Error upserting projects batch: {e}")
+                if self.strict_writes:
+                    raise
 
         return total_updated
     
@@ -2472,6 +2478,8 @@ class DataSyncService:
                 updated += 1
             except Exception as e:
                 logger.error(f"Rollup update [{column}] failed for {pid}: {e}")
+                if self.strict_writes:
+                    raise
         if updated:
             logger.info(f"Rollup update [{column}]: {updated} projects updated")
         return updated
@@ -2502,6 +2510,8 @@ class DataSyncService:
                 updated += 1
             except Exception as e:
                 logger.error(f"Invoice date range rollup update failed for {pid}: {e}")
+                if self.strict_writes:
+                    raise
 
         if updated:
             logger.info(
@@ -2525,8 +2535,12 @@ class DataSyncService:
                     )
                 else:
                     logger.error(f"Failed to upsert subitems batch: {result.get('error')}")
+                    if self.strict_writes:
+                        raise RuntimeError("Subitems batch write failed")
             except Exception as e:
                 logger.error(f"Error upserting subitems batch: {e}")
+                if self.strict_writes:
+                    raise
 
         return total_updated
 
@@ -2545,8 +2559,12 @@ class DataSyncService:
                     )
                 else:
                     logger.error(f"Failed to upsert hidden items batch: {result.get('error')}")
+                    if self.strict_writes:
+                        raise RuntimeError("Hidden Items batch write failed")
             except Exception as e:
                 logger.error(f"Error upserting hidden items batch: {e}")
+                if self.strict_writes:
+                    raise
 
         return total_updated
 
@@ -2569,6 +2587,8 @@ class DataSyncService:
             }
         except Exception as e:
             logger.error(f"Error resolving mirrors: {e}")
+            if self.strict_writes:
+                raise
             return {
                 "projects": parent_items,
                 "subitems": subitems,

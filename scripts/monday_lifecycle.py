@@ -1,5 +1,6 @@
 """Operate the durable lifecycle worker and stage historical exact-ID deletions."""
 import argparse
+import asyncio
 from collections import Counter
 import csv
 from datetime import datetime, timezone
@@ -190,6 +191,23 @@ def main(argv=None):
     p.add_argument('--board', choices=list(life.BOARDS), required=True)
     p.add_argument('--item-id', required=True)
     args = parser.parse_args(argv)
+    if args.command == 'worker' and args.loop:
+        # Reconnect each pass and use the same observation/recovery loop as the
+        # applications. Explicit CLI invocation does not need the ingress flag.
+        async def serve():
+            from src.services.worker_monitor import monitor
+            monitor.start('lifecycle-cli')
+            monitor.register('lifecycle', budget=1200)
+            worker = life.LifecycleWorker()
+            worker.task = asyncio.create_task(worker.run())
+            monitor.bind('lifecycle', worker.task)
+            try:
+                await asyncio.shield(worker.task)
+            finally:
+                await worker.stop()
+                await monitor.stop()
+        asyncio.run(serve())
+        return
     with life.connect() as connection:
         if args.command == 'stage':
             from src.services.monday_lifecycle_activity import LifecycleMondayClient

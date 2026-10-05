@@ -54,6 +54,7 @@ class DeltaRehydrationManager:
         self.chunk_size = chunk_size
         self.supabase = SupabaseClient()
         self.sync_service = DataSyncService()
+        self.sync_service.strict_writes = True
         self.monday = MondayClient()
         self.logger = logger or logging.getLogger(f"{__name__}.delta_rehydrate")
 
@@ -597,6 +598,7 @@ class DeltaRehydrationManager:
                 await asyncio.sleep(self.RATE_LIMIT_DELAY)
             except Exception as exc:
                 self.logger.error("Hidden detail fetch failed for %s: %s", batch, exc)
+                raise
 
         return results
 
@@ -809,6 +811,7 @@ class RecentRehydrationManager:
         self.chunk_size = chunk_size
         self.supabase = SupabaseClient()
         self.sync_service = DataSyncService()
+        self.sync_service.strict_writes = True
         self.monday = MondayClient()
         self.logger = logger or logging.getLogger(f"{__name__}.rehydrate_recent")
 
@@ -1290,6 +1293,7 @@ class RecentRehydrationManager:
                 await asyncio.sleep(self.RATE_LIMIT_DELAY)
             except Exception as exc:
                 self.logger.error("Hidden detail fetch failed for %s: %s", batch, exc)
+                raise
 
         return results
 
@@ -1441,7 +1445,7 @@ class RecentRehydrationManager:
                 )
             except Exception as exc:
                 self.logger.error("Failed to query Supabase projects (offset=%d): %s", offset, exc)
-                break
+                raise
 
             all_rows.extend(rows)
             self.logger.info("Loaded %d candidate rows (offset=%d, total=%d)", len(rows), offset, len(all_rows))
@@ -1648,6 +1652,8 @@ async def _rehydrate_candidates_batched(
             succeeded,
         )
 
+    return {'total': attempted, 'succeeded': succeeded, 'errors': failed}
+
 
 async def rehydrate_delta(
     *,
@@ -1685,7 +1691,7 @@ async def rehydrate_delta(
         log.info("No new Monday projects found after %s", target_since.date())
         return
 
-    await _rehydrate_candidates_batched(
+    return await _rehydrate_candidates_batched(
         candidates,
         batch_prefix_limit=max(1, int(batch_prefix_limit)),
         chunk_size=max(1, int(chunk_size)),
@@ -1729,7 +1735,7 @@ async def rehydrate_recent(
         )
         return
 
-    await _rehydrate_candidates_batched(
+    return await _rehydrate_candidates_batched(
         candidates,
         batch_prefix_limit=max(1, int(batch_prefix_limit)),
         chunk_size=max(1, int(chunk_size)),
