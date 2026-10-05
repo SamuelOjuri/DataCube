@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
@@ -23,6 +24,7 @@ BOARDS = {str(PARENT_BOARD_ID): 'projects', str(SUBITEM_BOARD_ID): 'subitems',
           str(HIDDEN_ITEMS_BOARD_ID): 'hidden_items'}
 DELETE_EVENTS = {'delete_pulse', 'delete_item', 'item_deleted', 'delete_subitem', 'subitem_deleted'}
 RESTORE_EVENTS = {'restore_pulse', 'restore_item', 'item_restored', 'restore_subitem', 'subitem_restored'}
+ARCHIVE_EVENTS = {'archive_pulse', 'archive_item', 'item_archived', 'archive_subitem', 'subitem_archived'}
 MAX_ROWS = 500
 MAX_ATTEMPTS = 12
 CLEANUP_POLICY = 'enquiry_active_open_v1'
@@ -37,9 +39,10 @@ def enabled():
 
 
 def event_from_payload(payload):
+    from . import monday_archive as archive
     event = payload.get('event') or {}
     event_type = event.get('type')
-    if event_type not in DELETE_EVENTS | RESTORE_EVENTS:
+    if event_type not in DELETE_EVENTS | RESTORE_EVENTS | (ARCHIVE_EVENTS if archive.enabled() else set()):
         return None
     board = str(event.get('boardId') or '')
     item = str(event.get('pulseId') or event.get('itemId') or '')
@@ -57,7 +60,9 @@ def event_from_payload(payload):
         raise ValueError('Unexpected parent board in lifecycle event')
     if parent is not None and not str(parent).isdecimal():
         raise ValueError('Invalid parent ID')
-    kind = 'delete' if event_type in DELETE_EVENTS else 'restore'
+    kind = 'delete' if event_type in DELETE_EVENTS else 'reconcile' if event_type in ARCHIVE_EVENTS else 'restore'
+    if archive.enabled():
+        payload = {**payload, 'archive_policy': archive.POLICY}
     token = event.get('triggerUuid') or event.get('originalTriggerUuid') or event.get('id')
     if token is None:
         token = json.dumps(event, sort_keys=True, separators=(',', ':'))
@@ -82,9 +87,12 @@ def connect():
 
 
 def enqueue(connection, kind, board, item, *, parent=None, payload=None, key=None):
+    from . import monday_archive as archive
     if str(board) not in BOARDS or not str(item).isdecimal():
         raise ValueError('Invalid lifecycle target')
     key = key or str(uuid4())
+    if archive.enabled():
+        payload = {**(payload or {}), 'archive_policy': archive.POLICY}
     connection.execute('INSERT INTO public.monday_lifecycle_events '
         '(event_key,board_id,item_id,kind,parent_id,payload) VALUES (%s,%s,%s,%s,%s,%s) '
         'ON CONFLICT(event_key) DO NOTHING', (key, str(board), str(item), kind, parent, Jsonb(payload or {})))
@@ -92,6 +100,7 @@ def enqueue(connection, kind, board, item, *, parent=None, payload=None, key=Non
 
 
 def claim(connection, *, event_prefixes=None):
+    from . import monday_archive as archive
     if event_prefixes is not None:
         try:
             if not event_prefixes or any(p != f'recovery:{UUID(p[9:-1])}:' for p in event_prefixes):
@@ -99,10 +108,15 @@ def claim(connection, *, event_prefixes=None):
         except (TypeError, ValueError, AttributeError):
             raise ValueError('Scoped lifecycle claims require literal recovery UUID prefixes') from None
     restriction = ' AND event_key LIKE ANY(%s)' if event_prefixes is not None else ''
+    if not archive.enabled():
+        restriction += " AND NOT (payload ? 'archive_policy')"
     params = ([p + '%' for p in event_prefixes],) if event_prefixes is not None else None
     with connection.transaction():
         # Transaction-local capability: older processes cannot claim scoped jobs.
         connection.execute("SELECT set_config('datacube.lifecycle_worker_protocol','scoped_cleanup_v1',true)")
+        if archive.enabled():
+            archive.require_runtime(connection)
+            connection.execute("SELECT set_config('datacube.archive_worker_protocol','verified_archive_v1',true)")
         return connection.execute('''
         WITH candidate AS (
             SELECT event_key FROM public.monday_lifecycle_events
@@ -121,15 +135,17 @@ def schedule_rechecks(connection):
     Recovers missed restoration notifications, including subitem restorations.
     This queries the indexed marker queue, never all business tables or boards.
     """
+    from . import monday_archive as archive
+    condition = "(l.blocked OR l.monday_state IN ('active','archived'))" if archive.enabled() else 'l.blocked'
     with connection.transaction():
         rows = connection.execute("SELECT l.table_name,l.monday_id,l.former_parent_id, "
             "e.payload->'activity_recovery' AS activity_recovery "
             'FROM public.monday_item_lifecycle l LEFT JOIN public.monday_lifecycle_events e '
-            'ON e.event_key=l.last_event_key WHERE l.blocked AND l.recheck_after<=now() '
+            f'ON e.event_key=l.last_event_key WHERE {condition} AND l.recheck_after<=now() '
             'ORDER BY l.recheck_after FOR UPDATE OF l SKIP LOCKED LIMIT 10').fetchall()
         for row in rows:
             board = next(b for b, t in BOARDS.items() if t == row['table_name'])
-            payload = {'verification_only': True, 'cause': 'periodic_tombstone_check'}
+            payload = {'verification_only': True, 'cause': 'periodic_lifecycle_check' if archive.enabled() else 'periodic_tombstone_check'}
             if row['activity_recovery']:
                 payload['activity_recovery'] = row['activity_recovery']
             enqueue(connection, 'reconcile', board, row['monday_id'], parent=row['former_parent_id'], payload=payload)
@@ -161,6 +177,9 @@ def write_transaction(connection, job):
         connection.execute("SET LOCAL lock_timeout='750ms'")
         connection.execute("SET LOCAL statement_timeout='4s'")
         connection.execute("SET LOCAL transaction_timeout='10s'")
+        from . import monday_archive as archive
+        if archive.enabled():
+            connection.execute("SELECT set_config('datacube.archive_worker_protocol','verified_archive_v1',true)")
         # Protect absent IDs, incoming links and cascades. No HTTP while locked.
         connection.execute('LOCK TABLE public.projects,public.hidden_items,public.subitems '
                            'IN SHARE ROW EXCLUSIVE MODE')
@@ -227,6 +246,7 @@ def audit(connection, job, action, table, item, before, evidence):
 
 
 def apply_deletion(connection, job, before, evidence, *, activity_proof=None):
+    from . import monday_archive as archive
     table, item = BOARDS[job['board_id']], job['item_id']
     if activity_proof is None:
         require_item(evidence, item, table, 'deleted')
@@ -249,8 +269,12 @@ def apply_deletion(connection, job, before, evidence, *, activity_proof=None):
             targets += [('subitems', row) for row in before['subitems']]
         # Also block an absent root so an old create/upsert cannot resurrect it.
         marker(connection, table, item, True, job)
+        if archive.enabled() and activity_proof is None:
+            archive.observe(connection, job, table, item, evidence, datetime.now(timezone.utc))
         for name, row in targets:
             marker(connection, name, row['monday_id'], True, job, parent=row.get('parent_monday_id'))
+            if archive.enabled() and activity_proof is None and (name, row['monday_id']) != (table, item):
+                archive.observe(connection, job, name, row['monday_id'], evidence, datetime.now(timezone.utc))
             proof = ({'basis': 'activity_log', 'activity': activity_proof} if activity_proof is not None else
                      {'deleted_root': evidence[item], 'deleted_item': evidence[row['monday_id']]})
             audit(connection, job, 'delete', name, row['monday_id'], row, proof)
@@ -294,6 +318,11 @@ def apply_deletion(connection, job, before, evidence, *, activity_proof=None):
 
 
 def process_job(connection, monday, job):
+    from . import monday_archive as archive
+    if job['payload'].get('archive_policy') is not None:
+        if not archive.enabled() or job['payload']['archive_policy'] != archive.POLICY:
+            raise ReviewRequired('Archive job requires enabled archive-capable code')
+        archive.require_runtime(connection)
     policy = job['payload'].get('cleanup_policy')
     if policy is not None and (policy != CLEANUP_POLICY or
                                job['payload'].get('refresh_mode') != 'new_enquiry_sum'):
@@ -301,6 +330,9 @@ def process_job(connection, monday, job):
     if job['attempts'] > MAX_ATTEMPTS:
         raise ReviewRequired('Retry limit reached; inspect evidence and requeue this event')
     if job['kind'] == 'refresh':
+        if job['payload'].get('refresh_mode') == 'archive_current_values':
+            archive.refresh_current_values(connection, monday, job)
+            return
         from .monday_lifecycle_refresh import refresh_project
         refresh_project(connection, monday, job)
         return
@@ -341,6 +373,11 @@ def process_job(connection, monday, job):
         return
     observed = require_item(evidence, item, table)
     state = observed['state']
+    if job['payload'].get('expected_state') and state != job['payload']['expected_state']:
+        raise ReviewRequired('Monday state changed since archive staging; stage again')
+    if state == 'archived' and archive.enabled():
+        archive.archive_item(connection, monday, job, evidence)
+        return
     if state == 'deleted':
         if (job['payload'].get('verification_only') and not before[table] and blocked):
             with write_transaction(connection, job):
@@ -356,7 +393,9 @@ def process_job(connection, monday, job):
             with write_transaction(connection, job):
                 finish(connection, job, 'ignored', {'reason': 'Current Monday item is active; no deletion'})
             return
-        if job['kind'] == 'reconcile' and not blocked:
+        archive_state = archive.state_row(connection, table, item) if archive.enabled() else None
+        restoring_archive = bool(archive_state and archive_state['monday_state'] in {'archived', 'deleted'})
+        if job['kind'] == 'reconcile' and not blocked and not restoring_archive and not archive.enabled():
             with write_transaction(connection, job):
                 finish(connection, job, 'ignored', {'reason': 'Active item has no deletion marker'})
             return

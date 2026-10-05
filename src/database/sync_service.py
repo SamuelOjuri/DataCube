@@ -36,6 +36,7 @@ from ..core.normalization import (
 )
 from .supabase_client import SupabaseClient
 from ..core.enhanced_extractor import EnhancedColumnExtractor, EnhancedMondayExtractor
+from ..services import monday_archive as archive
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -56,6 +57,7 @@ class DataSyncService:
 
     def __init__(self):
         validate_invoice_rollup_contract()
+        self.strict_writes = archive.enabled()
         self.monday_client = MondayClient()
         self.supabase_client = SupabaseClient()
         self.label_normalizer = LabelNormalizer()
@@ -143,7 +145,8 @@ class DataSyncService:
 
     def _get_hidden_match_context(self, subitem: Dict[str, Any]) -> Dict[str, Any]:
         hidden_id = str(subitem.get("hidden_item_id") or "").strip()
-        if subitem.get("_invalid_hidden_link") or (hidden_id and hidden_id not in self._hidden_lookup_by_id):
+        if (subitem.get("_invalid_hidden_link") or (hidden_id and hidden_id not in self._hidden_lookup_by_id)
+                or (archive.enabled() and not hidden_id)):
             return {
                 "resolved": None,
                 "item_name": str(subitem.get("item_name") or subitem.get("name") or "").strip(),
@@ -590,6 +593,8 @@ class DataSyncService:
         cleaned_parent_ids = sorted({pid for pid in parent_ids if pid})
         if not cleaned_parent_ids:
             return 0
+        if archive.enabled():
+            return await asyncio.to_thread(archive.refresh_parents, cleaned_parent_ids)
 
         (
             order_total_map,
@@ -663,6 +668,14 @@ class DataSyncService:
         related_subitems = self._load_subitems_by_relation(
             "hidden_item_id", hidden_ids, "monday_id, parent_monday_id, hidden_item_id"
         )
+        if archive.enabled():
+            parents = sorted({r['parent_monday_id'] for r in related_subitems if r.get('parent_monday_id')})
+            logger.info('Queuing exact-link refreshes instead of cached hidden-source propagation for %d parents', len(parents))
+            with archive.life.connect() as connection:
+                archive.require_runtime(connection)
+                for parent in parents:
+                    archive.life.enqueue(connection, 'refresh', PARENT_BOARD_ID, parent)
+            return 0, parents
 
         updated = 0
         parent_ids: Set[str] = set()
@@ -1206,6 +1219,8 @@ class DataSyncService:
                         parent_ids_for_rollups
                     )
                     patch = []
+                    if archive.enabled():
+                        return stats
                     if rollup_map:
                         patch.extend(
                             {
@@ -2239,7 +2254,7 @@ class DataSyncService:
         design_min_map: Dict[str, str],
         invoice_min_map: Dict[str, str]
     ) -> None:
-        if not projects_data or (not design_min_map and not invoice_min_map):
+        if archive.enabled() or not projects_data or (not design_min_map and not invoice_min_map):
             return
 
         for p in projects_data:
@@ -2280,7 +2295,7 @@ class DataSyncService:
         projects_data: List[Dict],
         invoice_date_range_map: Dict[str, Dict[str, Any]],
     ) -> None:
-        if not projects_data or not invoice_date_range_map:
+        if archive.enabled() or not projects_data or not invoice_date_range_map:
             return
 
         for p in projects_data:
@@ -2419,7 +2434,7 @@ class DataSyncService:
         return out
 
     def _apply_project_gestation_fallback(self, projects_data: List[Dict], gmap: Dict[str, int]) -> None:
-        if not projects_data or not gmap:
+        if archive.enabled() or not projects_data or not gmap:
             return
 
         for p in projects_data:
@@ -2602,4 +2617,3 @@ class DataSyncService:
             HIDDEN_ITEMS_BOARD_ID: 100,
         }
         return board_batch_sizes.get(board_id, 100)
-

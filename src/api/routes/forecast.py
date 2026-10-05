@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ...database.supabase_client import SupabaseClient
+from ...services.monday_archive import current_relation
+from ...services.monday_lifecycle import ReviewRequired
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 logger = logging.getLogger(__name__)
@@ -16,6 +18,16 @@ _ALLOWED_SMOOTHING_RISK_BANDS = {"Very High", "High", "Moderate", "Low"}
 _DEFAULT_SNAPSHOT_LIMIT = 1000
 _MAX_SNAPSHOT_LIMIT = 5000
 _TOTALS_PAGE_SIZE = 1000
+
+
+def _current_reporting_source(name: str) -> str:
+    try:
+        return current_relation(name)
+    except ReviewRequired as exc:
+        logger.warning("Current lifecycle reporting is not ready: %s", exc)
+        raise HTTPException(status_code=503, detail=(
+            "Current lifecycle verification is incomplete. Historical snapshots remain available."
+        )) from exc
 
 
 def _month_start(value: date) -> date:
@@ -216,8 +228,9 @@ def get_pipeline_forecast(
         window_end = _add_months(window_start, months)
 
         supabase = SupabaseClient()
+        relation = _current_reporting_source("mv_pipeline_forecast_monthly_12m_v1")
         query = (
-            supabase.client.table("mv_pipeline_forecast_monthly_12m_v1")
+            supabase.client.table(relation)
             .select(
                 "forecast_month,stage_bucket,project_count,contract_value,"
                 "committed_value,expected_value,best_case_value,worst_case_value"
@@ -242,7 +255,7 @@ def get_pipeline_forecast(
                 continue
 
         return {
-            "source": "mv_pipeline_forecast_monthly_12m_v1",
+            "source": relation,
             "window_start": window_start.isoformat(),
             "window_end_exclusive": window_end.isoformat(),
             "months_requested": months,
@@ -400,8 +413,9 @@ def get_pipeline_smoothing_projects(
         risk_filter = _normalize_risk_band(risk_band)
         supabase = SupabaseClient()
 
+        relation = _current_reporting_source("vw_pipeline_smoothing_score_v1")
         query = (
-            supabase.client.table("vw_pipeline_smoothing_score_v1")
+            supabase.client.table(relation)
             .select(
                 "project_id,project_name,account,type,category,product_type,product_key,"
                 "pipeline_stage,stage_bucket,forecast_date,forecast_month,forecast_date_source,"
@@ -442,7 +456,7 @@ def get_pipeline_smoothing_projects(
         total_rows = result.count if result.count is not None else len(rows)
 
         return {
-            "source": "vw_pipeline_smoothing_score_v1",
+            "source": relation,
             "risk_band": risk_filter,
             "stage_bucket": stage_filter,
             "project_id": project_id,
@@ -497,8 +511,9 @@ def get_pipeline_smoothing_monthly(
         window_end = _add_months(window_start, months)
 
         supabase = SupabaseClient()
+        relation = _current_reporting_source("mv_pipeline_smoothed_revenue_monthly_12m_v1")
         query = (
-            supabase.client.table("mv_pipeline_smoothed_revenue_monthly_12m_v1")
+            supabase.client.table(relation)
             .select(
                 "forecast_month,stage_bucket,project_count,unsmoothed_project_count,"
                 "smoothed_project_count,unsmoothed_expected_value,"
@@ -517,7 +532,7 @@ def get_pipeline_smoothing_monthly(
         rows = result.data or []
 
         return {
-            "source": "mv_pipeline_smoothed_revenue_monthly_12m_v1",
+            "source": relation,
             "window_start": window_start.isoformat(),
             "window_end_exclusive": window_end.isoformat(),
             "months_requested": months,

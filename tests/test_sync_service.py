@@ -26,6 +26,18 @@ def _make_sync_service() -> DataSyncService:
     return service
 
 
+def test_archive_mode_replaces_stored_child_rollups_with_fresh_parent_values(monkeypatch):
+    from src.services import monday_archive as archive
+    monkeypatch.setenv('MONDAY_ARCHIVE_ENABLED', 'true')
+    service = _make_sync_service()
+    seen = []
+    monkeypatch.setattr(archive, 'refresh_parents', lambda ids: seen.extend(ids) or 2)
+    monkeypatch.setattr(service, '_compute_project_rollups_from_persisted_subitems',
+                        lambda *a: pytest.fail('Must not sum retained stored children in archive mode'))
+    assert asyncio.run(service._refresh_project_order_invoice_rollups(['101', '101', '999'])) == 2
+    assert seen == ['101', '999']
+
+
 def test_normalize_category_collapses_multi_select_to_first_canonical_label():
     service = _make_sync_service()
 

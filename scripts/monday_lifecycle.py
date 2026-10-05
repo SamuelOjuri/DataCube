@@ -25,6 +25,9 @@ def code_digest():
              'src/services/monday_lifecycle_activity.py',
              'src/services/monday_lifecycle_refresh.py', 'src/database/schema/monday_lifecycle.sql',
              'src/database/schema/monday_lifecycle_scoped_cleanup.sql']
+    names.extend(['src/services/monday_archive.py',
+                  'src/database/schema/monday_lifecycle_archive_runtime.sql',
+                  'src/database/schema/monday_archive_reporting.sql'])
     from scripts.order_value_monday_compare import code_fingerprint
     return digest({'files': {n: hashlib.sha256((root / n).read_bytes()).hexdigest() for n in names},
                    'shared_comparison_code': code_fingerprint()})
@@ -44,7 +47,7 @@ def selected_targets(args):
         with args.review_csv.open(encoding='utf-8-sig', newline='') as stream:
             for row in csv.DictReader(stream):
                 reason = row.get('review_reason', row.get('reason', ''))
-                if 'state=deleted' not in reason:
+                if f"state={getattr(args, 'state', 'deleted')}" not in reason:
                     continue
                 table = row.get('table')
                 board = next((b for b, t in life.BOARDS.items() if t == table), None)
@@ -86,6 +89,9 @@ def stage(connection, monday, args):
         raise ValueError('Use a new run directory')
     targets = selected_targets(args)
     recovery = activity_request(args, targets)
+    requested_state = getattr(args, 'state', 'deleted')
+    if requested_state == 'archived' and recovery:
+        raise ValueError('Activity deletion evidence cannot authorise archive handling')
     evidence = life.read_items(monday, {i for _, i in targets})
     selected, deferred = [], []
     # No transaction spans the Monday network read; this SQL transaction is read-only.
@@ -95,7 +101,7 @@ def stage(connection, monday, args):
         for board, item in targets:
             try:
                 if not recovery:
-                    life.require_item(evidence, item, life.BOARDS[board], 'deleted')
+                    life.require_item(evidence, item, life.BOARDS[board], requested_state)
                 before = life.deletion_snapshot(connection, life.BOARDS[board], item)
                 selected.append(dict(board_id=board, item_id=item, before=before))
             except life.ReviewRequired as exc:
@@ -112,6 +118,9 @@ def stage(connection, monday, args):
         except life.ReviewRequired as exc:
             deferred.append(dict(board_id=recovery['board_id'], item_id=recovery['item_id'], reason=str(exc)))
     plan = dict(selected=selected, deferred=deferred, evidence=evidence)
+    if requested_state == 'archived':
+        from src.services import monday_archive as archive
+        plan.update(state='archived', financial_preview=archive.preview_values(connection, monday, selected))
     args.run_dir.mkdir(parents=True)
     (args.run_dir / 'plan.json').write_text(json.dumps(plan, indent=2, default=str), encoding='utf-8')
     with (args.run_dir / 'review.csv').open('w', encoding='utf-8-sig', newline='') as stream:
@@ -139,8 +148,14 @@ def stage(connection, monday, args):
 def queue_run(connection, args):
     manifest = json.loads((args.run_dir / 'manifest.json').read_text())
     plan = json.loads((args.run_dir / 'plan.json').read_text())
+    archive_run = plan.get('state') == 'archived'
+    if archive_run:
+        from src.services import monday_archive as archive
+        if not archive.enabled():
+            raise ValueError('Deploy all archive-capable writers and enable MONDAY_ARCHIVE_ENABLED before queueing')
+        archive.require_runtime(connection)
     if not plan['selected']:
-        raise ValueError('No confirmed deletions were staged')
+        raise ValueError('No confirmed lifecycle targets were staged')
     if (args.confirm_run_id != manifest['run_id'] or code_digest() != manifest['code']
             or target_digest(connection) != manifest['target'] or digest(plan) != manifest['sha256']
             or hashlib.sha256((args.run_dir / 'review.csv').read_bytes()).hexdigest() != manifest['review_sha256']):
@@ -153,6 +168,8 @@ def queue_run(connection, args):
                 raise ValueError(f'Supabase target {item} changed since staging; stage again')
             key = f"recovery:{manifest['run_id']}:{board}:{item}"
             payload = {'recovery_run_id': manifest['run_id'], 'review_sha256': manifest['sha256']}
+            if archive_run:
+                payload.update(archive_policy=archive.POLICY, expected_state='archived', reviewed_before=entry['before'])
             recovery = entry.get('activity_recovery')
             if recovery:
                 from src.services import monday_lifecycle_activity as activity
@@ -162,11 +179,12 @@ def queue_run(connection, args):
                         or activity.fingerprint(entry['activity_evidence']['deletion_event']) != recovery['deletion_sha256']):
                     raise ValueError('Activity recovery differs from the staged selection')
                 payload.update(activity_recovery=recovery, reviewed_before=entry['before'])
-            life.enqueue(connection, 'delete', board, item, key=key,
+            life.enqueue(connection, 'reconcile' if archive_run else 'delete', board, item, key=key,
                          parent=recovery['parent_id'] if recovery else None, payload=payload)
             keys.append(key)
     return dict(queued=len(keys), event_keys=keys,
-                note='Worker rechecks current Monday state and related rows before deleting')
+                note='Worker rechecks current Monday state; archives retain business rows' if archive_run else
+                     'Worker rechecks current Monday state and related rows before deleting')
 
 
 def main(argv=None):
@@ -174,6 +192,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest='command', required=True)
     p = subs.add_parser('stage')
+    p.add_argument('--state', choices=['deleted', 'archived'], default='deleted')
     p.add_argument('--board', choices=list(life.BOARDS))
     p.add_argument('--item-id', action='append')
     p.add_argument('--review-csv', type=Path)

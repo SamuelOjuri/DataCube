@@ -92,17 +92,19 @@ def create_pipeline_forecast_snapshot(
     snapshot_date: Optional[date] = None,
     task_logger: Optional[logging.Logger] = None,
 ) -> int:
+    from ..services.monday_archive import current_relation
+    function = current_relation('create_pipeline_forecast_snapshot')
     log = task_logger or logger
     target_date = snapshot_date or datetime.now(timezone.utc).date()
     conn = psycopg.connect(_get_dsn())
     try:
         with conn.cursor() as cur:
-            if not _function_exists(cur, "public.create_pipeline_forecast_snapshot(date)"):
+            if not _function_exists(cur, f"public.{function}(date)"):
                 log.warning("create_pipeline_forecast_snapshot(date) not found; skipping base snapshot")
                 raise MaintenanceUnavailable('Base snapshot function missing')
             log.info("Creating pipeline forecast snapshot for %s", target_date.isoformat())
             cur.execute(
-                "SELECT create_pipeline_forecast_snapshot(%s::date);",
+                f"SELECT {function}(%s::date);",
                 (target_date,),
             )
             row = cur.fetchone()
@@ -127,19 +129,21 @@ def create_pipeline_smoothing_forecast_snapshot(
     snapshot_date: Optional[date] = None,
     task_logger: Optional[logging.Logger] = None,
 ) -> int:
+    from ..services.monday_archive import current_relation
+    function = current_relation('create_pipeline_smoothing_forecast_snapshot')
     log = task_logger or logger
     target_date = snapshot_date or datetime.now(timezone.utc).date()
     conn = psycopg.connect(_get_dsn())
     try:
         with conn.cursor() as cur:
-            if not _function_exists(cur, "public.create_pipeline_smoothing_forecast_snapshot(date)"):
+            if not _function_exists(cur, f"public.{function}(date)"):
                 log.warning(
                     "create_pipeline_smoothing_forecast_snapshot(date) not found; skipping smoothing snapshot"
                 )
                 raise MaintenanceUnavailable('Smoothing snapshot function missing')
             log.info("Creating pipeline smoothing forecast snapshot for %s", target_date.isoformat())
             cur.execute(
-                "SELECT create_pipeline_smoothing_forecast_snapshot(%s::date);",
+                f"SELECT {function}(%s::date);",
                 (target_date,),
             )
             row = cur.fetchone()

@@ -224,6 +224,13 @@ production sync. It reports and retains these cases for separate workflows:
 - Missing Supabase rows: use reviewed rehydration. No partial-row inserts here.
 - Actual API archived/deleted/unavailable items: lifecycle/retirement review.
   A business `Archived` status is different from API `state=archived`.
+  With the [archive runtime](monday-lifecycle.md#verified-archive-handling-staged-rollout)
+  installed and `MONDAY_ARCHIVE_ENABLED=true`, a retained API-archived row with
+  matching audited archive metadata is represented history, not an unresolved
+  lifecycle issue. Comparisons capture that metadata in the reviewed scope and
+  reject apply if it changes. Unverified archives, missing items, deletion
+  questions and source-link concerns still require review. Restage older
+  comparison artifacts after deploying this release.
 - Stored children absent from the current parent list: retain their history and
   report their fresh observed state; absence alone is not proof of deletion.
 - Zero/multiple hidden links: do not guess a scalar relationship or material

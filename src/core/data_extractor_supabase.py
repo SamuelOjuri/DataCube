@@ -69,14 +69,19 @@ class SupabaseDataExtractor:
         """Get enhanced context for a specific project"""
         
         # Get project details with related data
-        project = self.supabase.client.table('reportable_projects')\
-            .select('*, subitems(*)')\
+        from ..services.monday_archive import current_relation
+        relation = current_relation('reportable_projects')
+        project = self.supabase.client.table(relation)\
+            .select('*' if relation == 'current_projects' else '*, subitems(*)')\
             .eq('monday_id', project_id)\
             .single()\
             .execute()
         
         if not project.data:
             raise ValueError(f"Project {project_id} not found")
+        if relation == 'current_projects':
+            project.data['subitems'] = (self.supabase.client.table('current_subitems').select('*')
+                .eq('parent_monday_id', project_id).execute().data)
         
         # Get account performance
         account_stats = self.supabase.client.rpc(

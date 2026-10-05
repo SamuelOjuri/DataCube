@@ -2029,12 +2029,14 @@ def _iter_projects(
     resume_after: Optional[str],
     limit: Optional[int],
 ) -> Iterator[List[Dict[str, object]]]:
+    from ..services.monday_archive import current_relation
+    relation = current_relation('reportable_projects')
     cursor = resume_after
     processed = 0
 
     while True:
         query = (
-            db.client.table("reportable_projects")
+            db.client.table(relation)
             .select("monday_id,date_created")
             .gte("date_created", cutoff)
             .order("monday_id", desc=False)
@@ -2152,12 +2154,14 @@ def _iter_projects_paginated(
     batch_size: int,
     limit: Optional[int],
 ) -> Iterable[List[Dict]]:
+    from ..services.monday_archive import current_relation
+    relation = current_relation('reportable_projects')
     offset = 0
     processed = 0
 
     while True:
         batch = (
-            db.client.table("reportable_projects")
+            db.client.table(relation)
             .select("monday_id,date_created")
             .gte("date_created", since)
             .order("monday_id", desc=False)

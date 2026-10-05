@@ -298,9 +298,14 @@ class AnalysisService:
         if self.db.is_project_reporting_excluded(monday_id):
             return {'success': True, 'skipped': True,
                     'reason': 'redundant_placeholder', 'result': {}}
+        from . import monday_archive as archive
+        if archive.enabled() and not self.db.is_project_lifecycle_ready(monday_id):
+            logger.info('Skipping analysis for inactive or unverified project %s', monday_id)
+            return {'success': True, 'skipped': True, 'reason': 'lifecycle_not_ready', 'result': {}}
         if with_llm is None:
             with_llm = self.llm_enabled
-        proj = self.db.client.table('reportable_projects').select('*').eq('monday_id', monday_id).single().execute().data
+        from .monday_archive import current_relation
+        proj = self.db.client.table(current_relation('reportable_projects')).select('*').eq('monday_id', monday_id).single().execute().data
         if not proj:
             return {'success': False, 'error': 'project not found'}
 

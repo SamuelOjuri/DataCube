@@ -40,6 +40,10 @@ class MondayUpdateService:
         project_id = str(project_id)
         if self.db.is_project_reporting_excluded(project_id):
             return {"success": True, "skipped": True, "reason": "redundant_placeholder"}
+        from . import monday_archive as archive
+        if archive.enabled() and not self.db.is_project_lifecycle_ready(project_id):
+            logger.info("Skipping prediction publication for inactive or unverified project %s", project_id)
+            return {"success": True, "skipped": True, "reason": "lifecycle_not_ready"}
         payload = analysis or self.db.get_latest_analysis_result(project_id)
         if not payload:
             logger.warning("No analysis payload found for project %s", project_id)

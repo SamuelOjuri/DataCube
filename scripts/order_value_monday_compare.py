@@ -418,7 +418,7 @@ def mirror_dependencies(items, board_id):
     return ids, columns
 
 
-def resolved_col(evidence, item, column_id, trail=()):
+def resolved_col(evidence, item, column_id, trail=(), *, active_sources=False):
     """Join freshly captured exact-ID values; keep the original evidence raw.
 
     Each hop is proved by mirrored_items IDs, source board and column settings.
@@ -451,7 +451,10 @@ def resolved_col(evidence, item, column_id, trail=()):
         if (source_item is None or str((source_item.get('board') or {}).get('id')) != source_board
                 or source_board not in mapping):
             raise ValueError(f'Mirror source {source_id} on board {source_board} is outside readable evidence')
-        reference['mirrored_value'] = resolved_col(evidence, source_item, mapping[source_board], (*trail, key))
+        if active_sources and source_item.get('state') != 'active':
+            raise ValueError(f'Current mirror source {source_id} is not API active; retain historical value pending link review')
+        reference['mirrored_value'] = resolved_col(evidence, source_item, mapping[source_board], (*trail, key),
+                                                  active_sources=active_sources)
     return result
 
 
@@ -633,14 +636,19 @@ def capture_new_enquiry(monday, pid):
     return evidence
 
 
-def project_projection(pid, evidence, before, contract):
+def project_projection(pid, evidence, before, contract, *, lifecycle=None):
     """Partial, explicit field proposals plus an exhaustive list of limitations."""
     proposed = {t: {} for t in scopes.TABLES}
     issues = []
     stored = {t: backfill.indexed(before[t]) for t in scopes.TABLES}
 
+    def represented_archive(table, item_id):
+        state = (lifecycle or {}).get(table, {}).get(item_id, {})
+        return (item_id in stored[table] and state.get('monday_state') == 'archived'
+                and state.get('blocked') is False)
+
     def source_col(item, column_id):
-        return resolved_col(evidence, item, column_id)
+        return resolved_col(evidence, item, column_id, active_sources=lifecycle is not None)
 
     def issue(table, item_id, field, reason):
         issues.append({'project_id': pid, 'table': table, 'monday_id': item_id,
@@ -673,6 +681,8 @@ def project_projection(pid, evidence, before, contract):
             issue(table, item_id, '*', 'Unknown lifecycle state')
             return None
         if item['state'] != 'active':
+            if item['state'] == 'archived' and represented_archive(table, item_id):
+                return None
             issue(table, item_id, 'monday_state',
                   f"Monday state={item['state']}; lifecycle storage/retirement requires separate review")
             return None
@@ -696,9 +706,17 @@ def project_projection(pid, evidence, before, contract):
         if enquiry_total is not None:
             put('projects', pid, 'new_enquiry_value', lambda: enquiry_total)
     current_ids = {r['id'] for r in parent['subitems']}
+    if lifecycle is not None:
+        current_ids = {cid for cid in current_ids
+                       if not (evidence['subitems'].get(cid, {}).get('state') == 'archived'
+                           and (evidence['subitems'][cid].get('board') or {}).get('id') == BOARDS['subitems'])}
     for row in before['subitems']:
         if row.get('parent_monday_id') == pid and row['monday_id'] not in current_ids:
             observed = evidence['subitems'].get(row['monday_id'])
+            if (observed and observed.get('state') == 'archived'
+                    and (observed.get('board') or {}).get('id') == BOARDS['subitems']
+                    and represented_archive('subitems', row['monday_id'])):
+                continue
             detail = f"state={observed.get('state')}, parent={(observed.get('parent_item') or {}).get('id')}" if observed else 'not returned'
             issue('subitems', row['monday_id'], 'parent_monday_id',
                   f'Stored child absent from current parent membership ({detail}); retain pending lifecycle review')
@@ -770,11 +788,11 @@ def project_projection(pid, evidence, before, contract):
     return proposed, issues
 
 
-def build_record(project_ids, evidence, before, contract, boundary):
+def build_record(project_ids, evidence, before, contract, boundary, *, lifecycle=None):
     proposed = {t: {} for t in scopes.TABLES}
     issues = []
     for pid in project_ids:
-        rows, problems = project_projection(pid, evidence, before, contract)
+        rows, problems = project_projection(pid, evidence, before, contract, lifecycle=lifecycle)
         issues.extend(problems)
         for table in scopes.TABLES:
             for item_id, row in rows[table].items():
@@ -789,7 +807,8 @@ def build_record(project_ids, evidence, before, contract, boundary):
             changed = {f: v for f, v in row.items() if f != 'monday_id' and old[item_id].get(f) != v}
             if changed:
                 updates[table].append({'monday_id': item_id, **changed})
-    return {'scope_id': 'compare-' + backfill.fingerprint(project_ids)[:16],
+    return {**({'lifecycle': lifecycle} if lifecycle is not None else {}),
+            'scope_id': 'compare-' + backfill.fingerprint(project_ids)[:16],
             'project_ids': project_ids, 'boundary': boundary, 'source': evidence,
             'before': before, 'after': scopes.expected_state(before, updates),
             'updates': updates, 'issues': issues}
@@ -813,6 +832,7 @@ def boundary_for(project_ids, evidence, before):
 
 
 def stage_run(connection, monday, run_dir, project_ids, *, selection=None):
+    from src.services import monday_archive as archive
     validate_ids(project_ids)
     if run_dir.exists():
         raise ValueError('Use a new run directory to preserve reviewed artifacts')
@@ -829,6 +849,7 @@ def stage_run(connection, monday, run_dir, project_ids, *, selection=None):
         connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         contract = reconcile.read_contract(connection)
         baseline = scopes.read_boundary(connection, boundary, full=True)
+        lifecycle = archive.read_states(connection, boundary) if archive.enabled() else None
         if scopes.read_boundary(connection, empty, full=True) != discovery:
             raise ValueError('Database membership/values changed during capture; stage again')
     # Join dependencies using the SQL read boundary, including incoming owners.
@@ -876,7 +897,9 @@ def stage_run(connection, monday, run_dir, project_ids, *, selection=None):
             # Keep that request contract when rereading one scope; otherwise a
             # narrower per-scope column set could falsely look like source drift.
             local['read_columns'] = evidence['read_columns']
-        records.append(build_record(ids, local, state, contract, b))
+        local_states = ({t: {i: r for i, r in lifecycle[t].items() if i in b[t]} for t in scopes.TABLES}
+                        if lifecycle is not None else None)
+        records.append(build_record(ids, local, state, contract, b, lifecycle=local_states))
     staged = {'selected_project_ids': sorted(project_ids), 'selection': selection, 'contract': contract,
               'started_at': started, 'finished_at': now(), 'scopes': records, 'deferred': deferred}
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -931,7 +954,7 @@ def load_run(run_dir):
         if (len(record['project_ids']) > scopes.MAX_PROJECTS
                 or sum(map(len, record['before'].values())) > scopes.MAX_SCOPE_ROWS
                 or build_record(record['project_ids'], record['source'], record['before'],
-                                staged['contract'], record['boundary']) != record):
+                                staged['contract'], record['boundary'], lifecycle=record.get('lifecycle')) != record):
             raise ValueError('Changes do not match reviewed Monday evidence')
     covered.extend(pid for r in staged['deferred'] for pid in r['project_ids'])
     if sorted(covered) != staged['selected_project_ids'] or len(covered) != len(set(covered)):
@@ -966,6 +989,11 @@ def commit_scope(connection, manifest, staged, record):
         if reconcile.read_contract(connection) != staged['contract']:
             raise scopes.ScopeConflict('Database schema changed since staging')
         current = scopes.read_boundary(connection, record['boundary'], full=True)
+        if 'lifecycle' in record:
+            from src.services import monday_archive as archive
+            if archive.read_states(connection, record['boundary']) != record['lifecycle']:
+                raise scopes.ScopeConflict('Lifecycle states changed since staging')
+            connection.execute("SELECT set_config('datacube.archive_worker_protocol','verified_archive_v1',true)")
         if current != record['before']:
             raise scopes.ScopeConflict('Database rows changed since staging')
         counts = scopes.write_updates(connection, record['updates'])

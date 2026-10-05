@@ -6,6 +6,7 @@ mutations. Unrepresentable fields remain explicit review issues.
 """
 from copy import deepcopy
 from decimal import Decimal
+from datetime import datetime, timezone
 
 from psycopg import sql
 
@@ -15,6 +16,7 @@ from ..config import PARENT_COLUMNS, SUBITEM_COLUMNS, HIDDEN_ITEMS_COLUMNS
 from ..core.data_processor import LabelNormalizer, EnhancedMirrorResolver, HierarchicalSegmentation
 from ..database.sync_service import DataSyncService
 from . import monday_lifecycle as life
+from . import monday_archive as archive
 
 
 def fetch_project(monday, pid):
@@ -68,6 +70,15 @@ def read_snapshot(connection, pid, source):
     return snapshot
 
 
+def capture_refresh_source(connection, monday, pid):
+    result = fetch_project(monday, pid)
+    if archive.enabled():
+        stored = life.read_rows(connection, 'subitems', 'parent_monday_id', [pid])
+        extra = {r['monday_id'] for r in stored} - set(result['subitems'])
+        result['subitems'].update(life.read_items(monday, extra))
+    return result
+
+
 def transformer():
     service = DataSyncService.__new__(DataSyncService)
     service.label_normalizer = LabelNormalizer()
@@ -97,7 +108,7 @@ def same_value(before, after, column):
     return before == after
 
 
-def build_values(pid, source, before, contract):
+def build_values(pid, source, before, contract, *, lifecycle=None, reparent_id=None):
     """Fresh metadata for new rows; explicit comparison fields for existing rows."""
     service = transformer()
     current = {t: {r['monday_id']: r for r in before[t]} for t in life.BOARDS.values()}
@@ -136,7 +147,7 @@ def build_values(pid, source, before, contract):
         if links:
             life.require_item(source['hidden_items'], links[0], 'hidden_items', 'active')
         old_parent = current['subitems'].get(cid, {}).get('parent_monday_id')
-        if old_parent not in (None, pid):
+        if old_parent not in (None, pid) and cid != reparent_id:
             raise life.ReviewRequired(f'Subitem {cid} moved from {old_parent}; compare both parents before relinking')
         children.append(child)
     transformed_children = clean_rows('subitems', service._transform_for_subitems_table(deepcopy(children)), contract)
@@ -146,7 +157,11 @@ def build_values(pid, source, before, contract):
         if row['monday_id'] not in current['subitems']:
             seeds['subitems'][row['monday_id']] = row
     provisional = {t: list(current[t].values()) + list(seeds[t].values()) for t in current}
-    proposed, issues = compare.project_projection(pid, source, provisional, contract)
+    if reparent_id is not None:
+        provisional['subitems'] = [
+            {**r, 'parent_monday_id': pid} if r['monday_id'] == reparent_id else r
+            for r in provisional['subitems']]
+    proposed, issues = compare.project_projection(pid, source, provisional, contract, lifecycle=lifecycle)
     for child in children:
         cid, links = child['id'], compare.links(child)
         row = proposed['subitems'].setdefault(cid, {'monday_id': cid})
@@ -278,16 +293,50 @@ def refresh_project(connection, monday, job, *, pid=None):
         raise life.ReviewRequired('Scoped cleanup cannot run a full refresh')
     if job['payload'].get('refresh_mode') == 'new_enquiry_sum':
         return refresh_new_enquiry(connection, monday, job, pid)
-    source = fetch_project(monday, pid)
+    if archive.enabled():
+        root = life.read_items(monday, [pid])
+        if life.require_item(root, pid, 'projects')['state'] == 'archived':
+            if job['board_id'] != life.PARENT_BOARD_ID or job['item_id'] != pid:
+                raise life.ReviewRequired('Cannot restore a child under an archived parent')
+            return archive.archive_item(connection, monday, job, root)
+    source = capture_refresh_source(connection, monday, pid)
     before = read_snapshot(connection, pid, source)
     contract = reconcile.read_contract(connection)
-    values, issues = build_values(pid, source, before, contract)
+    reparent_id, former_parent, former_source = None, None, None
+    if archive.enabled() and job['board_id'] == life.SUBITEM_BOARD_ID:
+        target = next((r for r in before['subitems'] if r['monday_id'] == job['item_id']), None)
+        former_parent = target.get('parent_monday_id') if target else None
+        if former_parent and former_parent != pid:
+            former_source = life.read_items(monday, [former_parent], parents=True)
+            old_parent = life.require_item(former_source, former_parent, 'projects')
+            if old_parent['state'] not in {'active', 'archived'} or any(
+                    r['id'] == job['item_id'] for r in old_parent.get('subitems', [])):
+                raise life.ReviewRequired('Former parent does not confirm the restored child moved')
+            reparent_id = job['item_id']
+    lifecycle = archive.read_states(connection, {t: list(source[t]) for t in life.BOARDS.values()}) if archive.enabled() else None
+    values, issues = build_values(pid, source, before, contract, lifecycle=lifecycle, reparent_id=reparent_id)
+    if archive.enabled():
+        restoring = any(r.get('blocked') or r.get('monday_state') in {'archived', 'deleted'}
+                        for rows in lifecycle.values() for r in rows.values())
+        if restoring and any(i['monday_id'] in source.get(i['table'], {})
+                             and source[i['table']][i['monday_id']]['state'] == 'active'
+                             and not i['reason'].startswith('Source also has stored owner outside selection') for i in issues):
+            raise life.ReviewRequired(f'Restoration requires complete current data: {issues}')
     # Re-read the same small scope before any database transaction.
-    if fetch_project(monday, pid) != source:
+    verified_at = datetime.now(timezone.utc)
+    if capture_refresh_source(connection, monday, pid) != source:
         raise ValueError('Monday changed during refresh; retry with fresh evidence')
+    if former_source is not None and life.read_items(monday, [former_parent], parents=True) != former_source:
+        raise life.ReviewRequired('Former parent changed during restoration')
     with life.write_transaction(connection, job):
         if read_snapshot(connection, pid, source) != before or reconcile.read_contract(connection) != contract:
             raise ValueError('Stored rows/schema changed during lifecycle refresh')
+        if archive.enabled():
+            archive.observe_source(connection, job, source, verified_at, restore=True)
+            for table in life.BOARDS.values():
+                for item, evidence in source[table].items():
+                    if evidence['state'] == 'active':
+                        life.marker(connection, table, item, False, job)
         for table, rows in values.items():
             old = {r['monday_id']: r for r in before[table]}
             for row in rows:
@@ -297,9 +346,13 @@ def refresh_project(connection, monday, job, *, pid=None):
                 life.marker(connection, table, item, False, job)
                 life.audit(connection, job, 'refresh_or_restore', table, item, old.get(item), evidence)
         write_values(connection, values, before, contract, job=job)
+        if archive.enabled() and not any(i['table'] == 'projects' and i['field'] in archive.FINANCIAL_FIELDS for i in issues):
+            archive.verify_parent_values(connection, job, pid)
         changed_hidden = {r['monday_id'] for r in values['hidden_items']}
         other_parents = {r.get('parent_monday_id') for r in before['subitems']
                          if r.get('hidden_item_id') in changed_hidden} - {None, '', pid}
+        if reparent_id is not None and former_parent not in other_parents:
+            archive.enqueue_refresh(connection, former_parent, f"{job['event_key']}:former_parent:{former_parent}")
         for parent_id in sorted(other_parents):
             life.enqueue(connection, 'refresh', life.PARENT_BOARD_ID, parent_id,
                          key=f"{job['event_key']}:shared_source:{parent_id}", payload={'cause': job['event_key']})
@@ -344,11 +397,14 @@ def restore_item(connection, monday, job, observed):
         for field in compare.MONEY_FIELDS:
             values[0][field] = compare.numeric(compare.col(evidence, HIDDEN_ITEMS_COLUMNS[field]))
         values = reconcile.normalize_updates({'hidden_items': values}, contract)['hidden_items']
+        verified_at = datetime.now(timezone.utc)
         if compare.fetch_items(monday, [item], columns, mirror_depth=0) != source:
             raise ValueError('Hidden source changed during restoration')
         with life.write_transaction(connection, job):
             if life.deletion_snapshot(connection, 'hidden_items', item) != before:
                 raise ValueError('Hidden restoration baseline changed')
+            if archive.enabled():
+                archive.observe(connection, job, 'hidden_items', item, source, verified_at, restore=True)
             life.marker(connection, 'hidden_items', item, False, job)
             life.audit(connection, job, 'restore', 'hidden_items', item,
                        before['hidden_items'][0] if before['hidden_items'] else None, evidence)
@@ -358,6 +414,7 @@ def restore_item(connection, monday, job, observed):
                 FROM public.monday_lifecycle_audit a
                 WHERE a.action='unlink_deleted_hidden_source' AND a.before_row->>'hidden_item_id'=%s
                 LIMIT 501''', (item,)).fetchall()} - {None, ''}
+            parents.update(r['parent_monday_id'] for r in before['subitems'] if r.get('parent_monday_id'))
             if len(parents) > life.MAX_ROWS:
                 raise life.ReviewRequired('Too many former hidden source owners')
             for parent in sorted(parents):

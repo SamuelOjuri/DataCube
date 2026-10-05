@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import logging
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from ..services import monday_archive as archive
 
 load_dotenv()
 
@@ -26,6 +27,9 @@ class SupabaseClient:
     
     def upsert_projects(self, projects: List[Dict]) -> Dict:
         """Upsert multiple projects"""
+        projects = archive.prepare_sync_rows('projects', projects)
+        if not projects:
+            return {"success": True, "count": 0, "total_affected": 0, "updates": 0}
         try:
             # Get count before upsert
             count_before = self.client.table('projects')\
@@ -58,6 +62,9 @@ class SupabaseClient:
     
     def upsert_subitems(self, subitems: List[Dict]) -> Dict:
         """Upsert multiple subitems"""
+        subitems = archive.prepare_sync_rows('subitems', subitems)
+        if not subitems:
+            return {"success": True, "count": 0}
         try:
             result = self.client.table('subitems').upsert(
                 subitems,
@@ -70,6 +77,9 @@ class SupabaseClient:
     
     def upsert_hidden_items(self, hidden_items: List[Dict]) -> Dict:
         """Upsert multiple hidden items"""
+        hidden_items = archive.prepare_sync_rows('hidden_items', hidden_items)
+        if not hidden_items:
+            return {"success": True, "count": 0}
         try:
             result = self.client.table('hidden_items').upsert(
                 hidden_items,
@@ -275,6 +285,14 @@ class SupabaseClient:
                 .limit(1).execute().data or [])
         return bool(rows and rows[0]['reporting_excluded'])
 
+    def is_project_lifecycle_ready(self, project_id: str) -> bool:
+        rows = (self.client.table('monday_item_lifecycle')
+                .select('monday_state,blocked,state_evidence')
+                .eq('table_name', 'projects').eq('monday_id', str(project_id))
+                .limit(1).execute().data or [])
+        return bool(rows and rows[0]['monday_state'] == 'active' and not rows[0]['blocked']
+                    and (rows[0]['state_evidence'] or {}).get('transaction_values_verified') is True)
+
     def get_projects_for_analysis(
         self, 
         filters: Dict = None, 
@@ -282,7 +300,7 @@ class SupabaseClient:
     ) -> List[Dict]:
         """Get projects for analysis with optional filters"""
         try:
-            query = self.client.table('reportable_projects').select('*')
+            query = self.client.table(archive.current_relation('reportable_projects')).select('*')
             
             if filters:
                 for key, value in filters.items():
@@ -293,6 +311,8 @@ class SupabaseClient:
             return result.data
         except Exception as e:
             logger.error(f"Failed to get projects: {e}")
+            if archive.enabled():
+                raise
             return []
     
     def store_analysis_result(

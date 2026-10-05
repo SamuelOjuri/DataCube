@@ -1,8 +1,120 @@
-# Monday deletion and restoration replication
+# Monday lifecycle replication
 
 Finance owns Monday data. Deleting a Monday item now has a durable, exact-ID path
 to deleting its Supabase counterpart. This release includes code and a migration;
 deploying Python alone does not enable the feature.
+
+## Verified archive handling: staged rollout
+
+Monday API `state=archived` is a lifecycle state. Board labels such as **Archive**
+or **Archived** are administrative/business data and never establish lifecycle
+eligibility. All archive reads use the exact-ID, query-only comparison client.
+No Monday mutations or new webhook subscriptions are needed for this rollout.
+
+After the preparatory migration below, apply these complete files in order:
+
+1. [Archive runtime SQL](../src/database/schema/monday_lifecycle_archive_runtime.sql):
+   archive write protection, an archive-capable worker fence, and backend-only
+   `current_projects`, `current_subitems`, and `current_hidden_items` views.
+2. [Archive reporting SQL](../src/database/schema/monday_archive_reporting.sql):
+   current forecast/smoothing views and new snapshot functions. This copies the
+   **installed** forecasting formulas, replacing only their current population
+   source. Unexpected dependencies/signatures abort the migration. Reapply this
+   migration after future changes to the original forecasting formulas.
+
+Neither file backfills lifecycle states, changes business rows, rewrites existing
+snapshots, or switches existing reporting consumers. Do not run the historical
+full schema instead of these migrations.
+
+There are two switches, both **false by default**:
+
+| Switch | Purpose |
+|---|---|
+| `MONDAY_ARCHIVE_ENABLED` | Verified archive processing, exact-ID sync gates and source-based current financial refreshes |
+| `MONDAY_ARCHIVE_REPORTING_ENABLED` | Switch current analysis/forecasting consumers to verified-active populations |
+
+Deployment sequence:
+
+1. Leave both switches false while applying SQL and deploying the code.
+2. Stop/drain old sync and lifecycle processes before enabling archive ingestion
+   on **all** replacement writers. Keep `MONDAY_LIFECYCLE_ENABLED=true` for the
+   existing lifecycle worker. Do not mix archive-enabled and legacy writers:
+   database guards reject their attempts to update archived rows.
+   All archive-enabled sync, analysis and reporting processes need the
+   `SUPABASE_DB_URL` server-side secret, not just the lifecycle worker.
+3. Run normal synchronisation/rehydration to establish fresh active-state,
+   membership and financial coverage. Missing source responses are explicit
+   errors/review cases, not active/archive/deletion defaults.
+4. Stage the curated, non-excluded archive review CSV using the existing CLI:
+
+   ```powershell
+   python -m scripts.monday_lifecycle stage --state archived --review-csv <curated-review.csv> --run-dir <new-run-directory>
+   ```
+
+   Staging is read-only in **both** systems. Its plan retains exact IDs and
+   before-rows, and includes a hypothetical financial preview for affected
+   active parents. Use the remaining non-excluded review export, not the
+   original historical list containing New project/FREE records or audit holds.
+   Review its selected/deferred counts and financial issues before queueing.
+
+5. Queue the reviewed run with `queue --run-dir ... --confirm-run-id ...`.
+   Queueing requires the runtime migration and enabled archive code. Workers
+   recheck API state and the reviewed before-rows; changed evidence returns to
+   review. A queued archive can never become a deletion merely because the
+   source changes state. Drain the scoped archive/refresh/verification jobs,
+   then run another ordinary sync and fresh comparison.
+6. Check coverage before switching reports:
+
+   ```python
+   from src.services import monday_lifecycle as life, monday_archive as archive
+   with life.connect() as connection:
+       with connection.transaction():
+           connection.execute("SET TRANSACTION READ ONLY")
+           print(archive.coverage(connection))
+   ```
+
+   All counts must be zero. They cover unverified projects, children, source
+   links, current financial/membership evidence, and unresolved archive jobs.
+   A failed current-value check cannot silently publish an incomplete total.
+   Routine pending periodic state checks alone do not disable reporting.
+7. Only then enable `MONDAY_ARCHIVE_REPORTING_ENABLED`. Current application
+   readers also check coverage and fail explicitly if it becomes incomplete.
+   External SQL/Power BI consumers must explicitly adopt the `current_*` views
+   **after** the same coverage check. Those low-level views select verified
+   populations; they are not a substitute for the readiness check.
+
+Operational guarantees:
+
+- Archiving retains business rows, their financial values and historical parent
+  links. An archived parent does not change any child's own API state.
+- Each observation is audited with its previous metadata, exact source evidence,
+  correlation key, and verification time (not a claimed archive date).
+- Normal upserts use fresh, repeated exact-ID evidence. Archived rows are not
+  upserted. Restored/reparented rows go through full rehydration; the old and new
+  parent are checked, the old link is audited, and affected parents are refreshed.
+- Confirmed active and archived IDs are periodically rechecked, ten per idle
+  scheduling pass, so pagination absence is never used to infer lifecycle.
+- Archive-enabled parent totals do **not** use sums of retained SQL children.
+  New Enquiry Value uses current API-active children for Open parents; Won/Lost
+  enquiry values are retained. Order value remains the actual typed Monday
+  **parent mirror**, not an invented material-plus-charges total. Invoice value
+  uses current child invoice mirrors; all blank remains NULL and explicit zero
+  remains zero. No separate current-order measure is silently substituted.
+  Inactive mirror dependencies withhold the affected current fields for
+  source-link review; they do not turn historical amounts into zero.
+- Historical `reportable_projects`, training/cohort readers and saved snapshots
+  retain their populations. Current forecasts use separate live views rather
+  than stale legacy materializations. The new snapshot functions accept today
+  only and refuse to replace a snapshot that already exists; activate future
+  snapshot scheduling after the previous day's run has completed.
+- Comparison runs recognise an archive only when the exact current API state
+  agrees with retained, audited lifecycle metadata. Missing/deleted/unverified
+  records and unrelated source-link/audit concerns remain review cases.
+
+Keep reporting disabled if coverage is incomplete; do not classify missing
+records as active to make the counts pass. After archive observations exist,
+rollback means pausing writers, not restarting old code against the guards.
+Keep the guards and retained history in place.
 
 ## Archive support: preparatory database migration
 
@@ -63,10 +175,10 @@ FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
 WHERE c.oid = to_regclass('public.monday_item_lifecycle_archived_rechecks');
 ```
 
-Do not manually populate the new fields or equate NULL with active. The next
-application release must validate fresh exact-ID API evidence, update lifecycle
-metadata and transition audits atomically, handle archive/reactivation, and
-apply lifecycle-aware current membership consistently across sync and rollups.
+Do not manually populate the new fields or equate NULL with active. The runtime
+release described above validates fresh exact-ID API evidence, updates lifecycle
+metadata and transition audits atomically, handles archive/reactivation, and
+applies lifecycle-aware current membership across sync and rollups.
 Historical values and reports must remain available. Deploy all relevant
 workers before enabling that behaviour; applying this migration alone does not
 resolve any manual-review archive cases.
