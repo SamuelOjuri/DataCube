@@ -29,6 +29,18 @@ SOURCE_MANIFEST_SHA256 = '179f432846af543afa73ee5dea2baf6f936428fe040734e9fce311
 APPROVAL_SHA256 = '9c2be5ccd442a0ab7071d68175de18ad2753d5696a5ddfd5bfe43cc9235e259a'
 TARGETS = Path(__file__).with_name('monday_archive_backfill_targets.json')
 MAX_BATCH_PROJECTS = 25
+RECOVERABLE_CODE_DIGESTS = (
+    '1cc783a0493059b0ed6d6039e0ef5b7c019266a66062b897cf3a92c4cb6c996b',
+    '91a8fded2524cec15d8cf80b5464b71cfc8a961023b974bdec683341a2107183',
+)
+PROJECT_ERRORS = (life.ReviewRequired, psycopg.errors.LockNotAvailable,
+                  psycopg.errors.QueryCanceled, psycopg.errors.DeadlockDetected,
+                  psycopg.errors.SerializationFailure, psycopg.DataError, psycopg.IntegrityError)
+
+
+def runtime_code():
+    return cli.digest({'pilot': pilot.code_digest(),
+                       'runner': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()})
 
 
 def export_approval(source_dir):
@@ -152,8 +164,7 @@ def campaign_manifest(connection, pilot_run_id, projects):
     identity = dict(policy=POLICY, run_id=str(uuid5(UUID(pilot_run_id), APPROVAL_SHA256)),
         pilot_run_id=pilot_run_id, pilot_plan_sha256=next(iter(plan_hashes)),
         approval_sha256=APPROVAL_SHA256, target=cli.target_digest(connection),
-        code=cli.digest({'pilot': pilot.code_digest(),
-                         'runner': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}),
+        code=runtime_code(),
         expected_projects=len(remaining), expected_groups=len(groups),
         expected_subitems=len(boundary(remaining)['subitems']),
         expected_hidden_sources=len(boundary(remaining)['hidden_items']),
@@ -164,18 +175,34 @@ def campaign_manifest(connection, pilot_run_id, projects):
 
 def prepare(connection, run_dir, pilot_run_id):
     pilot.require_environment(connection)
-    manifest, _ = campaign_manifest(connection, pilot_run_id, load_approval())
+    manifest, groups = campaign_manifest(connection, pilot_run_id, load_approval())
     if run_dir.exists():
         raise ValueError('Use a new directory, or resume the existing campaign')
+    hashes = {r['hash'] for r in connection.execute(
+        "SELECT DISTINCT payload->>'campaign_sha256' AS hash FROM public.monday_lifecycle_events "
+        'WHERE event_key LIKE %s', (f"archive-backfill:{manifest['run_id']}:%",)).fetchall()}
+    if hashes and hashes != {cli.digest(manifest)}:
+        candidates = [{**manifest, 'code': code} for code in RECOVERABLE_CODE_DIGESTS]
+        recovered = [candidate for candidate in candidates if hashes == {cli.digest(candidate)}]
+        if len(recovered) != 1:
+            raise life.ReviewRequired('Existing campaign identity cannot be reconstructed safely; '
+                                     'restore its original manifest instead of starting over')
+        manifest = recovered[0]
+        LOG.warning('Recovered the original campaign; use --accept-code-update with the deployed fix')
+    receipts(connection, manifest, groups)
     run_dir.mkdir(parents=True)
     pilot.write_json(run_dir / 'manifest.json', manifest)
     return manifest
 
 
-def load_campaign(connection, run_dir, confirmation=None):
+def load_campaign(connection, run_dir, confirmation=None, *, accept_code_update=False):
     pilot.require_environment(connection)
     manifest = json.loads((run_dir / 'manifest.json').read_text(encoding='utf-8'))
     expected, groups = campaign_manifest(connection, manifest['pilot_run_id'], load_approval())
+    if accept_code_update and manifest.get('code') in RECOVERABLE_CODE_DIGESTS:
+        LOG.warning('Accepting updated runtime %s for original campaign %s',
+                    expected['code'], manifest['run_id'])
+        expected['code'] = manifest['code']
     pilot.require_same(manifest, expected, 'Campaign approval/code/database/pilot')
     if confirmation is not None and confirmation != manifest['run_id']:
         raise ValueError('--confirm-run-id must match the prepared campaign')
@@ -227,9 +254,12 @@ def receipts(connection, manifest, groups):
 def summary(manifest, groups, known):
     verified = sum(len(g) for g in groups
                    if (known.get(event_key(manifest, g), {}).get('result') or {}).get('phase') == 'verified')
+    pending = sum(len(g) for g in groups if
+                  (known.get(event_key(manifest, g), {}).get('result') or {}).get('phase')
+                  == 'applied_pending_verification')
     return dict(run_id=manifest['run_id'], complete=verified == manifest['expected_projects'],
                 verified_projects=verified, remaining_projects=manifest['expected_projects'] - verified,
-                expected_projects=manifest['expected_projects'])
+                expected_projects=manifest['expected_projects'], pending_verification_projects=pending)
 
 
 @contextmanager
@@ -328,7 +358,10 @@ def checked_snapshot(connection, group):
 def project_values(group, source, before, states, contract):
     merged = {t: {} for t in life.BOARDS.values()}
     for pid in group:
-        values, issues = refresh.build_values(pid, source, before, contract, lifecycle=states)
+        try:
+            values, issues = refresh.build_values(pid, source, before, contract, lifecycle=states)
+        except ValueError as exc:
+            raise life.ReviewRequired(f'{pid}: source projection requires review: {exc}') from exc
         if issues:
             raise life.ReviewRequired(f'{pid}: source projection requires review: {issues}')
         for table, rows in values.items():
@@ -362,10 +395,26 @@ def capture_cases(connection, monday, batch):
                            states=local_states, contract=contract, values=values))
     second = refresh.fetch_projects(monday, list(group))
     require_source(group, second)
+    code = runtime_code()
     for case in result:
         pilot.require_same(case['source'], narrow_source(second, case['group']), 'Monday capture')
         case['captured_at'] = pilot.now().isoformat()
+        case['runtime_code'] = code
     return result
+
+
+def capture_isolated(connection, monday, batch, on_error):
+    try:
+        cases = capture_cases(connection, monday, batch)
+    except PROJECT_ERRORS as exc:
+        if len(batch) == 1:
+            on_error(batch[0], exc)
+            return
+        LOG.warning('Batch capture requires review; checking its project groups individually: %s', exc)
+        for group in batch:
+            yield from capture_isolated(connection, monday, [group], on_error)
+    else:
+        yield from cases
 
 
 def check_locked(connection, case):
@@ -425,13 +474,14 @@ def apply_case(connection, manifest, case):
         after, counts = write_values(connection, job, case)
         result = dict(phase='applied_pending_verification', source_sha256=cli.digest(case['source']),
             after_sha256=cli.digest(after), states_sha256=cli.digest(archive.read_states(connection, boundary(group))),
-            contract_sha256=cli.digest(case['contract']), rows_written=counts)
+            contract_sha256=cli.digest(case['contract']), rows_written=counts,
+            applied_code_sha256=case['runtime_code'])
         connection.execute('UPDATE public.monday_lifecycle_events SET result=%s,last_error=%s WHERE event_key=%s',
                            (Jsonb(result), 'Fresh verification required; resume the backfill CLI', job['event_key']))
     return receipt(connection, manifest, group)
 
 
-def verify_case(connection, manifest, case, job):
+def check_verification(case, job):
     result = job['result']
     if result['phase'] != 'applied_pending_verification':
         raise life.ReviewRequired('Verification requires an applied, unverified scope')
@@ -439,7 +489,14 @@ def verify_case(connection, manifest, case, job):
                        ('states', case['states']), ('contract', case['contract'])]:
         pilot.require_same(cli.digest(value), result[key + '_sha256'], f'Post-write {key}')
     if any(case['values'].values()):
-        raise life.ReviewRequired('Fresh source projection still differs from SQL')
+        fields = [f'{table}/{row["monday_id"]}/{field}' for table, rows in case['values'].items()
+                  for row in rows for field in row if field != 'monday_id']
+        raise life.ReviewRequired(f'Fresh source projection still differs from SQL: {", ".join(fields)}')
+
+
+def verify_case(connection, manifest, case, job):
+    check_verification(case, job)
+    result = job['result']
     with life.locked_write_transaction(connection):
         connection.execute('LOCK TABLE public.monday_item_lifecycle IN SHARE ROW EXCLUSIVE MODE')
         current = receipt(connection, manifest, case['group'], locked=True)
@@ -448,14 +505,16 @@ def verify_case(connection, manifest, case, job):
         for pid in case['group']:
             archive.verify_parent_values(connection, job, pid)
         result = {**result, 'phase': 'verified', 'verified_at': pilot.now().isoformat(),
+                  'verified_code_sha256': case['runtime_code'],
                   'states_sha256': cli.digest(archive.read_states(connection, boundary(case['group'])))}
         connection.execute("UPDATE public.monday_lifecycle_events SET status='processed',result=%s,"
                            'last_error=NULL,processed_at=now() WHERE event_key=%s', (Jsonb(result), job['event_key']))
     return receipt(connection, manifest, case['group'])
 
 
-def execute(connection, monday, run_dir, *, confirmation=None, batch_size=25, max_batches=None, preview=False):
-    manifest, groups = load_campaign(connection, run_dir, confirmation)
+def execute(connection, monday, run_dir, *, confirmation=None, batch_size=25, max_batches=None,
+            preview=False, continue_on_error=False, accept_code_update=False):
+    manifest, groups = load_campaign(connection, run_dir, confirmation, accept_code_update=accept_code_update)
     if not preview and confirmation is None:
         raise ValueError('Explicit campaign confirmation is required')
     if max_batches is not None and max_batches < 1:
@@ -468,36 +527,75 @@ def execute(connection, monday, run_dir, *, confirmation=None, batch_size=25, ma
         attempt_dir.mkdir(parents=True)
         result_path = run_dir / ('preview_result.json' if preview else 'result.json')
         progress = summary(manifest, groups, known)
+        failures = {}
+        progress.update(failed_projects=0, failed_project_ids=[], failures=failures,
+                        runtime_code=runtime_code())
         pilot.write_json(result_path, {**progress, 'phase': 'checking', 'read_only': preview})
         completed_batches = 0
+
+        def failed(group, phase, exc):
+            if not continue_on_error:
+                raise exc
+            for pid in group:
+                failures[pid] = dict(phase=phase, error_type=type(exc).__name__, error=str(exc),
+                                     related_projects=sorted(group))
+            progress.update(failed_projects=len(failures), failed_project_ids=sorted(failures))
+            LOG.error('Projects %s failed during %s: %s', ','.join(group), phase, exc)
+            pilot.write_json(result_path, {**progress, 'phase': 'running', 'read_only': preview})
+
+        def capture(batch, phase):
+            if continue_on_error:
+                return capture_isolated(connection, monday, batch,
+                                        lambda group, exc: failed(group, phase, exc))
+            return capture_cases(connection, monday, batch)
+
         try:
             for index, batch in enumerate(work, 1):
                 if max_batches is not None and index > max_batches:
                     break
                 LOG.info('Capturing batch %s: %s projects', index, sum(map(len, batch)))
-                cases = capture_cases(connection, monday, batch)
-                pilot.write_json(attempt_dir / f'batch_{index:06d}.json', cases)
-                if not preview:
-                    for case in cases:
-                        key = event_key(manifest, case['group'])
-                        job = known.get(key)
-                        if not job or job['result']['phase'] == 'prepared':
+                ready = []
+                for case in capture(batch, 'capture'):
+                    group = case['group']
+                    pilot.write_json(attempt_dir / f'batch_{index:06d}_{min(group)}.json', case)
+                    key = event_key(manifest, group)
+                    job = known.get(key)
+                    try:
+                        if preview:
+                            if job and job['result']['phase'] == 'applied_pending_verification':
+                                check_verification(case, job)
+                        elif not job or job['result']['phase'] == 'prepared':
                             known[key] = apply_case(connection, manifest, case)
-                    for case in capture_cases(connection, monday, batch):
+                            progress['pending_verification_projects'] += len(group)
+                        ready.append(group)
+                    except PROJECT_ERRORS as exc:
+                        failed(group, 'preview_verification' if preview else 'apply', exc)
+                if not preview:
+                    for case in capture(ready, 'verification_capture') if ready else ():
+                        pilot.write_json(attempt_dir / f'verify_{index:06d}_{min(case["group"])}.json', case)
                         key = event_key(manifest, case['group'])
-                        known[key] = verify_case(connection, manifest, case, known[key])
+                        try:
+                            known[key] = verify_case(connection, manifest, case, known[key])
+                        except PROJECT_ERRORS as exc:
+                            failed(case['group'], 'verification', exc)
+                            continue
                         progress['verified_projects'] += len(case['group'])
                         progress['remaining_projects'] -= len(case['group'])
+                        progress['pending_verification_projects'] -= len(case['group'])
                         progress['complete'] = progress['remaining_projects'] == 0
                         pilot.write_json(result_path, {**progress, 'phase': 'running'})
                         LOG.info('Verified %s; %s/%s projects complete', ','.join(case['group']),
                                  progress['verified_projects'], manifest['expected_projects'])
                 completed_batches += 1
+                LOG.info('Batch %s finished: %s/%s verified; %s failed this invocation',
+                         index, progress['verified_projects'], manifest['expected_projects'], len(failures))
             result = {**progress, 'phase': 'previewed' if preview else 'paused',
                       'batches_this_invocation': completed_batches, 'read_only': preview,
                       'evidence_directory': str(attempt_dir)}
             if result['complete'] and not preview:
                 result['phase'] = 'complete'
+            if failures:
+                result['phase'] = 'incomplete_with_errors'
             pilot.write_json(result_path, result)
             return result
         except (ValueError, RuntimeError, psycopg.Error, requests.RequestException, OSError, KeyboardInterrupt) as exc:
@@ -523,9 +621,13 @@ def main(argv=None):
     for command in ('run', 'preview', 'status'):
         p = subs.add_parser(command)
         p.add_argument('--run-dir', type=Path, required=True)
+        p.add_argument('--accept-code-update', action='store_true',
+                       help='Accept this runtime for the supported pre-rounding-fix campaign, preserving receipts')
         if command != 'status':
             p.add_argument('--batch-size', type=int, default=25)
             p.add_argument('--max-batches', type=int, default=1 if command == 'preview' else None)
+            p.add_argument('--continue-on-error', action='store_true',
+                           help='Report scoped review/lock failures and continue; connection/API failures still stop')
         if command == 'run':
             p.add_argument('--confirm-run-id', required=True)
     args = parser.parse_args(argv)
@@ -539,18 +641,20 @@ def main(argv=None):
                 if args.command == 'prepare':
                     result = prepare(connection, args.run_dir, args.pilot_run_id)
                 elif args.command == 'status':
-                    manifest, groups = load_campaign(connection, args.run_dir)
+                    manifest, groups = load_campaign(connection, args.run_dir,
+                                                     accept_code_update=args.accept_code_update)
                     result = summary(manifest, groups, receipts(connection, manifest, groups))
                 else:
                     monday = compare.ComparisonMondayClient()
                     try:
                         result = execute(connection, monday, args.run_dir,
                             confirmation=getattr(args, 'confirm_run_id', None), batch_size=args.batch_size,
-                            max_batches=args.max_batches, preview=args.command == 'preview')
+                            max_batches=args.max_batches, preview=args.command == 'preview',
+                            continue_on_error=args.continue_on_error, accept_code_update=args.accept_code_update)
                     finally:
                         monday.session.close()
         print(json.dumps(result, indent=2, default=str))
-        return 0
+        return 1 if result.get('failed_projects') else 0
     except (ValueError, RuntimeError) as exc:
         LOG.error('Backfill stopped: %s. Inspect the retained evidence and resume the same campaign.', exc)
         return 1

@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import timedelta
+from decimal import Decimal
 import json
 from types import SimpleNamespace
 from uuid import uuid4
@@ -219,6 +220,22 @@ def test_shared_source_contributions_are_not_deduplicated(backfill, monkeypatch)
     assert job['result']['rows_written']['subitems'] == 2
 
 
+@pytest.mark.parametrize('raw,expected', [
+    ('659253.6899999999', '659253.69'), ('1.005', '1.01'),
+    ('-1.005', '-1.01'), ('0.0000000001', '0.00'),
+])
+def test_source_rounding_does_not_propose_an_endless_update(backfill, raw, expected):
+    p = backfill
+    set_column(p.source['subitems']['201'], batch.compare.SUBITEM_COLUMNS['new_enquiry_value'],
+               {'__typename': 'FormulaValue', 'display_value': raw})
+    manifest = prepare(p)
+    assert run(p, manifest)['complete']
+    child = life.read_rows(p.c, 'subitems', 'monday_id', ['201'])[0]
+    assert Decimal(str(child['new_enquiry_value'])) == Decimal(expected)
+    case = batch.capture_cases(p.c, reader(p), [{'101': {'201': '301'}}])[0]
+    assert not any(case['values'].values())
+
+
 def test_shared_parent_group_stays_atomic(backfill, monkeypatch):
     p = backfill
     add_project(p, monkeypatch, shared=True)
@@ -398,6 +415,185 @@ def test_checkpoint_ignores_columns_requested_only_by_batch_neighbours(backfill)
     p.source['hidden_items']['301']['column_values'].append(
         {'id': 'unrelated_column', '__typename': 'NumbersValue', 'number': 456})
     assert batch.narrow_source(p.source, group) == original
+
+
+def test_continue_after_capture_failure_and_retry_only_failed_project(backfill, monkeypatch):
+    p = backfill
+    add_project(p, monkeypatch)
+    manifest = prepare(p)
+    p.source['projects']['101']['state'] = 'archived'
+    result = run(p, manifest, continue_on_error=True)
+    assert result['verified_projects'] == 1 and result['complete'] is False
+    assert result['failed_projects'] == 1 and result['failed_project_ids'] == ['101']
+    assert result['failures']['101']['phase'] == 'capture'
+    assert result['phase'] == 'incomplete_with_errors'
+    assert archive.state_row(p.c, 'projects', '101') is None
+    p.source['projects']['101']['state'] = 'active'
+    original = batch.apply_case
+    def remaining(connection, manifest, case):
+        assert set(case['group']) == {'101'}
+        return original(connection, manifest, case)
+    monkeypatch.setattr(batch, 'apply_case', remaining)
+    result = run(p, manifest, continue_on_error=True)
+    assert result['complete'] and result['verified_projects'] == 2
+    assert result['failed_project_ids'] == [] and result['failed_projects'] == 0
+
+
+def test_continue_after_rolled_back_write(backfill, monkeypatch):
+    p = backfill
+    add_project(p, monkeypatch)
+    manifest = prepare(p)
+    baseline = life.read_rows(p.c, 'projects', 'monday_id', ['101'])
+    original = batch.write_values
+    def fail_one(connection, job, case):
+        result = original(connection, job, case)
+        if '101' in case['group']:
+            connection.execute('SELECT 1/0')
+        return result
+    monkeypatch.setattr(batch, 'write_values', fail_one)
+    result = run(p, manifest, continue_on_error=True)
+    assert result['verified_projects'] == 1 and result['failed_project_ids'] == ['101']
+    assert result['failures']['101']['phase'] == 'apply'
+    assert result['pending_verification_projects'] == 0
+    assert life.read_rows(p.c, 'projects', 'monday_id', ['101']) == baseline
+    assert archive.state_row(p.c, 'projects', '101') is None
+    assert batch.receipt(p.c, manifest, {'101': {'201': '301'}})['result']['phase'] == 'prepared'
+
+
+def test_continue_after_verification_failure_without_replaying_writes(backfill, monkeypatch):
+    p = backfill
+    add_project(p, monkeypatch)
+    manifest = prepare(p)
+    original = batch.verify_case
+    def fail_one(connection, manifest, case, job):
+        if '101' in case['group']:
+            raise life.ReviewRequired('Simulated verification disagreement')
+        return original(connection, manifest, case, job)
+    monkeypatch.setattr(batch, 'verify_case', fail_one)
+    result = run(p, manifest, continue_on_error=True)
+    assert result['verified_projects'] == 1 and result['failed_project_ids'] == ['101']
+    assert result['failures']['101']['phase'] == 'verification'
+    assert result['pending_verification_projects'] == 1
+    monkeypatch.setattr(batch, 'verify_case', original)
+    monkeypatch.setattr(batch, 'apply_case', lambda *args: pytest.fail('Do not repeat business writes'))
+    assert run(p, manifest, continue_on_error=True)['complete']
+
+
+def test_preview_checks_pending_verification_without_writes(backfill):
+    p = backfill
+    manifest = prepare(p)
+    group = {'101': {'201': '301'}}
+    case = batch.capture_cases(p.c, reader(p), [group])[0]
+    batch.apply_case(p.c, manifest, case)
+    p.source['projects']['101']['name'] = 'Source changed after apply'
+    tables = [*life.BOARDS.values(), 'monday_item_lifecycle', 'monday_lifecycle_events', 'monday_lifecycle_audit']
+    baseline = {t: rows(p.c, t) for t in tables}
+    p.c.execute('SET default_transaction_read_only=on')
+    result = batch.execute(p.c, reader(p), p.directory, preview=True, continue_on_error=True)
+    assert result['read_only'] and result['failed_project_ids'] == ['101']
+    assert result['failures']['101']['phase'] == 'preview_verification'
+    assert 'Post-write source' in result['failures']['101']['error']
+    assert {t: rows(p.c, t) for t in tables} == baseline
+
+
+@pytest.mark.parametrize('error', [ValueError('Monday cooldown'), RuntimeError('transport'),
+                                  psycopg.OperationalError('connection lost')])
+def test_systemic_failures_stop_without_per_project_retries(backfill, monkeypatch, error):
+    p = backfill
+    add_project(p, monkeypatch)
+    manifest = prepare(p)
+    baseline = rows(p.c, 'monday_item_lifecycle')
+    calls = []
+    def fail_capture(*args):
+        calls.append(True)
+        raise error
+    monkeypatch.setattr(batch, 'capture_cases', fail_capture)
+    with pytest.raises(type(error)):
+        run(p, manifest, continue_on_error=True)
+    assert len(calls) == 1 and rows(p.c, 'monday_item_lifecycle') == baseline
+    assert json.loads((p.directory / 'result.json').read_text())['phase'] == 'stopped'
+
+
+def test_supported_upgrade_recovers_completed_and_pending_receipts(backfill, monkeypatch, tmp_path):
+    p = backfill
+    add_project(p, monkeypatch)
+    set_column(p.source['subitems']['202'], batch.compare.SUBITEM_COLUMNS['new_enquiry_value'],
+               {'__typename': 'FormulaValue', 'display_value': '659253.6899999999'})
+    manifest = prepare(p)
+    original = batch.verify_case
+    def stop_pending(connection, manifest, case, job):
+        if '102' in case['group']:
+            raise KeyboardInterrupt
+        return original(connection, manifest, case, job)
+    monkeypatch.setattr(batch, 'verify_case', stop_pending)
+    with pytest.raises(KeyboardInterrupt):
+        run(p, manifest)
+    baseline = {t: rows(p.c, t) for t in life.BOARDS.values()}
+    completed = batch.receipt(p.c, manifest, {'101': {'201': '301'}})
+    pending = batch.receipt(p.c, manifest, {'102': {'202': '302'}})
+    monkeypatch.setattr(batch, 'RECOVERABLE_CODE_DIGESTS', (manifest['code'],))
+    monkeypatch.setattr(batch, 'runtime_code', lambda: 'f' * 64)
+    p.directory = tmp_path / 'recovered_after_deploy'
+    assert prepare(p) == manifest
+    with pytest.raises(ValueError, match='Campaign approval/code/database/pilot'):
+        run(p, manifest)
+    monkeypatch.setattr(batch, 'verify_case', original)
+    monkeypatch.setattr(batch, 'apply_case', lambda *args: pytest.fail('Do not replay either project'))
+    result = run(p, manifest, continue_on_error=True, accept_code_update=True)
+    assert result['complete'] and result['verified_projects'] == 2
+    assert result['pending_verification_projects'] == 0
+    assert {t: rows(p.c, t) for t in life.BOARDS.values()} == baseline
+    assert batch.receipt(p.c, manifest, {'101': {'201': '301'}}) == completed
+    verified = batch.receipt(p.c, manifest, {'102': {'202': '302'}})
+    assert verified['payload'] == pending['payload']
+    assert verified['result']['verified_code_sha256'] == 'f' * 64
+
+
+@pytest.mark.parametrize('field', ['target', 'approval_sha256', 'expected_projects', 'pilot_plan_sha256', 'code'])
+def test_code_upgrade_does_not_bypass_other_identity_checks(backfill, monkeypatch, field):
+    p = backfill
+    manifest = prepare(p)
+    monkeypatch.setattr(batch, 'RECOVERABLE_CODE_DIGESTS', (manifest['code'],))
+    monkeypatch.setattr(batch, 'runtime_code', lambda: 'f' * 64)
+    pilot.write_json(p.directory / 'manifest.json', {**manifest, field: 'tampered'})
+    with pytest.raises(ValueError):
+        run(p, manifest, accept_code_update=True, continue_on_error=True)
+    assert not rows(p.c, 'monday_item_lifecycle')
+
+
+def test_unknown_existing_identity_cannot_be_reprepared(backfill, monkeypatch, tmp_path):
+    p = backfill
+    manifest = prepare(p)
+    assert run(p, manifest)['complete']
+    monkeypatch.setattr(batch, 'runtime_code', lambda: 'f' * 64)
+    monkeypatch.setattr(batch, 'RECOVERABLE_CODE_DIGESTS', ())
+    p.directory = tmp_path / 'unknown_campaign'
+    with pytest.raises(ValueError, match='cannot be reconstructed safely'):
+        prepare(p)
+    assert not p.directory.exists()
+
+
+def test_cli_reports_failure_exit_status(backfill, monkeypatch, capsys):
+    p = backfill
+    manifest = prepare(p)
+    class ConnectionContext:
+        def __enter__(self):
+            return p.c
+        def __exit__(self, *args):
+            return False
+    monday = reader(p)
+    monday.session = SimpleNamespace(close=lambda: None)
+    monkeypatch.setattr(life, 'connect', ConnectionContext)
+    monkeypatch.setattr(batch.compare, 'ComparisonMondayClient', lambda: monday)
+    p.source['projects']['101']['state'] = 'archived'
+    args = ['run', '--run-dir', str(p.directory), '--confirm-run-id', manifest['run_id'],
+            '--continue-on-error']
+    assert batch.main(args) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result['complete'] is False and result['failed_project_ids'] == ['101']
+    p.source['projects']['101']['state'] = 'active'
+    assert batch.main(args) == 0
+    assert json.loads(capsys.readouterr().out)['complete'] is True
 
 
 def test_pinned_full_partition_and_batches():

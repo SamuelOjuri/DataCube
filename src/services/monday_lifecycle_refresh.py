@@ -35,7 +35,7 @@ def fetch_projects(monday, project_ids):
             raise life.ReviewRequired('Selected project is now a subitem')
         for child in parent['subitems']:
             if child['id'] in membership or (child.get('parent_item') or {}).get('id') != pid:
-                raise ValueError('Duplicate or inconsistent current Monday child membership')
+                raise life.ReviewRequired('Duplicate or inconsistent current Monday child membership')
             membership[child['id']] = pid
     relevant = {PARENT_COLUMNS[f] for f in compare.PARENT_FIELDS}
     mirror_parents = [{**parent, 'column_values': [c for c in parent['column_values'] if c['id'] in relevant]}
@@ -50,7 +50,7 @@ def fetch_projects(monday, project_ids):
     for cid, pid in membership.items():
         child = life.require_item(children, cid, 'subitems', 'active')
         if (child.get('parent_item') or {}).get('id') != pid:
-            raise ValueError('Child moved during refresh')
+            raise life.ReviewRequired('Child moved during refresh')
         hidden_ids.update(compare.links(child))
     checked = {SUBITEM_COLUMNS[f] for f in (*compare.CHILD_FIELDS, 'new_enquiry_value')}
     mirror_children = [{**c, 'column_values': [v for v in c['column_values'] if v['id'] in checked]}
@@ -201,13 +201,15 @@ def build_values(pid, source, before, contract, *, lifecycle=None, reparent_id=N
     for table in current:
         for item in sorted(set(proposed[table]) | set(seeds[table])):
             row = {**seeds[table].get(item, {}), **proposed[table].get(item, {})}
+            # Compare at the precision actually persisted, not raw formula precision.
+            row = reconcile.normalize_updates({table: [row]}, contract)[table][0]
             old = current[table].get(item)
             if old is not None:
                 row = {k: v for k, v in row.items() if k == 'monday_id'
                        or not same_value(old.get(k), v, contract[table][k])}
             if old is None or len(row) > 1:
                 values[table].append(row)
-    return reconcile.normalize_updates(values, contract), issues
+    return values, issues
 
 
 def write_values(connection, values, before, contract, *, job=None):

@@ -212,10 +212,24 @@ business updates and pipelined audited observations retain the existing
 
 Each batch gets two matching source captures and checked SQL baselines before
 writing. Each project/group commits separately, followed by fresh batch
-verification. API calls never occur while write locks are held. The process
-stops on source or SQL drift, missing/inactive items, unsupported projections,
-outside owners, database failures or changed exclusions. It does not silently
-skip failures, guess new links or perform deletion/archive/restoration.
+verification. API calls never occur while write locks are held. By default the
+process stops on errors. Add `--continue-on-error` for the
+[invoice-date backfill](../scripts/backfill_invoice_dates.py) pattern: batch reads,
+changed-only writes, isolated per-project errors and progress summaries. A scoped
+review failure, data/constraint error or lock/statement timeout leaves that
+project/group unresolved and allows other approved groups to proceed. A failed
+bulk capture is retried as individual groups to isolate scoped problems.
+Shared-source groups remain indivisible. Authentication, API transport/cooldown,
+connection, schema and unexpected programming errors still stop the invocation;
+they are not retried across thousands of projects. Missing/inactive items, changed
+exclusions or links never authorize guessed states, deletion or restoration.
+
+Results include `failed_projects`, `failed_project_ids` and a `failures` mapping
+with each project's phase and reason. An invocation with failures returns exit
+code **1**, `phase: incomplete_with_errors` and `complete: false`, even if other
+projects succeeded. Rerunning retries unresolved projects, not completed writes.
+The `preview` command is the read-only/dry-run equivalent and also checks existing
+applied-but-unverified receipts against fresh evidence.
 
 Keep the foreground shell/process alive; **do not run concurrent copies** or
 deploy different code while the campaign is in progress. To deliberately
@@ -239,6 +253,44 @@ are retained under unique attempt directories. Preserve them on persistent
 storage or download them before a Render redeploy. If the local directory is
 lost, rerun `prepare` with the **same pilot UUID, approval and code**: it
 reconstructs the same campaign identity and resumes from Supabase receipts.
+
+### Recovering the 6 October rounding failure
+
+The first stalled project had an API enquiry value of `659253.6899999999`.
+Supabase correctly stored `659253.69`, but the old verifier compared before
+rounding and kept proposing the same update. The refresh now normalizes to the
+database column's precision **before** calculating differences. This does not
+relax state, ownership, financial or checkpoint verification.
+
+Read-only diagnosis found 190 verified projects and 25 applied-but-unverified
+projects in the existing campaign. Stop any old backfill process, deploy the fix,
+and keep the original evidence directory if it is available. No SQL migration is
+needed. If Render replaced the local directory, recover into a new directory:
+
+```bash
+python -m scripts.monday_archive_backfill prepare --run-dir archive_backfill_02 --pilot-run-id "15b6d2ec-0b7d-429e-b65e-997b60a2f012"
+```
+
+Preparation can reconstruct the supported previous deployment's manifest only
+when its **entire hash** matches the existing Supabase receipts. It validates
+every receipt's scope and identity; unknown or mixed identities are rejected.
+It does not replace receipts or create a new campaign.
+
+Explicitly accept the updated code while retaining the original approved
+manifest, scope, database target, pilot and receipt identities:
+
+```bash
+python -m scripts.monday_archive_backfill preview --run-dir archive_backfill_02 --batch-size 25 --max-batches 1 --accept-code-update --continue-on-error
+python -m scripts.monday_archive_backfill run --run-dir archive_backfill_02 --confirm-run-id "a63dd908-b2ab-504d-8dae-9af0be5b99f2" --batch-size 25 --accept-code-update --continue-on-error
+python -m scripts.monday_archive_backfill status --run-dir archive_backfill_02 --accept-code-update
+```
+
+If reusing the intact original directory, omit preparation and substitute its
+name in these commands. Subsequent restarts use the same run command. Completed
+projects are untouched; the 25 pending projects require fresh matching
+verification, **not another financial write**. Applied and verified receipts
+record the actual new runtime fingerprint. Any genuine subsequent source/SQL
+drift remains unresolved and is reported rather than silently accepted.
 
 Completion covers this approved scope only, not the 47 held reportable projects.
 Recheck global coverage and keep reporting disabled until its readiness checks
