@@ -159,6 +159,91 @@ The ten-project result is **not** full reporting readiness. Rerun the coverage
 query above afterward and leave reporting disabled while other projects remain
 unverified or held.
 
+### Remaining approved IDs: automatic, resumable batches
+
+After the pilot succeeds, deploy [the batch runner](../scripts/monday_archive_backfill.py)
+and its [numeric-only approval input](../scripts/monday_archive_backfill_targets.json).
+The input is checksum-pinned to the original reviewed inventory; it does not
+include project names, financial values or credentials. No additional migration
+is needed. The same archive/lifecycle/reporting flags and privileged
+`SUPABASE_DB_URL` requirements above still apply.
+
+This workflow approves the **remaining scope once**, rather than requesting
+approval for each batch's individual field changes. Confirmation authorizes
+fresh source-based financial and metadata corrections, including meaningful
+NULL/zero differences, not just lifecycle flags. It preserves Won/Lost enquiry
+values, counts each eligible child contribution even when source IDs repeat,
+and never publishes changes to Monday.
+
+Prepare using the completed pilot UUID. This verifies the actual successful
+Supabase receipts and makes **no database changes**:
+
+```bash
+python -m scripts.monday_archive_backfill prepare --run-dir archive_backfill_01 --pilot-run-id "15b6d2ec-0b7d-429e-b65e-997b60a2f012"
+```
+
+For this approved inventory and pilot, the campaign UUID is
+`a63dd908-b2ab-504d-8dae-9af0be5b99f2`. Preparation must report **15,143 remaining
+projects, 37,396 subitems and 37,379 hidden sources**. The ten pilot projects,
+all held cases and New project/FREE exclusions are not selected again.
+The full initial inventory includes 44 remaining projects with no children;
+these are checked explicitly, not silently omitted.
+
+An optional read-only first-batch preview is available:
+
+```bash
+python -m scripts.monday_archive_backfill preview --run-dir archive_backfill_01 --batch-size 25 --max-batches 1
+```
+
+After confirming the prepared scope, start sequential automatic batches:
+
+```bash
+python -m scripts.monday_archive_backfill run --run-dir archive_backfill_01 --confirm-run-id "a63dd908-b2ab-504d-8dae-9af0be5b99f2" --batch-size 25
+```
+
+There is no per-batch prompt. `--batch-size` accepts 1-25 projects; captures are
+also limited to 500 related rows, so a batch may be smaller. Shared-source
+project groups cannot be split (an indivisible group can exceed the requested
+project count, but never 500 rows). In this approval, all parent groups are
+independent; repeated source IDs occur only within individual projects.
+The largest approved project has 139 children and 279 related rows. Set-based
+business updates and pipelined audited observations retain the existing
+750 ms lock, four-second statement and ten-second transaction limits.
+
+Each batch gets two matching source captures and checked SQL baselines before
+writing. Each project/group commits separately, followed by fresh batch
+verification. API calls never occur while write locks are held. The process
+stops on source or SQL drift, missing/inactive items, unsupported projections,
+outside owners, database failures or changed exclusions. It does not silently
+skip failures, guess new links or perform deletion/archive/restoration.
+
+Keep the foreground shell/process alive; **do not run concurrent copies** or
+deploy different code while the campaign is in progress. To deliberately
+stop after a bounded number of batches, add `--max-batches 10`. That successful
+pause returns `phase: paused` and `complete: false`; it is not completion.
+
+Rerun the **same run command** to resume. Verified projects are skipped and
+applied-but-unverified projects are verified without rewriting business values.
+Supabase operator receipts, not local counters, determine progress. They are
+never queued to ordinary workers and block readiness while unresolved. Fresh
+errors after partial application require review; do not clear/requeue receipts.
+Check progress without writes using:
+
+```bash
+python -m scripts.monday_archive_backfill status --run-dir archive_backfill_01
+```
+
+The final result must have `complete: true`, `verified_projects: 15143` and
+`remaining_projects: 0`. Private source snapshots and proposed field changes
+are retained under unique attempt directories. Preserve them on persistent
+storage or download them before a Render redeploy. If the local directory is
+lost, rerun `prepare` with the **same pilot UUID, approval and code**: it
+reconstructs the same campaign identity and resumes from Supabase receipts.
+
+Completion covers this approved scope only, not the 47 held reportable projects.
+Recheck global coverage and keep reporting disabled until its readiness checks
+pass and those remaining cases have their separate resolutions.
+
 Operational guarantees:
 
 - Archiving retains business rows, their financial values and historical parent

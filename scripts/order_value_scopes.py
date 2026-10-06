@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import psycopg
 from psycopg import sql
-from psycopg.rows import dict_row
+from psycopg.rows import dict_row, tuple_row
 from psycopg.types.json import Jsonb
 
 from scripts import backfill_order_values as backfill
@@ -413,7 +413,7 @@ def targeted_orders(monday, record):
 def write_updates(connection, updates):
     """Set-based statements keep the locked interval independent of network RTT per row."""
     counts = {}
-    with connection.cursor() as cursor:
+    with connection.cursor(row_factory=tuple_row) as cursor:
         for table in ('hidden_items', 'subitems', 'projects'):
             groups = defaultdict(list)
             for row in updates[table]:

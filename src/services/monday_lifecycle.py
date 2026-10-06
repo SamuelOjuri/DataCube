@@ -245,10 +245,20 @@ def marker(connection, table, item, blocked, job, *, parent=None):
         (table, item, blocked, job['event_key'], parent))
 
 
+AUDIT_SQL = ('INSERT INTO public.monday_lifecycle_audit '
+             '(event_key,action,table_name,monday_id,before_row,evidence) VALUES (%s,%s,%s,%s,%s,%s)')
+
+
 def audit(connection, job, action, table, item, before, evidence):
-    connection.execute('INSERT INTO public.monday_lifecycle_audit '
-        '(event_key,action,table_name,monday_id,before_row,evidence) VALUES (%s,%s,%s,%s,%s,%s)',
+    connection.execute(AUDIT_SQL,
         (job['event_key'], action, table, item, Jsonb(before), Jsonb(evidence)))
+
+
+def audit_many(connection, job, entries):
+    with connection.cursor() as cursor:
+        cursor.executemany(AUDIT_SQL, [
+            (job['event_key'], action, table, item, Jsonb(before), Jsonb(evidence))
+            for action, table, item, before, evidence in entries])
 
 
 def apply_deletion(connection, job, before, evidence, *, activity_proof=None):

@@ -20,26 +20,34 @@ from . import monday_archive as archive
 
 
 def fetch_project(monday, pid):
-    parents = compare.fetch_items(monday, [pid], sorted(set(PARENT_COLUMNS.values()) - {'name'}), parents=True)
-    parent = life.require_item(parents, pid, 'projects', 'active')
-    if parent.get('parent_item') is not None:
-        raise life.ReviewRequired('Selected project is now a subitem')
-    members = parent['subitems']
-    if len(members) > life.MAX_ROWS:
-        raise life.ReviewRequired('Parent exceeds the bounded lifecycle refresh size')
-    for child in members:
-        if (child.get('parent_item') or {}).get('id') != pid:
-            raise ValueError('Inconsistent current Monday child membership')
+    return fetch_projects(monday, [pid])
+
+
+def fetch_projects(monday, project_ids):
+    project_ids = sorted(set(project_ids))
+    if not project_ids or len(project_ids) > life.MAX_ROWS:
+        raise life.ReviewRequired('Select 1-500 exact projects')
+    parents = compare.fetch_items(monday, project_ids, sorted(set(PARENT_COLUMNS.values()) - {'name'}), parents=True)
+    membership = {}
+    for pid in project_ids:
+        parent = life.require_item(parents, pid, 'projects', 'active')
+        if parent.get('parent_item') is not None:
+            raise life.ReviewRequired('Selected project is now a subitem')
+        for child in parent['subitems']:
+            if child['id'] in membership or (child.get('parent_item') or {}).get('id') != pid:
+                raise ValueError('Duplicate or inconsistent current Monday child membership')
+            membership[child['id']] = pid
     relevant = {PARENT_COLUMNS[f] for f in compare.PARENT_FIELDS}
-    mirror_parent = {**parent, 'column_values': [c for c in parent['column_values'] if c['id'] in relevant]}
-    dependencies, child_columns = compare.mirror_dependencies([mirror_parent], compare.backfill.SUBITEM_BOARD_ID)
-    child_ids = {r['id'] for r in members} | dependencies
-    if len(child_ids) > life.MAX_ROWS:
+    mirror_parents = [{**parent, 'column_values': [c for c in parent['column_values'] if c['id'] in relevant]}
+                      for parent in parents.values()]
+    dependencies, child_columns = compare.mirror_dependencies(mirror_parents, compare.backfill.SUBITEM_BOARD_ID)
+    child_ids = set(membership) | dependencies
+    if len(child_ids) + len(project_ids) > life.MAX_ROWS:
         raise life.ReviewRequired('Too many mirror dependencies')
     child_columns |= set(SUBITEM_COLUMNS.values()) - {'name'}
     children = compare.fetch_items(monday, child_ids, sorted(child_columns))
     hidden_ids = set()
-    for cid in {r['id'] for r in members}:
+    for cid, pid in membership.items():
         child = life.require_item(children, cid, 'subitems', 'active')
         if (child.get('parent_item') or {}).get('id') != pid:
             raise ValueError('Child moved during refresh')
@@ -49,12 +57,12 @@ def fetch_project(monday, pid):
                        for c in children.values()]
     dependencies, hidden_columns = compare.mirror_dependencies(mirror_children, compare.backfill.HIDDEN_ITEMS_BOARD_ID)
     hidden_ids |= dependencies
-    if len(child_ids) + len(hidden_ids) + 1 > life.MAX_ROWS:
+    if len(child_ids) + len(hidden_ids) + len(project_ids) > life.MAX_ROWS:
         raise life.ReviewRequired('Refresh exceeds 500 related rows')
     hidden_columns |= set(HIDDEN_ITEMS_COLUMNS.values()) - {'name'}
     hidden = compare.fetch_items(monday, hidden_ids, sorted(hidden_columns), mirror_depth=0)
     return dict(projects=parents, subitems=children, hidden_items=hidden,
-                project_ids=[pid], extra_children=[])
+                project_ids=project_ids, extra_children=[])
 
 
 def read_snapshot(connection, pid, source):

@@ -109,13 +109,23 @@ def verify_parent_values(connection, job, pid):
                 'fields': sorted(FINANCIAL_FIELDS)})
 
 
-def observe(connection, job, table, item, evidence, verified_at, *, restore=False):
-    """Called inside the writer transaction, after a second matching API capture."""
-    source = life.require_item(evidence, item, table)
+OBSERVATION_SQL = '''
+    INSERT INTO public.monday_item_lifecycle
+        (table_name,monday_id,monday_state,state_verified_at,state_event_key,state_evidence)
+    VALUES (%s,%s,%s,%s,%s,%s)
+    ON CONFLICT(table_name,monday_id) DO UPDATE SET
+        monday_state=EXCLUDED.monday_state,state_verified_at=EXCLUDED.state_verified_at,
+        state_event_key=EXCLUDED.state_event_key,state_evidence=EXCLUDED.state_evidence,
+        changed_at=CASE WHEN monday_item_lifecycle.monday_state IS DISTINCT FROM EXCLUDED.monday_state
+            THEN now() ELSE monday_item_lifecycle.changed_at END,
+        recheck_after=now()+interval '1 day'
+'''
+
+
+def observation_values(table, item, source, previous, verified_at, *, restore=False):
     state = source.get('state')
     if state not in {'active', 'archived', 'deleted'}:
         raise life.ReviewRequired(f'Unknown API lifecycle state for {item}')
-    previous = state_row(connection, table, item)
     if previous and previous['state_verified_at'] and previous['state_verified_at'] > verified_at:
         raise life.ReviewRequired('A newer lifecycle observation already exists')
     if state == 'active' and previous and (
@@ -125,19 +135,17 @@ def observe(connection, job, table, item, evidence, verified_at, *, restore=Fals
     if table == 'subitems' and state == 'active' and not parent:
         raise life.ReviewRequired(f'Active subitem {item} has no verified parent')
     proof = {'basis': 'exact_id_monday_api', 'parent_monday_id': parent, 'item': source}
-    connection.execute('''
-        INSERT INTO public.monday_item_lifecycle
-            (table_name,monday_id,monday_state,state_verified_at,state_event_key,state_evidence)
-        VALUES (%s,%s,%s,%s,%s,%s)
-        ON CONFLICT(table_name,monday_id) DO UPDATE SET
-            monday_state=EXCLUDED.monday_state,state_verified_at=EXCLUDED.state_verified_at,
-            state_event_key=EXCLUDED.state_event_key,state_evidence=EXCLUDED.state_evidence,
-            changed_at=CASE WHEN monday_item_lifecycle.monday_state IS DISTINCT FROM EXCLUDED.monday_state
-                THEN now() ELSE monday_item_lifecycle.changed_at END,
-            recheck_after=now()+interval '1 day'
-    ''', (table, item, state, verified_at, job['event_key'], Jsonb(proof)))
-    life.audit(connection, job, 'observe_monday_state', table, item,
-               {k: str(v) if isinstance(v, datetime) else v for k, v in previous.items()} if previous else None,
+    before = {k: str(v) if isinstance(v, datetime) else v for k, v in previous.items()} if previous else None
+    return state, proof, before
+
+
+def observe(connection, job, table, item, evidence, verified_at, *, restore=False):
+    """Called inside the writer transaction, after a second matching API capture."""
+    source = life.require_item(evidence, item, table)
+    state, proof, before = observation_values(
+        table, item, source, state_row(connection, table, item), verified_at, restore=restore)
+    connection.execute(OBSERVATION_SQL, (table, item, state, verified_at, job['event_key'], Jsonb(proof)))
+    life.audit(connection, job, 'observe_monday_state', table, item, before,
                {**proof, 'verified_at': verified_at.isoformat(), 'state': state})
 
 
@@ -146,6 +154,28 @@ def observe_source(connection, job, source, verified_at, *, restore=False):
         for item, evidence in sorted(source.get(table, {}).items()):
             if evidence.get('state') == 'active':
                 observe(connection, job, table, item, {item: evidence}, verified_at, restore=restore)
+
+
+def observe_active_source_batch(connection, job, source, verified_at):
+    """Same observation rules, pipelined for a locked, bounded operator scope."""
+    ids = [item for table in life.BOARDS.values() for item in source[table]]
+    if not ids or len(ids) > life.MAX_ROWS:
+        raise life.ReviewRequired('Active observation batch must contain 1-500 rows')
+    connection.execute('LOCK TABLE public.monday_item_lifecycle IN SHARE ROW EXCLUSIVE MODE')
+    previous = {(r['table_name'], r['monday_id']): r for r in connection.execute(
+        'SELECT * FROM public.monday_item_lifecycle WHERE monday_id=ANY(%s)', (ids,)).fetchall()}
+    values, audits = [], []
+    for table in life.BOARDS.values():
+        for item in sorted(source[table]):
+            evidence = life.require_item(source[table], item, table, 'active')
+            state, proof, before = observation_values(
+                table, item, evidence, previous.get((table, item)), verified_at)
+            values.append((table, item, state, verified_at, job['event_key'], Jsonb(proof)))
+            audits.append(('observe_monday_state', table, item, before,
+                           {**proof, 'verified_at': verified_at.isoformat(), 'state': state}))
+    with connection.cursor() as cursor:
+        cursor.executemany(OBSERVATION_SQL, values)
+    life.audit_many(connection, job, audits)
 
 
 def enqueue_refresh(connection, parent, key):

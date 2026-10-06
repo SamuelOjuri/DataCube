@@ -42,6 +42,7 @@ outputs/analysis/
 !scripts/order_value_missing_subitems_2.json
 !scripts/project_placeholder_review_20261005.json
 !scripts/monday_archive_pilot_targets.json
+!scripts/monday_archive_backfill_targets.json
 
 # Logs and temporary files
 *.log
