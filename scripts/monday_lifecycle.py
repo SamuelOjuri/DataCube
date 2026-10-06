@@ -259,9 +259,10 @@ def main(argv=None):
         elif args.command == 'requeue':
             row = connection.execute("UPDATE public.monday_lifecycle_events SET status='pending',attempts=0,"
                 "next_attempt_at=now(),lease_token=NULL,lease_until=NULL,last_error=NULL,processed_at=NULL "
-                "WHERE event_key=%s AND status IN ('retry','review') RETURNING event_key", (args.event_key,)).fetchone()
+                "WHERE event_key=%s AND status IN ('retry','review') "
+                "AND NOT (payload ? 'operator_policy') RETURNING event_key", (args.event_key,)).fetchone()
             if not row:
-                raise ValueError('Only retry/review events can be requeued')
+                raise ValueError('Only non-operator retry/review events can be requeued')
             result = row
         elif args.command == 'reconcile':
             result = {'event_key': life.enqueue(connection, 'reconcile', args.board, args.item_id)}

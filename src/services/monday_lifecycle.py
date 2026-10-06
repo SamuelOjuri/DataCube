@@ -171,7 +171,7 @@ def finish(connection, job, status, result, *, error=None):
 
 
 @contextmanager
-def write_transaction(connection, job):
+def locked_write_transaction(connection):
     with connection.transaction():
         connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
         connection.execute("SET LOCAL lock_timeout='750ms'")
@@ -183,6 +183,12 @@ def write_transaction(connection, job):
         # Protect absent IDs, incoming links and cascades. No HTTP while locked.
         connection.execute('LOCK TABLE public.projects,public.hidden_items,public.subitems '
                            'IN SHARE ROW EXCLUSIVE MODE')
+        yield
+
+
+@contextmanager
+def write_transaction(connection, job):
+    with locked_write_transaction(connection):
         check_lease(connection, job)
         yield
 
@@ -319,6 +325,8 @@ def apply_deletion(connection, job, before, evidence, *, activity_proof=None):
 
 def process_job(connection, monday, job):
     from . import monday_archive as archive
+    if job['payload'].get('operator_policy') is not None:
+        raise ReviewRequired('Operator-only receipt; resume with its dedicated CLI, not a lifecycle worker')
     if job['payload'].get('archive_policy') is not None:
         if not archive.enabled() or job['payload']['archive_policy'] != archive.POLICY:
             raise ReviewRequired('Archive job requires enabled archive-capable code')

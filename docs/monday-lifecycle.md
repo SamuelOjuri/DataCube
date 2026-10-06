@@ -83,6 +83,82 @@ Deployment sequence:
    **after** the same coverage check. Those low-level views select verified
    populations; they are not a substitute for the readiness check.
 
+### Guarded initial coverage pilot
+
+Scheduled rehydration uses a three-day creation-date window, so it does not
+establish coverage for the full historical population. The ordinary by-ID
+rehydrator also warms hidden records by name prefix; **do not use it for an
+exact approved pilot boundary**.
+
+Deploy [the pilot runner](../scripts/monday_archive_pilot.py) and its
+[pinned approval](../scripts/monday_archive_pilot_targets.json) first. This
+approval contains ten parents, twelve children and twelve hidden sources from
+the reviewed initial coverage inventory. It excludes New project/FREE records,
+archived/missing records and unresolved audit holds. It is not approval to run
+the remaining 15,143 initial-scope projects.
+
+Keep `MONDAY_ARCHIVE_ENABLED=true`, `MONDAY_LIFECYCLE_ENABLED=true` and
+`MONDAY_ARCHIVE_REPORTING_ENABLED=false` on all replacement writers. The CLI
+requires `SUPABASE_DB_URL` with full visibility, normal foreign-key enforcement,
+PostgreSQL 17+ and the already-installed archive migrations. No additional SQL
+migration is required for this runner.
+
+From the repository root (including the Render shell):
+
+```bash
+python -m scripts.monday_archive_pilot stage --run-dir archive_pilot_01
+```
+
+Staging is read-only in both systems. Review `review.csv` for **every** proposed
+field change (`null` means NULL, not zero), and retain `plan.json` and
+`manifest.json`. Even if no business values change, the apply establishes audited
+active-state and financial coverage. Copy the UUID printed as `run_id` only
+after approving the preview:
+
+```bash
+python -m scripts.monday_archive_pilot apply --run-dir archive_pilot_01 --confirm-run-id "UUID_FROM_STAGE"
+```
+
+Apply rechecks all ten projects before starting, then repeats the source reads
+for each project. Each project has its own bounded transaction and a fresh
+post-write verification. A failure stops the run; earlier verified projects
+remain committed. Source/schema/lifecycle/SQL drift, missing or non-active items,
+changed membership/links, outside stored owners, and changed placeholder/FREE
+names stop the operation without guessed repairs. There is no prefix warm-up,
+Monday mutation, deletion, archive, restoration or queued refresh fan-out.
+SQL business rows and lifecycle metadata are locked only during short write
+transactions; no network reads occur while locked.
+
+`result.json` must report `complete: true`, ten `verified_projects`, and
+`expected_projects: 10`. Supabase retains authoritative audit receipts keyed
+`archive-pilot:<run-id>:<project-id>`. Receipts are never queued: only `review`
+or `processed` states are committed, so even older workers cannot claim them.
+A `review` receipt means operator completion is still required and blocks
+archive-reporting readiness. Financial verification is set only after the fresh
+post-write source projection agrees with checked SQL.
+
+For an interruption, retain the **same** directory, code and UUID. Rerun
+`apply` to resume unfinished projects without replaying verified writes.
+If all business writes finished and only verification remains, use:
+
+```bash
+python -m scripts.monday_archive_pilot verify --run-dir archive_pilot_01 --confirm-run-id "UUID_FROM_STAGE"
+```
+
+`verify` can certify lifecycle metadata and close the operator receipt; it does
+not rewrite business values. New applies expire after 24 hours; each write also
+requires a matching source capture less than five minutes old. Verification
+still requires unchanged source, SQL, lifecycle, schema, code and approval.
+If these guards reject a partial run, stop for review rather than restaging
+blindly or requeueing operator receipts to ordinary workers. A disconnected
+commit has an uncertain outcome until the retained database receipt is checked.
+Download/copy the private run directory before a Render restart or redeploy
+unless it is on a persistent disk. Preview files are not automatically deployed.
+
+The ten-project result is **not** full reporting readiness. Rerun the coverage
+query above afterward and leave reporting disabled while other projects remain
+unverified or held.
+
 Operational guarantees:
 
 - Archiving retains business rows, their financial values and historical parent
