@@ -115,6 +115,8 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    Record decisions on access scope, currency/tax presentation, reporting timezone, fiscal calendar, current-period behaviour, provider data handling and required historical classifications. Set target response latency, concurrent-user/query load, run limits and cost per successful answer, together with the representative test workload. The Nov-Oct budget rows are evidence to check, not sufficient proof of the organisation-wide fiscal calendar.
 
+   **Implementation update:** Phase 1 evidence capture, exact-ID reconciliation selections, deployment/freshness/decision review, offline PBIX inspection, typed Power BI comparison and an explicit certification gate are now implemented. See the [assessment](bi-analyst-phase1-assessment.md) and [runbook](bi-analyst-phase1-certification.md). The supplied reports and live reader audit provide additional evidence but do not close source/business certification or same-snapshot numerical parity.
+
    **Deliverables:** deployed inventory, metric/source reconciliation, coverage and freshness report, decision register, versioned reference dataset and golden-question set.
 
    **Exit gate:** all five metric definitions and their eligible reporting populations are certified for the first release. Remaining issues have explicit scope and owners; no completed pilot is presented as certification of the entire dataset.

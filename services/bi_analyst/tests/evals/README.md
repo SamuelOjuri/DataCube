@@ -1,8 +1,19 @@
 # Phase 1 BI evaluation dataset
 
-This tooling builds a versioned reference dataset in the **TEST Supabase project**
+The dataset commands build a versioned reference dataset in the **TEST Supabase project**
 configured in the repository `.env`. It is independent of the future analyst API
 and never imports DataCube's `src` package, starts workers, or contacts Monday.
+
+Additional Phase 1 evidence/review commands are documented in the
+[certification runbook](../../../../docs/bi-analyst-phase1-certification.md).
+They add TEST inventory/reconciliation capture, offline PBIX inspection, typed
+Power BI result comparison and an owner-review exit gate. The explicit
+`phase1-reader` command uses the live `PG_*` reader credential for a read-only
+reporting-source audit, separate from TEST dataset operations. See the
+[assessment](../../../../docs/bi-analyst-phase1-assessment.md) for current findings.
+The existing Power BI reports connect to the live database. `phase1-powerbi`
+compares only exports aligned to the frozen TEST dataset; live-report validation
+must use matching live-source evidence instead.
 
 The question pack contains 70 scenarios: 40 metric questions (eight per core
 metric), ten two-turn follow-ups, ten ambiguous questions, and ten synthetic edge

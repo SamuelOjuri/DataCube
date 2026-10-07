@@ -288,12 +288,10 @@ def freeze(args):
                       'certification':'pending_business_source_and_Power_BI_review'}))
 
 
-def verify(args):
-    data_schema,key_schema,reader = names(args.dataset)
-    conn,identity = connect()
-    with conn:
-        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
-        conn.execute("SET LOCAL statement_timeout='120s'")
+def verify_snapshot(conn, identity, dataset):
+    """Verify within the caller's read-only transaction; return sealed evidence."""
+    data_schema,key_schema,reader = names(dataset)
+    with conn.transaction():
         conn.execute("SET LOCAL timezone='Europe/London'")
         artifacts = {r['name']:r['payload'] for r in conn.execute(sql.SQL('SELECT name,payload FROM {}.artifacts').format(sql.Identifier(key_schema)))}
         manifest = artifacts['manifest']
@@ -308,6 +306,8 @@ def verify(args):
         independent = independent_checks(conn,expected_results)
         conn.execute(sql.SQL('SET LOCAL ROLE {}').format(sql.Identifier(reader)))
         refs = {**references('reference.sql'),**references('fixture_reference.sql')}
+        if refs.keys() != expected_results.keys():
+            raise RuntimeError('Reference query set changed; create a reviewed new dataset version')
         if fingerprint(cases())!=manifest['questions_sha256']:
             raise RuntimeError('Question definitions changed; create a reviewed new dataset version')
         for name,query in refs.items():
@@ -319,9 +319,19 @@ def verify(args):
                 raise RuntimeError('Reference result columns changed: '+name)
             if not equivalent(cur.fetchall(),expected['rows']):
                 raise RuntimeError('Reference result mismatch: '+name)
+        conn.execute('RESET ROLE')
     result = {'dataset':data_schema,'verified_tables':len(signatures),'reference_queries_passed':len(refs),
               'independent_checks_passed':len(independent),'access_checks_passed':len(access),
               'application_conversations_executed':False,'certification':manifest['certification']}
+    return artifacts, result
+
+
+def verify(args):
+    conn,identity = connect()
+    with conn:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        conn.execute("SET LOCAL statement_timeout='120s'")
+        _, result = verify_snapshot(conn, identity, args.dataset)
     write_json(args.output/'verification.json',result)
     print(json.dumps(result))
 

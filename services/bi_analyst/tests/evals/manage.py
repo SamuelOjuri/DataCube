@@ -67,7 +67,7 @@ def connect():
     return conn, identity
 
 
-def inventory(conn):
+def inventory(conn, *, include_cron=True):
     result = {}
     queries = {
         'server': "SELECT current_database() AS database, current_user AS role, version(), current_timestamp AS captured_at, current_setting('TimeZone') AS timezone, current_setting('max_connections') AS max_connections",
@@ -83,7 +83,7 @@ def inventory(conn):
     for name, query in queries.items():
         result[name] = conn.execute(query).fetchall()
     result['cron_job_count'] = None
-    if conn.execute("SELECT to_regclass('cron.job') AS relation").fetchone()['relation']:
+    if include_cron and conn.execute("SELECT to_regclass('cron.job') AS relation").fetchone()['relation']:
         result['cron_job_count'] = conn.execute('SELECT count(*) AS n FROM cron.job').fetchone()['n']
     return result
 
@@ -103,13 +103,34 @@ def inspect(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['inspect','freeze','verify','report','probe'])
+    parser.add_argument('command', choices=['inspect','freeze','verify','report','probe',
+                                          'phase1-capture','phase1-powerbi','phase1-review',
+                                          'phase1-pbix','phase1-reader'])
     parser.add_argument('--output', type=Path, default=ROOT / 'outputs/bi_analyst_evals/preflight')
     parser.add_argument('--dataset', default='bi_eval_20261007_v1')
     parser.add_argument('--as-of', type=date.fromisoformat)
+    parser.add_argument('--sample-size', type=int, default=3)
+    parser.add_argument('--input', type=Path, help='Power BI export JSON for phase1-powerbi')
+    parser.add_argument('--evidence', type=Path, help='Evidence packet for phase1-review')
+    parser.add_argument('--review', type=Path, help='Owner review JSON for phase1-review')
+    parser.add_argument('--power-bi', type=Path, help='Optional comparison packet for phase1-review')
+    parser.add_argument('--pbix', type=Path, help='Optional PBIX inventory packet to bind into capture')
+    parser.add_argument('--reader-audit', type=Path, help='Optional PG_* reader inventory packet to bind into capture')
     args = parser.parse_args()
+    if args.command in ('phase1-powerbi', 'phase1-pbix') and not args.input:
+        parser.error(args.command + ' requires --input')
+    if args.command == 'phase1-review' and (not args.evidence or not args.review):
+        parser.error('phase1-review requires --evidence and --review')
+    if args.command.startswith('phase1-') and args.output == ROOT / 'outputs/bi_analyst_evals/preflight':
+        parser.error('Phase 1 commands require an explicit --output inside outputs/')
     try:
-        if args.command == 'inspect':
+        if args.command.startswith('phase1-'):
+            from phase1 import capture, power_bi, review_command
+            from powerbi import inspect_pbix, audit_reader
+            return {'phase1-capture':capture, 'phase1-powerbi':power_bi,
+                    'phase1-review':review_command, 'phase1-pbix':inspect_pbix,
+                    'phase1-reader':audit_reader}[args.command](args) or 0
+        elif args.command == 'inspect':
             inspect(args)
         else:
             from dataset import freeze,verify,report,probe
@@ -145,6 +166,9 @@ def main():
                           'diagnosis': diagnosis,
                           'connection_detail': safe_message[:700],
                           'detail': 'Database operation failed; credentials and server messages suppressed.'}), file=sys.stderr)
+        return 1
+    except (ValueError, RuntimeError, OSError) as exc:
+        print(json.dumps({'error': type(exc).__name__, 'detail': str(exc)}), file=sys.stderr)
         return 1
     return 0
 

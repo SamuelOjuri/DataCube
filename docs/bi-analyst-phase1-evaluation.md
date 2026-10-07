@@ -106,7 +106,7 @@ the original backup time.
 |---|---|---|
 | Original Supabase backup timestamp | Pending | Platform owner |
 | Source-authoritative reconciliation for all five metrics | Pending | BI/data engineer and metric owner |
-| Power BI comparison on the same frozen data and filters | Pending; no PBIX/DAX/reference exports supplied | BI report owner |
+| Power BI comparison on the same frozen data and filters | Pending; supplied PBIX definitions inspected, but existing reports use the live database and no aligned frozen-data result export has been supplied | BI report owner |
 | Currency, tax basis and fiscal calendar | Pending; no assumptions used to answer fiscal questions | Finance/business owner |
 | Business timezone | Europe/London used reproducibly for this evaluation; confirmation pending | Business owner |
 | Per-user access scope, provider data handling and retention | Pending; this snapshot is restricted to evaluation readers/admins | Platform/business owner |
@@ -116,3 +116,26 @@ the original backup time.
 Approve a new version for corrected definitions or data. The existing answer key
 is sealed and must not be overwritten merely because a later implementation
 produces different results.
+
+## Subsequent Phase 1 implementation
+
+The [assessment](bi-analyst-phase1-assessment.md) and
+[certification runbook](bi-analyst-phase1-certification.md) describe the new evidence
+capture, exact-ID selections, decision register, report inspection/comparison and
+exit gate. The original dataset and expected answers remain sealed.
+
+The two subsequently supplied PBIX files were inspected locally. Their 68 measures
+principally cover forecasts, weighted enquiries, budgets and smoothing; their
+cached refresh metadata predates this dataset. A separate, explicitly requested
+live audit using `PG_USER`/`PG_USER_PASSWORD` found permission failures for ten of
+13 checked sources, including five sources used by these reports. This later audit
+does not change the TEST-only provenance of the original evaluation capture.
+
+The user confirmed that Power BI connects to the live database. The live reader
+audit and frozen TEST checks are separate evidence sources. Local PBIX refresh
+metadata does not establish the current refresh state of live-connected or
+published reports; numerical comparisons must align the data version and filters.
+
+Formal source/business certification and same-snapshot Power BI numerical parity
+remain pending. New review commands keep these blockers visible rather than
+treating the existing dataset checks as completion of the Phase 1 exit gate.

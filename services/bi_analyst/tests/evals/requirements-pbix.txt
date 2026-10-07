@@ -1,0 +1,3 @@
+# Optional offline report inspection; core evaluation commands do not import it.
+-r requirements.txt
+pbixray==0.15.5
