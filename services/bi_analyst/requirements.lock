@@ -1,0 +1,16 @@
+# Exact runtime and test environment. Install alongside pyproject.toml.
+annotated-types==0.7.0
+colorama==0.4.6; sys_platform == "win32"
+iniconfig==2.3.0
+packaging==25.0
+pluggy==1.6.0
+psycopg==3.2.12
+psycopg-binary==3.2.12
+pydantic==2.11.7
+pydantic-core==2.33.2
+Pygments==2.19.2
+pytest==8.4.2
+python-dotenv==1.1.1
+typing-extensions==4.15.0
+typing-inspection==0.4.1
+tzdata==2025.2

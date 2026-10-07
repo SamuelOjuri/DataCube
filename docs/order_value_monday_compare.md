@@ -5,6 +5,26 @@ copies confirmed differences into existing Supabase rows. It never writes to
 Monday, infers relationships from item names, excludes a business status such as
 `Archived`, deduplicates financial contributions, or repairs Monday formulas.
 
+## Order Value contract clarification: 8 October 2026
+
+The [owner-specified business definition](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+is **Total Customer Order Value**, hidden formula `formula_mkncjq9 =
+{numbers98__1} + {numbers3__1}` (material plus additional charges), mirrored through
+children to the parent. Parent and hidden totals retain different grains and
+verified membership; material-only is not an alternative approved parent definition.
+
+The supplied [board schema](../app_data/BoardSchema.txt) confirms the hidden
+formula and child `lookup_mknc7a23` mirror, but its saved parent `mirror5__1`
+instead sums child `mirror17__1`, which reads material `numbers98__1`. The earlier
+diagnosis below likewise observed a material source. These are wiring evidence
+to reconcile with the clarified requirement, not proof of today's live settings.
+
+This comparison tool still records the actual configured Monday mirror and does
+not reconfigure Monday or substitute a different source. Verify the live chain,
+review any required configuration/writer correction, and stage fresh evidence
+before certifying parent Order Value. The analyst's population is current Monday
+API-active items, independently of business labels and placeholder classifications.
+
 ## Stage a fresh comparison
 
 From the repository root in PowerShell:
@@ -95,7 +115,8 @@ under `diagnose_16312_20261004b/` and `diagnose_16312_20261004c/`. This validate
 project's read path; it is not a completed comparison or verification of all 156.
 The source column is read from the live mirror settings: for example, the tested
 order mirror pointed to the material field, so the workflow must not substitute
-a different formula or add charges on its own.
+a different formula or add charges on its own. This is a historical diagnostic,
+not approval of material-only Order Value under the 8 October clarification.
 
 To reproduce a single-parent read without connecting to Supabase:
 

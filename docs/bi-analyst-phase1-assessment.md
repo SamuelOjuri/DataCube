@@ -5,6 +5,34 @@ then publish the semantic interface, then enable the application. The existing
 70-scenario dataset is a reproducible baseline, but does not establish source
 accuracy or business approval. Phase 1 therefore remains open.
 
+## Owner clarification: 8 October 2026
+
+The [corrected implementation plan](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+settles three previously ambiguous business requirements:
+
+- Current analytical eligibility is Monday API `state = active`, not
+  `reportable_projects` or its placeholder classifications. The owner confirms
+  the reportable-project feature is not fully implemented.
+- Monthly revenue must not require `Won - Closed (Invoiced)`: an API-active
+  parent with an eligible invoice qualifies even when that manual label is absent.
+  Positive amounts, invoice dates and completed months remain the monthly rules.
+- Order Value must include material plus additional charges via hidden
+  `formula_mkncjq9`, mirrored through children to the parent. A material-only
+  parent mirror is a wiring discrepancy, not a second approved definition.
+
+These choices no longer await a definition decision. Source/deployment alignment,
+complete active-state and membership evidence, revised reference results and
+version-bound certification still remain. The supplied board schema's saved
+parent mirror targets material only; live wiring needs verification. Existing
+`current_projects` also inherits `reportable_projects` exclusions, so neither
+that view nor the old coverage population can be adopted unchanged.
+
+The findings and test counts below describe the 7 October baseline. They have not
+been rerun for this correction. Preserve sealed answers and saved historical
+populations; use a new reviewed dataset/catalogue version for corrected results.
+
+## Existing evidence and remaining work
+
 The remaining engineering work now has executable tooling under
 [`services/bi_analyst/tests/evals`](../services/bi_analyst/tests/evals/README.md).
 The [certification runbook](bi-analyst-phase1-certification.md) describes its use.
@@ -66,14 +94,18 @@ design before relying on current report refreshes or reusing this reader role.
 Ordinary sync already delegates parent refresh to `archive.refresh_parents` when
 archive processing is enabled; otherwise it uses persisted-child rollups.
 Comparison/archive workflows preserve the configured parent mirror and verify
-current membership. Local code cannot establish deployed flags or versions.
+current membership. This describes existing behaviour, not proof that the mirror
+implements the required material-plus-charges formula. Reconcile its live chain
+and all writer paths against the corrected contract. Local code cannot establish
+deployed flags or versions.
 The gate rejects observed mixed archive writer modes and inconsistent reporting
 flags, and requires a reviewed source-precedence contract covering manual writers.
 
-Revenue definition differences, invoice/enquiry discrepancies, gestation fallback
-cases, archive coverage and placeholder review remain findings. Sample success
-cannot settle these for every company record. No financial value or sealed answer
-has been changed to force parity.
+The revenue implementation/population mismatch, invoice/enquiry discrepancies,
+gestation fallback cases and archive coverage remain findings. Placeholder review
+is separate operational evidence, not authority to exclude an API-active item
+from the analyst. Sample success cannot settle these for every company record.
+No financial value or sealed answer has been changed to force parity.
 
 Phase 1's performance work is to agree measurable targets and a workload. Seven
 query plans are captured. The gate requires numeric targets and a connection

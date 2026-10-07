@@ -1,8 +1,24 @@
 # Redundant project placeholders
 
-`projects` remains the complete synced source table. Business reporting and model
-selection use `reportable_projects`. Operational inventory, rehydration, lifecycle
-checks, and historical snapshots keep their existing populations.
+## Scope clarification: 8 October 2026
+
+The owner confirms this feature is not fully implemented and must not define the
+BI analyst's eligibility. The [corrected analyst plan](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+uses current Monday API `state = active`; an otherwise active item is not excluded
+solely by a placeholder classification. This also applies to monthly revenue,
+without requiring the manually maintained closed-invoiced business label.
+
+The workflow and deployment details below describe the existing classification
+feature, not proof that its reporting population is approved for the analyst.
+Existing `current_projects` also derives from `reportable_projects`, so the
+analyst implementation must address indirect exclusions, not merely rename its
+source. This documentation correction does not change existing consumers,
+classification decisions, Monday items or historical evidence.
+
+`projects` remains the complete synced source table. The classification-based
+business reporting and model-selection paths use `reportable_projects`.
+Operational inventory, rehydration, lifecycle checks, and historical snapshots
+keep their existing populations in this implementation.
 
 An explicit decision in `project_reporting_classifications` excludes one exact
 Monday ID only while its item name is `New project`, its business fields remain

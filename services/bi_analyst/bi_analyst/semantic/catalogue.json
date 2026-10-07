@@ -1,0 +1,1372 @@
+{
+  "version": "1.0.0",
+  "populations": [
+    {
+      "id": "legacy_revenue",
+      "kind": "source_defined",
+      "available": false,
+      "description": "Unreviewed deployed revenue population; diagnostic only. The frozen view includes nonreportable and non-closed-invoiced parents.",
+      "requirements": ["Resolve Phase 1 revenue definition discrepancy before registering any metric on this source."]
+    },
+    {
+      "id": "reportable",
+      "kind": "reportable",
+      "available": true,
+      "description": "Deployed approved reporting population, including historical cohorts; not auto-substituted with current_*.",
+      "requirements": [
+        "Preserve public.reportable_projects exclusions",
+        "Phase 1 population approval"
+      ]
+    },
+    {
+      "id": "hidden_inventory",
+      "kind": "hidden_inventory",
+      "available": true,
+      "description": "Independent hidden-board inventory; no project allocation is implied.",
+      "requirements": [
+        "Explicit hidden scope",
+        "Incomplete-input coverage"
+      ]
+    },
+    {
+      "id": "verified_active",
+      "kind": "verified_active",
+      "available": false,
+      "description": "Reserved; requires archive rollout and complete coverage before adding separate wrappers.",
+      "requirements": [
+        "MONDAY_ARCHIVE_ENABLED and MONDAY_ARCHIVE_REPORTING_ENABLED observed on all deployed writers",
+        "All five archive.coverage counters zero",
+        "Metric and population approval"
+      ]
+    },
+    {
+      "id": "historical_snapshot",
+      "kind": "snapshot",
+      "available": false,
+      "description": "Reserved dated snapshots; never joined to mutable current classifications.",
+      "requirements": [
+        "Certified snapshot date and stored dimensions",
+        "Separate Phase 8 contract"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "archive_coverage_v1",
+      "source_relations": ["public.reportable_projects", "public.subitems", "public.current_projects", "public.current_subitems", "public.monday_item_lifecycle", "public.monday_lifecycle_events"],
+      "grain": "one aggregate archive coverage row; no raw lifecycle payloads",
+      "key": ["unverified_projects"],
+      "columns": {
+        "unverified_projects": "int8",
+        "unverified_subitems": "int8",
+        "unverified_sources": "int8",
+        "unverified_current_values": "int8",
+        "unresolved_archive_jobs": "int8"
+      },
+      "population": "verified_active",
+      "description": "Optional migration 002: exact five monday_archive.coverage counters. Zero is necessary but does not certify rollout or financial values.",
+      "optional": true
+    },
+    {
+      "id": "projects_v1",
+      "source_relations": [
+        "public.reportable_projects"
+      ],
+      "grain": "one row per approved reportable project",
+      "key": [
+        "monday_id"
+      ],
+      "columns": {
+        "monday_id": "text",
+        "pipeline_stage": "text",
+        "category": "text",
+        "type": "text",
+        "account": "text",
+        "product_type": "text",
+        "date_created": "date",
+        "date_order_received": "date",
+        "first_date_designed": "date",
+        "first_date_invoiced": "date",
+        "new_enquiry_value": "numeric",
+        "total_order_value": "numeric",
+        "total_amount_invoiced": "numeric",
+        "gestation_period": "int4"
+      },
+      "population": "reportable",
+      "description": "one row per approved reportable project"
+    },
+    {
+      "id": "children_v1",
+      "source_relations": [
+        "public.subitems",
+        "analytics.projects_v1"
+      ],
+      "grain": "one stored child of a reportable parent",
+      "key": [
+        "monday_id"
+      ],
+      "columns": {
+        "monday_id": "text",
+        "parent_monday_id": "text",
+        "hidden_item_id": "text",
+        "reason_for_change": "text",
+        "quote_amount": "numeric",
+        "new_enquiry_value": "numeric",
+        "amount_invoiced": "numeric",
+        "invoice_date": "date",
+        "formula_enquiry_value": "numeric"
+      },
+      "population": "reportable",
+      "description": "one stored child of a reportable parent"
+    },
+    {
+      "id": "child_totals_v1",
+      "source_relations": [
+        "analytics.children_v1"
+      ],
+      "grain": "one pre-aggregated row per parent; diagnostic stored-child totals",
+      "key": [
+        "parent_monday_id"
+      ],
+      "columns": {
+        "parent_monday_id": "text",
+        "child_count": "int8",
+        "known_invoice_count": "int8",
+        "child_invoice_amount": "numeric",
+        "child_formula_enquiry_amount": "numeric",
+        "missing_source_count": "int8"
+      },
+      "population": "reportable",
+      "description": "one pre-aggregated row per parent; diagnostic stored-child totals"
+    },
+    {
+      "id": "hidden_values_v1",
+      "source_relations": [
+        "public.hidden_items"
+      ],
+      "grain": "one hidden-board item; independent of project membership",
+      "key": [
+        "monday_id"
+      ],
+      "columns": {
+        "monday_id": "text",
+        "cust_order_value_material": "numeric",
+        "cust_additional_charges": "numeric",
+        "amount_invoiced": "numeric",
+        "complete_input_order_value": "numeric",
+        "order_inputs_complete": "bool"
+      },
+      "population": "hidden_inventory",
+      "description": "one hidden-board item; independent of project membership"
+    },
+    {
+      "id": "latest_analysis_v1",
+      "source_relations": [
+        "public.analysis_results",
+        "analytics.projects_v1"
+      ],
+      "grain": "latest analysis per reportable project; timestamp DESC NULLS LAST, id DESC",
+      "key": [
+        "project_id"
+      ],
+      "columns": {
+        "project_id": "text",
+        "analysis_id": "uuid",
+        "analysis_timestamp": "timestamptz",
+        "expected_conversion_rate": "numeric",
+        "expected_gestation_days": "int4"
+      },
+      "population": "reportable",
+      "description": "latest analysis per reportable project; timestamp DESC NULLS LAST, id DESC"
+    },
+    {
+      "id": "enquiry_monthly_v1",
+      "source_relations": [
+        "public.vw_actual_enquiry_monthly_v1"
+      ],
+      "grain": "one completed calendar month",
+      "key": [
+        "enquiry_month"
+      ],
+      "columns": {
+        "enquiry_month": "date",
+        "project_count": "int4",
+        "actual_enquiry_value": "numeric",
+        "actual_pipeline_value": "numeric"
+      },
+      "population": "reportable",
+      "description": "one completed calendar month"
+    },
+    {
+      "id": "bookings_monthly_v1",
+      "source_relations": [
+        "public.vw_actual_bookings_monthly_v1"
+      ],
+      "grain": "one completed calendar month",
+      "key": [
+        "booking_month"
+      ],
+      "columns": {
+        "booking_month": "date",
+        "project_count": "int8",
+        "actual_bookings": "numeric"
+      },
+      "population": "reportable",
+      "description": "one completed calendar month"
+    },
+    {
+      "id": "revenue_monthly_baseline_v1",
+      "source_relations": [
+        "public.vw_actual_revenue_monthly_v1"
+      ],
+      "grain": "one month of deployed revenue; diagnostic only, population mismatch unresolved",
+      "key": [
+        "revenue_month"
+      ],
+      "columns": {
+        "revenue_month": "date",
+        "project_count": "int8",
+        "invoice_count": "int8",
+        "actual_revenue": "numeric"
+      },
+      "population": "legacy_revenue",
+      "description": "Diagnostic baseline only. Deployed TEST lacks reportable-parent and stage restrictions; never use as intended monthly invoice metric."
+    },
+    {
+      "id": "invoice_reporting_facts_v1",
+      "source_relations": [
+        "analytics.children_v1",
+        "analytics.projects_v1"
+      ],
+      "grain": "positive dated child invoice for a currently closed-invoiced parent in a completed month",
+      "key": [
+        "monday_id"
+      ],
+      "columns": {
+        "monday_id": "text",
+        "parent_monday_id": "text",
+        "invoice_date": "date",
+        "amount_invoiced": "numeric",
+        "category": "text",
+        "type": "text"
+      },
+      "population": "reportable",
+      "description": "positive dated child invoice for a currently closed-invoiced parent in a completed month"
+    },
+    {
+      "id": "conversion_cohorts_v1",
+      "source_relations": [
+        "analytics.projects_v1"
+      ],
+      "grain": "one project per cohort; selecting exactly one cohort is mandatory",
+      "key": [
+        "monday_id",
+        "cohort_years"
+      ],
+      "columns": {
+        "monday_id": "text",
+        "category": "text",
+        "type": "text",
+        "date_created": "date",
+        "cohort_years": "int4",
+        "eligible_count": "int8",
+        "win_count": "int8",
+        "closed_count": "int8"
+      },
+      "population": "reportable",
+      "description": "one project per cohort; selecting exactly one cohort is mandatory"
+    },
+    {
+      "id": "coverage_v1",
+      "source_relations": [
+        "analytics.projects_v1",
+        "analytics.children_v1",
+        "analytics.child_totals_v1",
+        "analytics.hidden_values_v1",
+        "public.hidden_items"
+      ],
+      "grain": "one aggregate coverage row",
+      "key": [
+        "reportable_projects"
+      ],
+      "columns": {
+        "reportable_projects": "int8",
+        "projects_without_children": "int8",
+        "children_without_source": "int8",
+        "unresolved_source_links": "int8",
+        "repeated_source_ids": "int8",
+        "incomplete_order_inputs": "int8"
+      },
+      "population": "reportable",
+      "description": "one aggregate coverage row"
+    }
+  ],
+  "dimensions": [
+    {
+      "id": "category",
+      "column": "category",
+      "semantics": "scalar",
+      "description": "Whole stored category classification; trim whitespace and map empty string to NULL; never explode memberships."
+    },
+    {
+      "id": "type",
+      "column": "type",
+      "semantics": "scalar",
+      "description": "Whole stored type classification; trim whitespace and map empty string to NULL; never explode memberships."
+    }
+  ],
+  "metrics": [
+    {
+      "id": "new_enquiry_value",
+      "version": "1.0.0",
+      "family": "enquiry",
+      "label": "New Enquiry Value",
+      "aliases": [
+        "enquiry value",
+        "raw enquiry value"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "lookup_mkqanpbe",
+          "subitems.formula_mkqa31kh",
+          "subitems.mirror03__1",
+          "subitems.mirror77__1"
+        ],
+        "database": "public.reportable_projects.new_enquiry_value",
+        "priority": [
+          "Stored parent source-authoritative value; Open parents sum current API-active child formula values.",
+          "Child formula: CASE WHEN reason_for_change='New Enquiry' THEN quote_amount ELSE 0 END.",
+          "Won/Lost parents retain stored values; do not recalculate from every persisted child."
+        ]
+      },
+      "relation": "projects_v1",
+      "value_columns": [
+        "new_enquiry_value"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "sum(new_enquiry_value)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Preserve unknown values; SUM ignores NULL but expose known-value counts. Stored NULL does not prove a typed Monday blank.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Signed values retained.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": null,
+      "periods": [
+        "all_stored"
+      ],
+      "status_filters": [],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show new enquiry value for its stated population."
+      ],
+      "limitations": [
+        "Unweighted; different from predicted/weighted pipeline.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "order_parent_value",
+      "version": "1.0.0",
+      "family": "order",
+      "label": "Project Order Value",
+      "aliases": [
+        "order value",
+        "parent order mirror"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "mirror5__1"
+        ],
+        "database": "public.reportable_projects.total_order_value",
+        "priority": [
+          "Typed configured Monday parent mirror and verified multiplicity.",
+          "Never replace the parent mirror with the hidden-board total to force equality."
+        ]
+      },
+      "relation": "projects_v1",
+      "value_columns": [
+        "total_order_value"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "sum(total_order_value)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Preserve unknown values; SUM ignores NULL but expose known-value counts. Stored NULL does not prove a typed Monday blank.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Signed values retained.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": null,
+      "periods": [
+        "all_stored"
+      ],
+      "status_filters": [],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show project order value for its stated population."
+      ],
+      "limitations": [
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "order_hidden_complete_subtotal",
+      "version": "1.0.0",
+      "family": "order",
+      "label": "Hidden Total Customer Order Value (complete-input subtotal)",
+      "aliases": [
+        "order value",
+        "hidden order value"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825138260",
+        "columns": [
+          "numbers98__1",
+          "numbers3__1"
+        ],
+        "database": "public.hidden_items",
+        "priority": [
+          "Total Customer Order Value is material plus customer additional charges.",
+          "Only both-numeric rows contribute to complete-input subtotal; expose missing-input counts."
+        ]
+      },
+      "relation": "hidden_values_v1",
+      "value_columns": [
+        "complete_input_order_value",
+        "order_inputs_complete"
+      ],
+      "population": "hidden_inventory",
+      "calculation": {
+        "expression": "sum(complete_input_order_value)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Preserve unknown values; SUM ignores NULL but expose known-value counts. Stored NULL does not prove a typed Monday blank.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Signed values retained.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": null,
+      "periods": [
+        "all_stored"
+      ],
+      "status_filters": [],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show hidden total customer order value (complete-input subtotal) for its stated population."
+      ],
+      "limitations": [
+        "Full hidden inventory, not a project-attributed total. Incomplete inputs must be displayed; this is not a company-wide certified total.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "invoice_project_value",
+      "version": "1.0.0",
+      "family": "invoice",
+      "label": "Project Invoiced Value",
+      "aliases": [
+        "invoiced value",
+        "project invoice total"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825138260",
+        "columns": [
+          "numbers56__1",
+          "subitems.mirror5__1"
+        ],
+        "database": "public.hidden_items.amount_invoiced",
+        "priority": [
+          "Hidden Amount Invoiced -> child invoice mirror -> derived parent sum of complete current membership.",
+          "Do not apply business-status filters to source/project totals. All-blank remains NULL."
+        ]
+      },
+      "relation": "projects_v1",
+      "value_columns": [
+        "total_amount_invoiced"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "sum(total_amount_invoiced)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Preserve unknown values; SUM ignores NULL but expose known-value counts. Stored NULL does not prove a typed Monday blank.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Signed values retained.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": null,
+      "periods": [
+        "all_stored"
+      ],
+      "status_filters": [],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show project invoiced value for its stated population."
+      ],
+      "limitations": [
+        "Stored parent total; differs from all persisted-child sums when membership/source precedence differs.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "invoice_hidden_value",
+      "version": "1.0.0",
+      "family": "invoice",
+      "label": "Hidden Amount Invoiced",
+      "aliases": [
+        "invoiced value",
+        "hidden invoices"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825138260",
+        "columns": [
+          "numbers56__1",
+          "subitems.mirror5__1"
+        ],
+        "database": "public.hidden_items.amount_invoiced",
+        "priority": [
+          "Hidden Amount Invoiced -> child invoice mirror -> derived parent sum of complete current membership.",
+          "Do not apply business-status filters to source/project totals. All-blank remains NULL."
+        ]
+      },
+      "relation": "hidden_values_v1",
+      "value_columns": [
+        "amount_invoiced"
+      ],
+      "population": "hidden_inventory",
+      "calculation": {
+        "expression": "sum(amount_invoiced)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Preserve unknown values; SUM ignores NULL but expose known-value counts. Stored NULL does not prove a typed Monday blank.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Signed values retained.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": null,
+      "periods": [
+        "all_stored"
+      ],
+      "status_filters": [],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show hidden amount invoiced for its stated population."
+      ],
+      "limitations": [
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "invoice_stored_child_value",
+      "version": "1.0.0",
+      "family": "invoice",
+      "label": "Stored Child Invoiced Value",
+      "aliases": [
+        "stored child invoices"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825138260",
+        "columns": [
+          "numbers56__1",
+          "subitems.mirror5__1"
+        ],
+        "database": "public.hidden_items.amount_invoiced",
+        "priority": [
+          "Hidden Amount Invoiced -> child invoice mirror -> derived parent sum of complete current membership.",
+          "Do not apply business-status filters to source/project totals. All-blank remains NULL."
+        ]
+      },
+      "relation": "children_v1",
+      "value_columns": [
+        "amount_invoiced"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "sum(amount_invoiced)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Preserve unknown values; SUM ignores NULL but expose known-value counts. Stored NULL does not prove a typed Monday blank.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Signed values retained.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": null,
+      "periods": [
+        "all_stored"
+      ],
+      "status_filters": [],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show stored child invoiced value for its stated population."
+      ],
+      "limitations": [
+        "Reportable parents, persisted children; not automatically verified-active membership. Repeated mirrors retain their recorded contributions.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "enquiry_monthly_actual",
+      "version": "1.0.0",
+      "family": "enquiry",
+      "label": "Monthly New Enquiry Value",
+      "aliases": [
+        "Monthly New Enquiry Value"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "lookup_mkqanpbe",
+          "subitems.formula_mkqa31kh",
+          "subitems.mirror03__1",
+          "subitems.mirror77__1"
+        ],
+        "database": "public.reportable_projects.new_enquiry_value",
+        "priority": [
+          "Stored parent source-authoritative value; Open parents sum current API-active child formula values.",
+          "Child formula: CASE WHEN reason_for_change='New Enquiry' THEN quote_amount ELSE 0 END.",
+          "Won/Lost parents retain stored values; do not recalculate from every persisted child."
+        ]
+      },
+      "relation": "enquiry_monthly_v1",
+      "value_columns": [
+        "actual_enquiry_value"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "sum(actual_enquiry_value)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Published month spine fills missing months with zero.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Excluded before aggregation.",
+        "empty": "Zero within the published month spine; absent months require an explicit date spine."
+      },
+      "date_basis": "enquiry_month",
+      "periods": [
+        "last_month",
+        "previous_month",
+        "completed_12_months"
+      ],
+      "status_filters": [],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show monthly new enquiry value for its stated population."
+      ],
+      "limitations": [
+        "Completed months only; positive source values only. Monthly aggregate cannot answer category/account/product questions.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "bookings_monthly_actual",
+      "version": "1.0.0",
+      "family": "order",
+      "label": "Monthly Bookings",
+      "aliases": [
+        "Monthly Bookings"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "mirror5__1"
+        ],
+        "database": "public.reportable_projects.total_order_value",
+        "priority": [
+          "Typed configured Monday parent mirror and verified multiplicity.",
+          "Never replace the parent mirror with the hidden-board total to force equality."
+        ]
+      },
+      "relation": "bookings_monthly_v1",
+      "value_columns": [
+        "actual_bookings"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "sum(actual_bookings)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Published month spine fills missing months with zero.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Excluded before aggregation.",
+        "empty": "Zero within the published month spine; absent months require an explicit date spine."
+      },
+      "date_basis": "booking_month",
+      "periods": [
+        "last_month",
+        "previous_month",
+        "completed_12_months"
+      ],
+      "status_filters": [
+        "pipeline_stage IN ('Won - Open (Order Received)','Won - Closed (Invoiced)','Won Via Other Ref')"
+      ],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show monthly bookings for its stated population."
+      ],
+      "limitations": [
+        "Completed months only; positive source values only. Monthly aggregate cannot answer category/account/product questions.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "invoice_monthly_actual",
+      "version": "1.0.0",
+      "family": "invoice",
+      "label": "Monthly Invoiced Revenue (intended definition)",
+      "aliases": [
+        "Monthly Invoiced Revenue (intended definition)"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825138260",
+        "columns": [
+          "numbers56__1",
+          "subitems.mirror5__1"
+        ],
+        "database": "public.hidden_items.amount_invoiced",
+        "priority": [
+          "Hidden Amount Invoiced -> child invoice mirror -> derived parent sum of complete current membership.",
+          "Do not apply business-status filters to source/project totals. All-blank remains NULL."
+        ]
+      },
+      "relation": "invoice_reporting_facts_v1",
+      "value_columns": [
+        "amount_invoiced"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "coalesce(sum(amount_invoiced),0)::numeric(14,2)",
+        "aggregation": "sum",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Undated and NULL invoices excluded.",
+        "zeroes": "Numeric zero remains zero.",
+        "negatives": "Excluded.",
+        "empty": "Zero; calendar spine required."
+      },
+      "date_basis": "invoice_date",
+      "periods": [
+        "last_month",
+        "previous_month",
+        "completed_12_months"
+      ],
+      "status_filters": [
+        "pipeline_stage = 'Won - Closed (Invoiced)'",
+        "amount_invoiced > 0"
+      ],
+      "unit": "source_currency",
+      "precision": 2,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show monthly invoiced revenue (intended definition) for its stated population."
+      ],
+      "limitations": [
+        "Candidate intended contract. Restored deployed revenue differs; revenue_monthly_baseline_v1 is diagnostic only.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "conversion_five_year",
+      "version": "1.0.0",
+      "family": "conversion",
+      "label": "5-year Inclusive Conversion Rate",
+      "aliases": [
+        "5-year Inclusive Conversion Rate"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "status4__1",
+          "date9__1"
+        ],
+        "database": "public.reportable_projects",
+        "priority": [
+          "Closed-invoiced wins divided by all eligible projects; count before dividing.",
+          "Closed-only variant uses wins plus Lost."
+        ]
+      },
+      "relation": "conversion_cohorts_v1",
+      "value_columns": [
+        "win_count",
+        "eligible_count",
+        "cohort_years"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "round(sum(win_count)::numeric/nullif(sum(eligible_count),0),3)",
+        "aggregation": "ratio_of_counts",
+        "numerator": "sum(win_count)",
+        "denominator": "sum(eligible_count)",
+        "nulls": "Undated projects excluded; NULL stage remains eligible but is not a win or closed case.",
+        "zeroes": "Zero numerator gives zero; zero denominator gives NULL.",
+        "negatives": "Not applicable to counts.",
+        "empty": "NULL rate."
+      },
+      "date_basis": "date_created",
+      "periods": [
+        "five_year_cohort"
+      ],
+      "status_filters": [
+        "cohort_years = 5"
+      ],
+      "unit": "ratio",
+      "precision": 3,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show 5-year inclusive conversion rate for its stated population."
+      ],
+      "limitations": [
+        "Lower date bound only; future-dated projects remain eligible under the baseline. Never average segment rates.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "conversion_closed_five_year",
+      "version": "1.0.0",
+      "family": "conversion",
+      "label": "5-year Closed-only Conversion Rate",
+      "aliases": [
+        "5-year Closed-only Conversion Rate"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "status4__1",
+          "date9__1"
+        ],
+        "database": "public.reportable_projects",
+        "priority": [
+          "Closed-invoiced wins divided by all eligible projects; count before dividing.",
+          "Closed-only variant uses wins plus Lost."
+        ]
+      },
+      "relation": "conversion_cohorts_v1",
+      "value_columns": [
+        "win_count",
+        "closed_count",
+        "cohort_years"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "round(sum(win_count)::numeric/nullif(sum(closed_count),0),3)",
+        "aggregation": "ratio_of_counts",
+        "numerator": "sum(win_count)",
+        "denominator": "sum(closed_count)",
+        "nulls": "Undated projects excluded; NULL stage remains eligible but is not a win or closed case.",
+        "zeroes": "Zero numerator gives zero; zero denominator gives NULL.",
+        "negatives": "Not applicable to counts.",
+        "empty": "NULL rate."
+      },
+      "date_basis": "date_created",
+      "periods": [
+        "five_year_cohort"
+      ],
+      "status_filters": [
+        "cohort_years = 5"
+      ],
+      "unit": "ratio",
+      "precision": 3,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show 5-year closed-only conversion rate for its stated population."
+      ],
+      "limitations": [
+        "Lower date bound only; future-dated projects remain eligible under the baseline. Never average segment rates.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "gestation_five_year",
+      "version": "1.0.0",
+      "family": "gestation",
+      "label": "5-year Actual Gestation Period",
+      "aliases": [
+        "5-year Actual Gestation Period"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "formula_mkpp85yw",
+          "lookup_mkpptgsn",
+          "lookup_mkppq0gc"
+        ],
+        "database": "public.reportable_projects.gestation_period",
+        "priority": [
+          "Stored actual gestation: first design completion to first invoice, retaining source/fallback semantics.",
+          "Never substitute expected_gestation_days or recompute dates over the stored value."
+        ]
+      },
+      "relation": "projects_v1",
+      "value_columns": [
+        "gestation_period"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "avg(gestation_period) FILTER (WHERE gestation_period>0)",
+        "aggregation": "mean",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Excluded.",
+        "zeroes": "Excluded.",
+        "negatives": "Excluded.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": "date_created",
+      "periods": [
+        "five_year_cohort"
+      ],
+      "status_filters": [],
+      "unit": "days",
+      "precision": 6,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show 5-year actual gestation period for its stated population."
+      ],
+      "limitations": [
+        "Filter the resolved lower-bound-only creation cohort; positive actual gestation only.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "conversion_two_year",
+      "version": "1.0.0",
+      "family": "conversion",
+      "label": "2-year Inclusive Conversion Rate",
+      "aliases": [
+        "2-year Inclusive Conversion Rate"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "status4__1",
+          "date9__1"
+        ],
+        "database": "public.reportable_projects",
+        "priority": [
+          "Closed-invoiced wins divided by all eligible projects; count before dividing.",
+          "Closed-only variant uses wins plus Lost."
+        ]
+      },
+      "relation": "conversion_cohorts_v1",
+      "value_columns": [
+        "win_count",
+        "eligible_count",
+        "cohort_years"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "round(sum(win_count)::numeric/nullif(sum(eligible_count),0),3)",
+        "aggregation": "ratio_of_counts",
+        "numerator": "sum(win_count)",
+        "denominator": "sum(eligible_count)",
+        "nulls": "Undated projects excluded; NULL stage remains eligible but is not a win or closed case.",
+        "zeroes": "Zero numerator gives zero; zero denominator gives NULL.",
+        "negatives": "Not applicable to counts.",
+        "empty": "NULL rate."
+      },
+      "date_basis": "date_created",
+      "periods": [
+        "two_year_cohort"
+      ],
+      "status_filters": [
+        "cohort_years = 2"
+      ],
+      "unit": "ratio",
+      "precision": 3,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show 2-year inclusive conversion rate for its stated population."
+      ],
+      "limitations": [
+        "Lower date bound only; future-dated projects remain eligible under the baseline. Never average segment rates.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "conversion_closed_two_year",
+      "version": "1.0.0",
+      "family": "conversion",
+      "label": "2-year Closed-only Conversion Rate",
+      "aliases": [
+        "2-year Closed-only Conversion Rate"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "status4__1",
+          "date9__1"
+        ],
+        "database": "public.reportable_projects",
+        "priority": [
+          "Closed-invoiced wins divided by all eligible projects; count before dividing.",
+          "Closed-only variant uses wins plus Lost."
+        ]
+      },
+      "relation": "conversion_cohorts_v1",
+      "value_columns": [
+        "win_count",
+        "closed_count",
+        "cohort_years"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "round(sum(win_count)::numeric/nullif(sum(closed_count),0),3)",
+        "aggregation": "ratio_of_counts",
+        "numerator": "sum(win_count)",
+        "denominator": "sum(closed_count)",
+        "nulls": "Undated projects excluded; NULL stage remains eligible but is not a win or closed case.",
+        "zeroes": "Zero numerator gives zero; zero denominator gives NULL.",
+        "negatives": "Not applicable to counts.",
+        "empty": "NULL rate."
+      },
+      "date_basis": "date_created",
+      "periods": [
+        "two_year_cohort"
+      ],
+      "status_filters": [
+        "cohort_years = 2"
+      ],
+      "unit": "ratio",
+      "precision": 3,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show 2-year closed-only conversion rate for its stated population."
+      ],
+      "limitations": [
+        "Lower date bound only; future-dated projects remain eligible under the baseline. Never average segment rates.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "gestation_two_year",
+      "version": "1.0.0",
+      "family": "gestation",
+      "label": "2-year Actual Gestation Period",
+      "aliases": [
+        "2-year Actual Gestation Period"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "formula_mkpp85yw",
+          "lookup_mkpptgsn",
+          "lookup_mkppq0gc"
+        ],
+        "database": "public.reportable_projects.gestation_period",
+        "priority": [
+          "Stored actual gestation: first design completion to first invoice, retaining source/fallback semantics.",
+          "Never substitute expected_gestation_days or recompute dates over the stored value."
+        ]
+      },
+      "relation": "projects_v1",
+      "value_columns": [
+        "gestation_period"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "avg(gestation_period) FILTER (WHERE gestation_period>0)",
+        "aggregation": "mean",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Excluded.",
+        "zeroes": "Excluded.",
+        "negatives": "Excluded.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": "date_created",
+      "periods": [
+        "two_year_cohort"
+      ],
+      "status_filters": [],
+      "unit": "days",
+      "precision": 6,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show 2-year actual gestation period for its stated population."
+      ],
+      "limitations": [
+        "Filter the resolved lower-bound-only creation cohort; positive actual gestation only.",
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    },
+    {
+      "id": "gestation_median_five_year",
+      "version": "1.0.0",
+      "family": "gestation",
+      "label": "5-year Median Actual Gestation",
+      "aliases": [
+        "5-year Median Actual Gestation"
+      ],
+      "kind": "observed",
+      "source": {
+        "board_id": "1825117125",
+        "columns": [
+          "formula_mkpp85yw",
+          "lookup_mkpptgsn",
+          "lookup_mkppq0gc"
+        ],
+        "database": "public.reportable_projects.gestation_period",
+        "priority": [
+          "Stored actual gestation: first design completion to first invoice, retaining source/fallback semantics.",
+          "Never substitute expected_gestation_days or recompute dates over the stored value."
+        ]
+      },
+      "relation": "projects_v1",
+      "value_columns": [
+        "gestation_period"
+      ],
+      "population": "reportable",
+      "calculation": {
+        "expression": "percentile_cont(0.5) WITHIN GROUP (ORDER BY gestation_period) FILTER (WHERE gestation_period>0)",
+        "aggregation": "percentile",
+        "numerator": null,
+        "denominator": null,
+        "nulls": "Excluded.",
+        "zeroes": "Excluded.",
+        "negatives": "Excluded.",
+        "empty": "NULL when no known values."
+      },
+      "date_basis": "date_created",
+      "periods": [
+        "five_year_cohort"
+      ],
+      "status_filters": [],
+      "unit": "days",
+      "precision": 6,
+      "dimensions": [
+        "category",
+        "type"
+      ],
+      "coverage": [
+        "Phase 1 source/business certification",
+        "Phase 2 reference parity",
+        "Explicit reviewed population and successful ingestion/rollup/refresh evidence"
+      ],
+      "examples": [
+        "Show 5-year median actual gestation for its stated population."
+      ],
+      "limitations": [
+        "Candidate definition: Phase 1 owner review pending."
+      ],
+      "certification": "pending_phase1"
+    }
+  ],
+  "joins": [
+    {
+      "id": "project_child_totals",
+      "left": "projects_v1",
+      "right": "child_totals_v1",
+      "left_key": [
+        "monday_id"
+      ],
+      "right_key": [
+        "parent_monday_id"
+      ],
+      "cardinality": "one_to_zero_or_one",
+      "purpose": "project_measures",
+      "description": "Pre-aggregate all children before joining project amounts; stored-child totals are diagnostic."
+    },
+    {
+      "id": "project_latest_analysis",
+      "left": "projects_v1",
+      "right": "latest_analysis_v1",
+      "left_key": [
+        "monday_id"
+      ],
+      "right_key": [
+        "project_id"
+      ],
+      "cardinality": "one_to_zero_or_one",
+      "purpose": "project_measures",
+      "description": "At most one deterministic latest analysis. Expected values remain predictions."
+    },
+    {
+      "id": "child_parent_detail",
+      "left": "children_v1",
+      "right": "projects_v1",
+      "left_key": [
+        "parent_monday_id"
+      ],
+      "right_key": [
+        "monday_id"
+      ],
+      "cardinality": "many_to_one",
+      "purpose": "child_detail",
+      "description": "Child amounts may be attributed to parent classifications. Parent amounts must never be summed at child grain."
+    }
+  ],
+  "notices": [
+    "All metrics are pending certification. A successful schema/parity check is not business approval.",
+    "Currency and tax basis require owner review; source_currency never silently means GBP/net/gross.",
+    "Business timezone must be supplied explicitly; Europe/London is only the frozen evaluation assumption. No fiscal calendar or MTD definition is registered.",
+    "vw_enquiry_value_forecast_chart_v1.actual_enquiry_value is weighted actual_pipeline_value; gross_enquiry_value is the unweighted measure.",
+    "Weighted enquiry and latest expected conversion/gestation are predictive and mutable; no observed metric aliases them.",
+    "Account/product membership expansion is unsupported for monetary totals until attributable detail or labelled overlapping membership totals are certified. Distinct project counts cannot repair duplicated sums.",
+    "Repeated hidden source links preserve verified mirror multiplicity; unresolved duplicates require evidence, never automatic DISTINCT.",
+    "Latest source row is not successful ingestion, rollup or materialized refresh freshness."
+  ]
+}

@@ -4,6 +4,23 @@ Finance owns Monday data. Deleting a Monday item now has a durable, exact-ID pat
 to deleting its Supabase counterpart. This release includes code and a migration;
 deploying Python alone does not enable the feature.
 
+## BI analyst contract correction: 8 October 2026
+
+For the BI analyst, [current eligibility](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+means Monday API `state = active`, not business-stage labels or the incomplete
+reportable-project classification feature. Monthly revenue must not require
+`Won - Closed (Invoiced)`. Order Value must carry hidden `formula_mkncjq9`
+(material plus customer additional charges) through the child and parent mirrors.
+
+The runtime behaviour documented below has not changed with this clarification.
+In particular, `current_projects` currently starts from `reportable_projects`,
+and existing coverage is scoped accordingly. That implementation must be aligned
+and coverage expanded before certifying all API-active items; a zero legacy
+coverage count alone is insufficient. Parent refresh preserves the configured
+mirror, which still needs verification against the required formula chain.
+Keep state/membership freshness checks and explicit incomplete-coverage failures;
+do not infer active status from missing evidence or rewrite historical snapshots.
+
 ## Verified archive handling: staged rollout
 
 Monday API `state=archived` is a lifecycle state. Board labels such as **Archive**
@@ -309,8 +326,10 @@ Operational guarantees:
   scheduling pass, so pagination absence is never used to infer lifecycle.
 - Archive-enabled parent totals do **not** use sums of retained SQL children.
   New Enquiry Value uses current API-active children for Open parents; Won/Lost
-  enquiry values are retained. Order value remains the actual typed Monday
-  **parent mirror**, not an invented material-plus-charges total. Invoice value
+  enquiry values are retained. The implemented order refresh reads the actual
+  typed Monday **parent mirror**; this does not establish that the mirror carries
+  the required material-plus-charges formula. Reconcile its live wiring against
+  the corrected analyst contract rather than silently substituting a SQL total. Invoice value
   uses current child invoice mirrors; all blank remains NULL and explicit zero
   remains zero. No separate current-order measure is silently substituted.
   Inactive mirror dependencies withhold the affected current fields for

@@ -4,6 +4,16 @@ The dataset commands build a versioned reference dataset in the **TEST Supabase 
 configured in the repository `.env`. It is independent of the future analyst API
 and never imports DataCube's `src` package, starts workers, or contacts Monday.
 
+**Contract status, 8 October 2026:** this tooling and `bi_eval_20261007_v1` still
+exercise the original definitions. The
+[owner clarification](../../../../docs/bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+requires current Monday API-active eligibility instead of reportable-project
+exclusions, no closed-invoiced-stage gate for monthly revenue, and material plus
+charges mirrored to the parent as Order Value. Do not treat existing test passes
+as verification of those corrected rules. Update the implementation, references,
+questions and gate expectations together in a new reviewed version; preserve the
+sealed old key and its historical population.
+
 Additional Phase 1 evidence/review commands are documented in the
 [certification runbook](../../../../docs/bi-analyst-phase1-certification.md).
 They add TEST inventory/reconciliation capture, offline PBIX inspection, typed
@@ -111,16 +121,22 @@ reference answers, not an assertion that unresolved company totals are correct.
 
 ## Metric details requiring careful review
 
-1. Parent Order Value, hidden complete-input order subtotal, and bookings are
-   separate measures. A missing material/charge input is counted as incomplete;
+1. Parent Order Value, hidden complete-input order subtotal, and bookings retain
+   separate grains/reporting rules. The corrected parent business definition is
+   the hidden material-plus-charges formula mirrored through children, not an
+   independently accepted material-only value. Verify live mirror wiring and
+   matching active membership. A missing material/charge input is counted as incomplete;
    the numeric subset is never labelled as the full hidden-board total. Typed
    blank-versus-missing source evidence still requires reconciliation.
 2. Project invoice totals, child mirrors, hidden invoices, and monthly revenue
    use different grains. Negative values remain in signed base totals.
 3. The restored monthly revenue view omits the parent-status/reportable-population
-   filters specified by the plan. The reference pack implements the **plan**
-   definition and separately preserves the deployed view and its differences.
-   No source view is repaired by this tooling.
+   filters specified by the **original 7 October plan**. The reference pack
+   implements that superseded definition and preserves the copied view separately.
+   The corrected contract instead requires API-active parents without a
+   closed-invoiced label, retaining positive amounts, invoice dates and completed
+   months. Neither old calculation certifies active eligibility. No source view
+   is repaired by this tooling.
 4. Conversion rates are fractions rounded to three decimal places, as in the
    existing SQL. Percent presentation multiplies that ratio by 100. Counts are
    aggregated before division. Existing cohorts have a lower date bound only;

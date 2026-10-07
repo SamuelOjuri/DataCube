@@ -7,6 +7,26 @@ source tables, schedules, financial values and reporting views were not changed.
 The dataset is ready for reference-query and evaluation development. It is **not
 business-certified**, and its creation does not complete the Phase 1 exit gate.
 
+## Historical baseline and 8 October correction
+
+This dataset and all counts/results below retain the **original 7 October
+definitions**. The [owner's subsequent clarification](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+requires current Monday API-active projects/items rather than reportable-project
+eligibility, monthly revenue without a closed-invoiced-stage condition, and the
+material-plus-charges formula mirrored to the parent as Order Value.
+
+Consequently, neither the old reportable/closed-invoiced revenue reference nor the
+copied deployed revenue view establishes the corrected active-parent calculation.
+The 37-month difference below compares those two old definitions; it does not
+measure the effect of the correction. The stored parent-mirror baseline also
+does not certify that additional charges reach the parent.
+
+Preserve this sealed dataset, its questions and answer key. Produce a new reviewed
+version with active-state/membership evidence, corrected SQL and matching Power BI
+context before certifying the new contract. The business direction is specified;
+implementation/source verification, remaining owner decisions and version-bound
+sign-off are still required.
+
 ## Dataset and answer key
 
 | Item | Recorded value |
@@ -73,13 +93,13 @@ source-precedence or fallback explanations and must not trigger automatic repair
 
 | Finding | Evidence | Required next decision |
 |---|---|---|
-| Monthly revenue contract differs from the deployed view | The copied view sums positive dated child invoices without the plan's reportable-parent and closed-invoiced-stage filters. Plan-versus-view results differ in 37 months. | BI/business owner to reconcile the deployed SQL, Power BI DAX and intended reporting definition. Both calculations are preserved. |
+| Original monthly revenue contract differs from the deployed view | The copied view sums positive dated child invoices without the original 7 October plan's reportable-parent and closed-invoiced-stage filters. Old-plan-versus-view results differ in 37 months. | Preserve both calculations as historical evidence. Implement and validate a new API-active-parent definition without a business-stage gate, reconciling SQL and Power BI on aligned data. |
 | Project invoice totals differ from all stored-child sums | 961 reportable projects differ; 60 reportable projects have no stored children. | Reconcile current membership, blank/zero treatment and source-authoritative writer paths. These counts do not prove all 961 stored totals are wrong. |
 | Enquiry reconciliation remains incomplete | 28 Open parents differ from the all-stored-child formula sum; two children differ from the exact-reason quote formula. | Check current API-active membership and source evidence. Won/Lost retained enquiry values are not automatically recalculated. |
 | Actual gestation differs from date subtraction | 17 of 902 projects with both dates differ. | Review stored actual/source fallback semantics before changing any value. |
-| Archive coverage is incomplete | 11,264 unverified reportable projects, 11 unverified current-value cases, and 15 unresolved archive jobs. The same coverage checks report zero unverified subitems and hidden sources within their scoped verified-active population. | Do not certify company-wide verified-active reporting from this snapshot or substitute `current_*` for every historical population. |
+| Archive coverage is incomplete | 11,264 unverified reportable projects, 11 unverified current-value cases, and 15 unresolved archive jobs. The same coverage checks report zero unverified subitems and hidden sources within their scoped verified-active population. | Do not certify all API-active items from this narrower legacy scope. Expand evidence/coverage to the corrected population without rewriting historical snapshots. |
 | Relationships need explicit treatment | 23 children have no hidden-source link; 25 hidden sources are reused. No stored child has a missing parent or a non-null link to an absent hidden row. | Preserve known missing links and verified source multiplicity; do not silently deduplicate financial contributions. |
-| A reporting classification remains under review | One `needs_review` classification; the deployed reportable view excludes 27 records. | Business/data owner to resolve the review with source evidence. |
+| A reporting classification remains under review | One `needs_review` classification; the deployed reportable view excludes 27 records. | Retain as operational review evidence, not analyst eligibility. Current API-active items must not be excluded solely through this feature. |
 
 Gross enquiry and bookings reference calculations match their copied monthly
 views with zero differing months. Recomputed five-year and two-year conversion

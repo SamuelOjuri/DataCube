@@ -4,6 +4,30 @@ Use `services/bi_analyst/tests/evals/manage.py` from the repository root. Core
 dependencies are in its `requirements.txt`; optional offline PBIX inspection uses
 `requirements-pbix.txt`. No analyst API or ETL process starts.
 
+## Contract correction before certification
+
+Apply the [8 October owner clarification](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+to the next reviewed release. Current analysis uses Monday API-active projects/items
+and verified current contributing membership, not `reportable_projects` exclusions.
+Monthly revenue retains positive dated invoices in completed months but has no
+closed-invoiced business-stage gate. Order Value includes material plus charges
+via `formula_mkncjq9`, mirrored through children to the parent.
+
+Record these specified choices in the decision/source contracts rather than
+treating them as still undecided. Their implementation and source certification
+remain outstanding. Review live mirror wiring: the supplied schema's parent
+mirror targets the material-only child column. Review population dependencies:
+existing `current_projects` and legacy coverage derive from reportable-project
+scope and cannot prove coverage of all API-active candidates unchanged.
+
+The commands below still validate the original 7 October contracts and sealed
+dataset. Before certifying the correction, align the catalogue, SQL, reference
+queries, question pack and gate expectations in a new reviewed version. Include
+cases for active parents without the invoice label, active items excluded by old
+classifications, archived and unverified items, and nonzero additional charges
+through the full mirror chain. A pass against old references is not approval of
+the corrected release. Do not overwrite the old key or relabel its population.
+
 ## Capture evidence
 
 ```powershell
@@ -58,7 +82,11 @@ Evaluation settings must not become agreed business decisions without review.
 
 Each metric also needs `population`, `source_contract` and `limitations`.
 The packet records required semantic distinctions. Exact-ID source reviews should
-link current observations of membership and typed blank/missing/unreadable inputs.
+link current observations of API lifecycle state, membership and typed
+blank/missing/unreadable inputs. Link the 8 October clarification and identify
+the exact corrected catalogue/metric version, source SQL/mirror configuration,
+deployed writer commits and new reference-dataset version covered by approval.
+Historical evidence hashes do not extend approval to changed definitions.
 Reuse the [existing comparison workflow](order_value_monday_compare.md) with a
 reviewed scope; the new commands never invoke its mutations or infer repairs.
 

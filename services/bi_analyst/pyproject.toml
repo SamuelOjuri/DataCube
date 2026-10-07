@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools==82.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datacube-bi-analyst"
+version = "0.2.0"
+description = "Isolated DataCube analytical contracts (no ETL startup)"
+requires-python = ">=3.11"
+dependencies = ["pydantic==2.11.7", "psycopg[binary]==3.2.12", "tzdata==2025.2"]
+
+[project.optional-dependencies]
+test = ["pytest==8.4.2", "python-dotenv==1.1.1"]
+
+[project.scripts]
+bi-catalogue = "bi_analyst.semantic.check:main"
+
+[tool.setuptools.packages.find]
+include = ["bi_analyst*"]
+
+[tool.setuptools.package-data]
+"bi_analyst.semantic" = ["catalogue.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["postgres: isolated loopback PostgreSQL tests"]

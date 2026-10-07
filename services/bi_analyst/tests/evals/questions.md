@@ -2,6 +2,15 @@
 
 Dataset: `bi_eval_20261007_v1`. Reporting date: 7 October 2026. Timezone: Europe/London (evaluation assumption). Questions refer to the frozen dataset, not live company totals. Business/source and Power BI certification remain pending.
 
+**Historical question pack:** "plan definition" below means the original
+7 October definition, not the
+[8 October correction](../../../../docs/bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026).
+The new contract uses current Monday API-active eligibility, removes the monthly
+revenue closed-invoiced-stage gate, and requires material plus charges to reach the
+parent Order Value. Keep these frozen questions aligned with their sealed key.
+New active-population questions and reference answers require a new reviewed
+version; the legacy scenarios below do not certify the corrected contract.
+
 All answers must preserve the named metric, grain, population, period, units and material coverage limitations. Monetary values retain source currency/tax semantics pending confirmation. Stored blanks are not zero. Conversion results are fractions rounded to three decimals. Table answers have deterministic ordering. A top-ten answer is limited, not a full-population total.
 
 The answer key and holdout cases must not be included in agent prompts. The development/holdout split is recorded in `cases.py` and the restricted database question artifact. These scenarios are proposed for reviewer approval.
