@@ -1,0 +1,4 @@
+# Standalone evaluation tooling; the future analyst service has its own lockfile.
+psycopg[binary]==3.2.12
+python-dotenv==1.1.1
+pytest==8.4.2
