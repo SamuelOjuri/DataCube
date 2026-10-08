@@ -78,9 +78,10 @@ Phase 7; the runtime cannot delete audit records.
 ## Option A and database roles
 
 Updated 8 October 2026 following the owner's Option A decision and approval to
-retain the necessary migrator scope. The bootstrap has not been applied to any
-database, so the original migration is revised; no upgrade migration or live
-role changes are needed.
+retain the necessary migrator scope. The corrected bootstrap has now been
+applied and verified in the configured **TPID Data Cube - TEST** database.
+Production was not contacted. The earlier failed TEST bootstrap left no analyst
+roles or schemas, so migration 003 was corrected rather than adding an upgrade.
 
 | Role | Purpose and effective boundary |
 |---|---|
@@ -104,8 +105,9 @@ It has no source-table SELECT/write grants or permission to administer existing
 `public`/`analytics` objects, create roles/databases or bypass RLS. Source grants
 and policies remain the platform administrator's responsibility. Gateway views
 retain their separate non-login owner; gateway alterations likewise use the
-platform administrator's view-owner authority. Future state tables or functions
-require an explicit audit allowlist review before the API can start.
+platform administrator's view-owner authority. Future state tables and explicitly
+granted analyst functions require review. Existing PUBLIC invoker helpers remain
+available under the service-level boundary described below.
 
 The `analyst_query` gateway remains the future query service's reporting
 interface. Its ten views preserve the Phase 2 SQL through unchanged wrappers.
@@ -130,7 +132,7 @@ The migration does not change PUBLIC privileges on existing operational objects,
 ETL roles or reporting roles. Revocations in the bootstrap apply only to the new
 analyst schemas and objects.
 
-The same checked-in SQL, `bi_analyst/permissions.sql`, runs at the end of migration
+The same checked-in SQL, [permissions.sql](../services/bi_analyst/bi_analyst/permissions.sql), runs at the end of migration
 003 and during API startup, checking the reader, state writer, view owner and
 scoped migrator.
 Tests assert that its embedded migration copy stays identical. It checks effective
@@ -145,25 +147,61 @@ object names when it finds:
   explicitly permitted state storage and ownership rights;
 - unapproved table/column reads, sequence mutation, large-object update grants,
   privileged configuration-parameter grants or foreign-server access;
-- executable application/extension functions or procedures without a reviewed
-  definition, including SECURITY DEFINER and trigger functions.
+- executable SECURITY DEFINER functions/procedures or non-PUBLIC analyst function
+  grants without a reviewed definition.
 
-The function review is deliberately independent of schema USAGE, volatility
-labels and names alone. The two existing reporting dependencies
-`project_placeholder_is_empty(jsonb)` and `excluded_project_ids()` are accepted
-only when their exact stored body, signature, language, security mode, volatility
-and fixed search path match the checked-in source. A changed definition needs
-review. Other application or extension functions require an explicit reviewed
-allowlist update; a harmless extension function may therefore block installation
-until it is reviewed. The audit never automatically approves the deployed body.
+The owner explicitly approved the **service-level read-only boundary** after
+inspection of the actual TEST database. Ordinary SECURITY INVOKER functions
+already executable through PUBLIC are accepted: they run with the caller's
+privileges, not the function owner's. This does not grant new function rights or
+approve those functions for generated SQL. Their external/session side effects
+are not universally sandboxed. A change to SECURITY DEFINER is still rejected,
+and a new private function grant still requires review.
+
+The two standard `pg_stat_statements` statistics views are also accepted when they
+are actual members of that extension and already have PUBLIC SELECT. Name-only
+lookalikes, additional extension relations, and operational write privileges are
+not exempted. Existing permissions and PostgreSQL's statistics visibility rules
+remain unchanged.
+
+The two reporting dependencies `project_placeholder_is_empty(jsonb)` and
+`excluded_project_ids()` retain their reviewed signature, body, language, security
+mode, volatility and fixed-search-path checks. Only Windows CRLF versus LF line
+endings are normalised, including SQL-editor dollar-quoted literals; other source
+changes still fail. No deployed source function is rewritten or automatically
+approved.
 
 PUBLIC privileges are additive: revoking a permission from just the analyst role
-does not remove a PUBLIC grant. If PUBLIC already allows writes or an unsafe
-function, this migration fails and rolls back; it does not silently revoke that
-permission from existing consumers. Resolving that conflict requires a separate
-owner decision, such as an isolated reporting database or a narrowly reviewed
-permission change. Option A does not promise compatibility with unsafe existing
-grants. See [PostgreSQL privileges](https://www.postgresql.org/docs/current/ddl-priv.html).
+does not remove a PUBLIC grant. If PUBLIC allows operational writes, permanent
+CREATE or an unreviewed SECURITY DEFINER function, the migration still fails and
+rolls back rather than changing existing consumer permissions. Such a finding
+requires a separate decision; ordinary PUBLIC invoker helpers are no longer
+treated as that conflict. See [PostgreSQL privileges](https://www.postgresql.org/docs/current/ddl-priv.html).
+
+### TEST investigation and correction
+
+The 8 October TEST attempt reached the final audit and reported two statistics
+views (`extensions.pg_stat_statements` and `extensions.pg_stat_statements_info`)
+for all four roles, 151 unreviewed function signatures for all four roles, and
+`public.excluded_project_ids()` additionally for the reader and view owner.
+The owner required preserving **all existing PUBLIC, ETL and Power BI grants**
+and subsequently approved the service-level boundary above.
+
+The [read-only diagnostic](../services/bi_analyst/diagnose_permissions.sql) was
+executed against the configured hosted TEST project, not just a local fixture.
+All 151 PUBLIC-executable functions were SECURITY INVOKER; none used elevated
+owner privileges. Both statistics views were genuine extension members. Both
+reporting helpers' deployed bodies and metadata exactly matched the reviewed
+source at inspection time, so replacing them would have been unnecessary.
+The earlier claim that TEST necessarily had a changed reporting helper was not
+established by the pasted error alone; CRLF-sensitive audit literals were another
+possible cause and are now handled explicitly.
+
+The original migration failure was reproduced with rollback. The corrected
+migration then passed a CRLF-formatted transactional rehearsal and all ten
+gateway reads before it was committed and checked with actual restricted logins.
+No PUBLIC revocations, ETL/Power BI changes, source rewrites, extension changes or
+shared default-privilege changes were needed. See the hosted verification below.
 
 The runtime additionally verifies gateway ownership/security, exact runtime
 connection roles, state RLS and restrictions on changing principal grants,
@@ -179,9 +217,9 @@ statement/lock timeouts. TEMP permits session-local scratch objects; these are
 not operational tables.
 
 This is **not a universal sandbox for arbitrary SQL or stolen database credentials**.
-The audit treats built-in PostgreSQL system functions as platform code. Some native
-functions affect sessions or have other side effects, and a client controlling its
-connection can change session defaults. For example, native large-object creation
+The audit accepts native PostgreSQL functions and existing PUBLIC invoker helpers.
+Some functions affect sessions or have other side effects, and a client controlling
+its connection can change session defaults. For example, native large-object creation
 requires the explicit read-only transaction boundary; withholding table-write
 grants alone does not address it. PostgreSQL itself distinguishes read-only
 transactions from universal side-effect prevention.
@@ -195,8 +233,11 @@ certification pass. The database credentials remain exclusively on the server.
 
 ## Migration procedure
 
-Migration `src/database/migrations/20261008_003_analyst_permissions.sql` is a
+Migration [20261008_003_analyst_permissions.sql](../src/database/migrations/20261008_003_analyst_permissions.sql) is a
 one-time bootstrap after migration 001. Migration 002 remains optional.
+**It is already installed in the configured TEST database; do not rerun it there.**
+For a not-yet-migrated environment, confirm the target and absence of analyst
+roles/schemas first. Do not connect to production implicitly through a default DSN.
 Apply the entire file in a single transaction using the existing platform
 administrator, who must be able to create roles and source SELECT policies:
 
@@ -210,6 +251,10 @@ The private `schema_version` table intentionally uses restricted grants instead 
 an RLS policy. Run on the isolated staging/test environment first. If the effective
 privilege audit fails, retain its findings and review the named objects; do not
 bypass the audit or rerun only fragments of the migration.
+
+The supplied migration passed the actual configured TEST database. This is not
+a claim that production has identical grants; production was not contacted or
+migrated. The migration must still pass its audit in its deployment transaction.
 
 The bootstrap creates four roles, initially NOLOGIN, without passwords.
 Provision LOGIN and independent passwords only for the reader and state writer
@@ -231,6 +276,15 @@ The service does not load the root `.env`, and rejects privileged or mismatched
 database roles. Remote DSNs require `sslmode=verify-full`; supply the appropriate
 trusted CA with `sslrootcert` when the platform certificate is not in the normal
 trust store. Only explicit loopback test connections may omit TLS.
+
+The hosted TEST verification used Supabase's CA published by its
+[Studio configuration](https://github.com/supabase/supabase/blob/master/apps/studio/hooks/custom-content/custom-content.json),
+downloaded over HTTPS from
+`https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt`.
+The normal public CA bundle alone did not validate this TEST pooler's certificate.
+Use the current certificate from Database Settings / SSL Configuration when
+provisioning deployment secrets; do not disable certificate verification or
+change the database's SSL-enforcement setting.
 
 Use a direct connection, or a Supabase session pooler on port 5432. Session-pooler
 usernames may be `bi_analyst_reader.PROJECT_REF` and
@@ -293,7 +347,7 @@ ACLs and continue to update/read their existing reporting tables. PUBLIC schema
 USAGE and database TEMP remain unchanged.
 Historical Phase 2 parity remains separate evidence for the unchanged candidates.
 
-Option A verification on 8 October 2026: **142 analyst tests passed**, with no
+Earlier local Option A verification on 8 October 2026: **142 analyst tests passed**, with no
 skipped tests, including the real PostgreSQL permission tests and the full existing
 Phase 1/2 regression suite. The wheel built successfully and its packaged
 permission-audit SQL matched the source exactly; `git diff --check` passed.
@@ -301,7 +355,36 @@ The full run used a fresh workspace `--basetemp` directory because the existing
 Windows pytest temporary directory had incompatible permissions. These results
 establish local code and synthetic-database behavior, not production certification.
 
+### Hosted TEST acceptance: 8 October 2026
+
+The corrected migration and runtime SQL passed **40 API/permission regression
+tests** on an isolated PostgreSQL cluster, including PUBLIC invoker write denial,
+SECURITY DEFINER drift, private function grants, extension-view lookalikes and
+CRLF audit literals. The migration/runtime audit identity test also passed.
+
+It was then applied and committed to the guarded `.env` TEST target, with
+**28 hosted checks passed**. The persisted
+[TEST verification report](../outputs/bi_analyst_evals/phase3_test_permissions_20261008.json)
+records the migration SHA-256 and before/after snapshot hashes:
+
+- 13,082 existing shared ACL entries were unchanged, covering table/column,
+  function, schema, database and default privileges across existing consumers.
+- Existing source definitions, ownership/RLS settings, source policies and
+  pre-existing role memberships were unchanged.
+- Both real restricted logins connected with `sslmode=verify-full` and passed the
+  runtime audit. All ten gateways matched their approved source counts within
+  the five-second statement limit.
+- Operational INSERT/UPDATE/DELETE, permanent CREATE, state/source crossover and
+  owner-role escalation were denied. DML denial was also checked after disabling
+  the reader session's read-only default, proving the underlying ACL boundary.
+- State owner writes succeeded, cross-owner rows were hidden, and cross-owner
+  inserts failed RLS. Actual API startup/readiness passed; identity remained
+  deferred and data routes remained HTTP 503.
+- Temporary test credentials and state fixtures were removed. All four roles
+  remain NOLOGIN without passwords; the seven state tables and ten gateways are
+  installed. Runtime LOGIN/password provisioning remains a separate secret task.
+
 Production deployment, environment-specific effective-privilege review, source certification,
 identity implementation and measured Render/Supabase connectivity/capacity remain
-open. This delivery neither modifies the frozen evaluation dataset nor deploys
-changes to Supabase, Monday or Render.
+open. The hosted TEST permission bootstrap is now deployed; production, Monday,
+Render and the frozen evaluation datasets were not changed.

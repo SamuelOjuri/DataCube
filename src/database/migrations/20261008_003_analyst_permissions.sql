@@ -2,7 +2,8 @@
 -- administrator. No passwords, source rewrites, auth provisioning or certification.
 -- Option A: preserve existing PUBLIC/ETL/Power BI grants, including USAGE/TEMP.
 -- Approved dependencies are directly readable. The final effective-privilege
--- audit rejects writes/CREATE outside each role's approved scope and unreviewed functions.
+-- audit rejects writes/CREATE outside each role's approved scope and unreviewed
+-- elevated/private functions. Existing PUBLIC invoker helpers remain callable.
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
@@ -172,7 +173,7 @@ DECLARE failures text;
 BEGIN
  SELECT string_agg(role_name||': '||issue||' ['||object_name||']', E'\n') INTO failures FROM (
 -- BEGIN SHARED AUDIT
--- Option A effective-privilege audit. USAGE and TEMP are accepted.
+-- Option A service-role audit. PUBLIC invoker helpers, USAGE and TEMP are retained.
 -- This exact query is embedded in migration 003 and used by API startup.
 WITH targets AS (
  SELECT r.* FROM pg_catalog.pg_roles r
@@ -194,6 +195,15 @@ WITH targets AS (
  WHERE r.rolname IN ('bi_analyst_reader','bi_analyst_view_owner')
  UNION ALL SELECT 'bi_analyst_state','analyst_state',name FROM state_names WHERE name<>'audit_events'
  UNION ALL SELECT 'bi_analyst_migrator','analyst_state',name FROM state_names
+ UNION ALL
+ SELECT r.rolname,n.nspname,c.relname FROM targets r CROSS JOIN pg_catalog.pg_class c
+ JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+ JOIN pg_catalog.pg_depend d ON d.classid='pg_catalog.pg_class'::regclass AND d.objid=c.oid AND d.deptype='e'
+ JOIN pg_catalog.pg_extension e ON d.refclassid='pg_catalog.pg_extension'::regclass AND e.oid=d.refobjid
+ WHERE e.extname='pg_stat_statements' AND c.relkind='v'
+ AND c.relname IN ('pg_stat_statements','pg_stat_statements_info')
+ AND EXISTS (SELECT FROM aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+             WHERE a.grantee=0 AND a.privilege_type='SELECT')
 ), reviewed_functions(signature,definer,volatility,body) AS (
  -- Exact reviewed definitions, not blanket trust in STABLE/IMMUTABLE labels.
  VALUES ('public.project_placeholder_is_empty(jsonb)',false,'i', $placeholder$
@@ -294,11 +304,16 @@ $excluded$)
  -- Built-in PostgreSQL functions are trusted platform code, not unrestricted
  -- query tools. Phase 4 must allowlist SQL/functions within READ ONLY transactions.
  AND NOT (n.nspname IN ('pg_catalog','information_schema') AND p.oid<16384 AND NOT p.prosecdef)
+ -- PUBLIC invoker functions run with the caller's ACLs, not the owner's.
+ -- This is compatibility with the shared database, not arbitrary-SQL approval.
+ AND NOT (NOT p.prosecdef AND EXISTS (
+   SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+   WHERE a.grantee=0 AND a.privilege_type='EXECUTE'))
  AND NOT EXISTS (SELECT FROM reviewed_functions f
    WHERE p.oid=to_regprocedure(f.signature) AND p.prosecdef=f.definer
      AND p.provolatile::text=f.volatility AND lang.lanname='sql'
      AND p.prokind='f' AND p.proconfig=ARRAY['search_path=""']::text[]
-     AND p.prosrc=f.body AND p.prosqlbody IS NULL)
+     AND replace(p.prosrc,E'\r\n',E'\n')=replace(f.body,E'\r\n',E'\n') AND p.prosqlbody IS NULL)
 )
 SELECT role_name,issue,object_name FROM violations ORDER BY role_name,issue,object_name
 -- END SHARED AUDIT

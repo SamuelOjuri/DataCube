@@ -57,6 +57,9 @@ def database():
                 conn.execute("GRANT SELECT ON public.projects,public.reportable_projects TO bi_fixture_powerbi")
                 conn.execute("CREATE POLICY fixture_etl ON public.projects TO bi_fixture_etl USING(true) WITH CHECK(true)")
                 conn.execute("CREATE POLICY fixture_powerbi ON public.projects FOR SELECT TO bi_fixture_powerbi USING(true)")
+                conn.execute("CREATE SCHEMA extensions")
+                conn.execute("CREATE EXTENSION pg_stat_statements WITH SCHEMA extensions")
+                conn.execute("CREATE FUNCTION public.fixture_invoker_write() RETURNS integer LANGUAGE sql AS 'DELETE FROM public.projects RETURNING 1'")
                 for table in ["projects", "subitems", "hidden_items", "analysis_results"]:
                     conn.execute(sql.SQL("ALTER TABLE public.{} ENABLE ROW LEVEL SECURITY").format(sql.Identifier(table)))
                 # Source function ACL already protects existing consumers. The migration

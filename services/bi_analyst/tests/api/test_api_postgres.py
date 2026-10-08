@@ -1,4 +1,5 @@
 from uuid import uuid4
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import psycopg
@@ -145,6 +146,7 @@ def test_real_database_permission_boundary(settings, database, users):
         reader.execute("INSERT INTO scratch VALUES (1)")
         for forbidden in ["CREATE TABLE analyst_query.bad(x int)", "CREATE TABLE public.bad(x int)",
                           "CREATE SCHEMA bad", "SELECT public.forbidden_write()",
+                          "SELECT public.fixture_invoker_write()",
                           "INSERT INTO public.projects(monday_id) VALUES ('bad')",
                           "DELETE FROM public.projects", "TRUNCATE public.projects",
                           "UPDATE public.projects SET total_order_value=0",
@@ -271,6 +273,77 @@ def test_reviewed_function_change_fails_audit(database):
         admin.execute("CREATE OR REPLACE FUNCTION public.excluded_project_ids() RETURNS TABLE(monday_id text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS 'SELECT monday_id FROM public.projects'")
         rows=admin.execute(files("bi_analyst").joinpath("permissions.sql").read_text(encoding="utf-8")).fetchall()
         assert any(r['issue']=='unreviewed_function' and 'excluded_project_ids' in r['object_name'] for r in rows)
+
+
+def test_shared_invoker_functions_and_extension_statistics_are_compatible(database):
+    admin, _ = database
+    audit = files("bi_analyst").joinpath("permissions.sql").read_text(encoding="utf-8")
+    assert admin.execute(audit.replace("\n", "\r\n")).fetchall() == []
+    assert admin.execute("""SELECT has_function_privilege('bi_analyst_reader',
+        'public.fixture_invoker_write()','EXECUTE') AS allowed""").fetchone()['allowed']
+    for view in ("pg_stat_statements", "pg_stat_statements_info"):
+        assert admin.execute("SELECT has_table_privilege('bi_analyst_reader',%s,'SELECT') AS allowed",
+                             ("extensions." + view,)).fetchone()['allowed']
+    with admin.transaction(force_rollback=True):
+        admin.execute("ALTER FUNCTION public.fixture_invoker_write() SECURITY DEFINER")
+        rows = admin.execute(audit).fetchall()
+        assert sum(r['issue'] == 'unreviewed_function' and 'fixture_invoker_write' in r['object_name'] for r in rows) == 4
+    with admin.transaction(force_rollback=True):
+        admin.execute("REVOKE EXECUTE ON FUNCTION public.fixture_invoker_write() FROM PUBLIC")
+        admin.execute("GRANT EXECUTE ON FUNCTION public.fixture_invoker_write() TO bi_analyst_reader")
+        assert any(r['issue'] == 'unreviewed_function' and 'fixture_invoker_write' in r['object_name']
+                   for r in admin.execute(audit).fetchall())
+    with admin.transaction(force_rollback=True):
+        admin.execute("CREATE VIEW public.pg_stat_statements AS SELECT 1 AS value")
+        admin.execute("GRANT SELECT ON public.pg_stat_statements TO PUBLIC")
+        assert any(r['issue'] == 'unapproved_read' and r['object_name'] == 'public.pg_stat_statements'
+                   for r in admin.execute(audit).fetchall())
+
+
+def test_readonly_permission_diagnostics_preserve_grants(database):
+    admin, _ = database
+    diagnostic = (Path(__file__).resolve().parents[2] / "diagnose_permissions.sql").read_text(encoding="utf-8")
+    acl_snapshot = """
+        SELECT 'relation' AS kind,oid,relacl::text AS acl FROM pg_class
+        UNION ALL SELECT 'function',oid,proacl::text FROM pg_proc
+        UNION ALL SELECT 'schema',oid,nspacl::text FROM pg_namespace
+        UNION ALL SELECT 'role',oid,row_to_json(r)::text FROM pg_roles r
+        UNION ALL SELECT 'column',attrelid,jsonb_build_array(attnum,attacl)::text
+          FROM pg_attribute WHERE attacl IS NOT NULL
+        ORDER BY 1,2,3"""
+    admin.execute("CREATE SCHEMA bi_diagnostic_fixture")
+    try:
+        admin.execute("CREATE TABLE bi_diagnostic_fixture.example(value integer)")
+        admin.execute("GRANT SELECT ON bi_diagnostic_fixture.example TO PUBLIC,bi_fixture_powerbi")
+        admin.execute("GRANT UPDATE(value) ON bi_diagnostic_fixture.example TO PUBLIC")
+        admin.execute("GRANT SELECT,INSERT,UPDATE,DELETE ON bi_diagnostic_fixture.example TO bi_fixture_etl")
+        admin.execute("""CREATE FUNCTION bi_diagnostic_fixture.never_execute() RETURNS integer
+            LANGUAGE plpgsql SECURITY DEFINER AS $$
+            BEGIN RAISE EXCEPTION 'Diagnostic executed an inspected function'; END $$""")
+        before = admin.execute(acl_snapshot).fetchall()
+        with admin.transaction():
+            admin.execute("SET TRANSACTION READ ONLY")
+            rows = admin.execute(diagnostic).fetchall()
+            assert admin.execute("SHOW transaction_read_only").fetchone()['transaction_read_only'] == 'on'
+        assert admin.execute(acl_snapshot).fetchall() == before
+        assert all(set(row) == {'section','object_name','details'} for row in rows)
+        roles = [r for r in rows if r['section'] == 'bootstrap_role']
+        assert len(roles) == 4 and all(r['details']['present'] for r in roles)
+        schemas = [r for r in rows if r['section'] == 'bootstrap_schema']
+        assert len(schemas) == 2 and all(r['details']['present'] for r in schemas)
+        grants = [r['details'] for r in rows if r['object_name'] == 'bi_diagnostic_fixture.example']
+        assert any(g['scope'] == 'relation' and g['privilege'] == 'SELECT' for g in grants)
+        assert any(g['scope'] == 'column' and g['column'] == 'value' and g['privilege'] == 'UPDATE' for g in grants)
+        function = next(r['details'] for r in rows if r['object_name'] == 'bi_diagnostic_fixture.never_execute()')
+        assert function['security_definer'] and function['acl_source'] == 'postgres_default'
+        assert not function['public_schema_usage'] and 'definition' not in function
+        assert not any(r['section'] == 'public_function_execute' and r['object_name'] == 'public.forbidden_write()' for r in rows)
+        helper = next(r['details'] for r in rows if r['section'] == 'reporting_helper' and r['object_name'] == 'public.excluded_project_ids()')
+        assert helper['present'] and helper['security_definer']
+        assert 'SELECT p.monday_id' in helper['stored_source'] and 'CREATE OR REPLACE FUNCTION' in helper['definition']
+        assert helper['source_md5'] and helper['settings'] == ['search_path=""']
+    finally:
+        admin.execute("DROP SCHEMA bi_diagnostic_fixture CASCADE")
 
 
 def test_analytical_transactions_enforce_read_only(settings):
