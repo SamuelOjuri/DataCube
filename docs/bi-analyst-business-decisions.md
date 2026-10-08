@@ -1,6 +1,6 @@
 # Analyst business decisions: 8 October 2026
 
-Source: Sam's instruction in the implementation conversation on 8 October 2026.
+Source: Owner's instruction in the implementation conversation on 8 October 2026.
 Currency/timezone recorded at 12:36:43 UTC (13:36:43 Europe/London); fiscal/tax
 clarifications recorded at 12:39:35 UTC (13:39:35 Europe/London). These
 instructions approve business decisions; they do not attest source reconciliation
