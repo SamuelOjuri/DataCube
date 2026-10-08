@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env*
+# The repository ignores data JSON by default; these are application source files.
+!package.json
+!package-lock.json
+!tsconfig.json

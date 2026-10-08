@@ -3,6 +3,13 @@
 Implemented 8 October 2026. This is a code delivery and deployment runbook, not a
 record of production migration or deployment.
 
+**Authentication follow-up (8 October 2026):** the owner has now requested the
+Monday pilot sign-in implementation. Version 0.3.1 adds OAuth, sessions, migration
+005 and a frontend sign-in shell. The original deferral and TEST evidence below
+describe the earlier 0.3.0 delivery. They are not the current implementation status.
+See [the authentication assessment, controls and activation runbook](bi-analyst-auth.md).
+Hosted authentication remains disabled until that setup and acceptance are complete.
+
 ## Assessment and agreed scope
 
 The plan's separation of the API, analytical reader and state writer is sound.

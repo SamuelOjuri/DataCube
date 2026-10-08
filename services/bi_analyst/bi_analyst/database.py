@@ -15,6 +15,7 @@ GATEWAYS = (
     "invoice_reporting_facts_v1", "conversion_cohorts_v1", "coverage_v1",
 )
 STATE_TABLES = ("schema_version", "principals", "conversations", "runs", "results", "rate_limits", "audit_events")
+AUTH_TABLES = ("external_identities", "oauth_attempts", "sessions", "auth_rate_limit")
 
 
 class Database:
@@ -64,10 +65,16 @@ class Database:
                 await conn.execute(sql.SQL("SELECT * FROM analyst_query.{} LIMIT 0").format(sql.Identifier(relation)))
         async with self.transaction() as conn:
             row = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
-            if row != {"version": 3}:
+            if row not in ({"version": 3}, {"version": 5}) or (self.settings.auth_provider == "monday" and row != {"version": 5}):
                 raise RuntimeError("Unexpected analyst schema version")
+            if row == {"version": 5}:
+                for relation in AUTH_TABLES:
+                    await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
 
     async def verify_permissions(self):
+        async with self.transaction() as conn:
+            version = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
+        auth_installed = version == {"version": 5}
         for analytical, expected in (
             (True, "bi_analyst_reader"),
             (False, "bi_analyst_state"),
@@ -77,7 +84,7 @@ class Database:
                 if row["role"] != expected:
                     raise RuntimeError("Unexpected analyst connection role")
                 violations = await (await conn.execute(
-                    files("bi_analyst").joinpath("permissions.sql").read_text(encoding="utf-8")
+                    files("bi_analyst").joinpath("permissions_auth.sql" if auth_installed else "permissions.sql").read_text(encoding="utf-8")
                 )).fetchall()
                 if violations:
                     # Object names/issue codes only; never include DSNs or data.
@@ -89,7 +96,7 @@ class Database:
                         WHERE n.nspname='analyst_state' AND c.relname=ANY(%s)
                         AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity
                           OR has_table_privilege(c.oid,'DELETE,TRUNCATE,TRIGGER,REFERENCES')) LIMIT 1
-                    """, (list(STATE_TABLES[1:]),))).fetchone()
+                    """, (list(STATE_TABLES[1:] + (AUTH_TABLES if auth_installed else ())),))).fetchone()
                     permission_drift = await (await conn.execute("""
                         SELECT has_table_privilege('analyst_state.principals','INSERT,UPDATE')
                           OR has_any_column_privilege('analyst_state.principals','INSERT,UPDATE')
@@ -101,6 +108,21 @@ class Database:
                     """)).fetchone()
                     if state_drift or permission_drift['unsafe']:
                         raise RuntimeError("Unsafe state permissions or row security")
+                    if auth_installed:
+                        drift = await (await conn.execute("""
+                            SELECT has_any_column_privilege('analyst_state.external_identities','INSERT,UPDATE')
+                              OR has_table_privilege('analyst_state.sessions','UPDATE')
+                              OR has_column_privilege('analyst_state.sessions','owner_id','UPDATE')
+                              OR has_column_privilege('analyst_state.sessions','token_hash','UPDATE')
+                              OR has_column_privilege('analyst_state.sessions','permissions_version','UPDATE')
+                              OR has_column_privilege('analyst_state.sessions','expires_at','UPDATE')
+                              OR has_column_privilege('analyst_state.sessions','created_at','UPDATE')
+                              OR has_column_privilege('analyst_state.oauth_attempts','nonce_hash','UPDATE')
+                              OR has_column_privilege('analyst_state.oauth_attempts','client_challenge','UPDATE')
+                              OR has_column_privilege('analyst_state.oauth_attempts','state_hash','UPDATE') AS unsafe
+                        """)).fetchone()
+                        if drift['unsafe']:
+                            raise RuntimeError("Unsafe authentication permissions")
         async with self.transaction(analytical=True) as conn:
             owners = await (await conn.execute("""
                 SELECT c.relname, r.rolname, r.rolcanlogin, r.rolsuper, r.rolbypassrls, c.reloptions

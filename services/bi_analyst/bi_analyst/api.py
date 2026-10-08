@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 import psycopg
+import httpx
 from psycopg_pool import PoolTimeout, TooManyRequests
 from starlette.middleware import Middleware
 
@@ -20,6 +21,9 @@ from .database import Database
 from .identity import Identity, current_identity
 from .settings import Settings
 from .store import Principal, Store
+from .auth import routes as auth_routes
+from .auth_store import AuthStore
+from .monday_auth import MondayOAuth
 
 log = logging.getLogger("bi_analyst.audit")
 
@@ -64,13 +68,17 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.settings = config
         app.state.database = database
         app.state.store = Store(database)
+        app.state.auth_store = AuthStore(database)
         await database.open()
         try:
-            yield
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False,
+                                         limits=httpx.Limits(max_connections=8, max_keepalive_connections=4)) as client:
+                app.state.monday = MondayOAuth(config, client)
+                yield
         finally:
             await database.close()
 
-    app = FastAPI(title="DataCube BI Analyst", version="0.3.0", lifespan=lifespan,
+    app = FastAPI(title="DataCube BI Analyst", version="0.3.1", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -86,16 +94,19 @@ def create_app(settings: Settings) -> FastAPI:
         subject = getattr(request.state, "subject", None)
         if subject is not None:
             try:
-                await request.app.state.store.audit(subject, request_id, route, request.method, response.status_code)
+                await request.app.state.store.audit(subject, request_id, route, request.method,
+                                                     getattr(request.state, "audit_status", response.status_code))
             except Exception:
                 # Do not release an unaudited data response or expose DB messages.
                 response = JSONResponse({"detail": "audit_unavailable"}, status_code=503)
         response.headers["X-Request-ID"] = str(request_id)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
         log.info(json.dumps({"event": "http_request", "request_id": str(request_id),
                              "subject": str(subject) if subject else None,
                              "route": route, "method": request.method, "status": response.status_code,
+                             "auth_outcome": getattr(request.state, "auth_outcome", None),
                              "duration_ms": round((time.monotonic()-started)*1000)}))
         return response
 
@@ -112,7 +123,12 @@ def create_app(settings: Settings) -> FastAPI:
 
     async def principal(request: Request, identity: Identity = Depends(current_identity)) -> Principal:
         request.state.subject = identity.subject
-        return await request.app.state.store.authorize(identity.subject)
+        actor = await request.app.state.store.authorize(identity.subject)
+        if identity.permissions_version is not None and identity.permissions_version != actor.permissions_version:
+            raise HTTPException(403, "permissions_changed")
+        return actor
+
+    app.include_router(auth_routes(principal))
 
     @app.get("/health/live")
     async def live():
@@ -125,7 +141,8 @@ def create_app(settings: Settings) -> FastAPI:
         except Exception:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         # Infrastructure readiness is deliberately distinct from feature availability.
-        return {"status": "ready", "identity": "deferred", "metric_execution": "unavailable"}
+        return {"status": "ready", "identity": "monday" if settings.auth_provider == "monday" else "deferred",
+                "metric_execution": "unavailable"}
 
     @app.post("/v1/conversations", response_model=Conversation, status_code=201)
     async def create_conversation(body: ConversationInput, request: Request, actor: Principal = Depends(principal)):

@@ -68,3 +68,28 @@ def test_migration_and_runtime_use_the_same_permission_audit():
     migration = (root/"src/database/migrations/20261008_003_analyst_permissions.sql").read_text(encoding="utf-8")
     embedded = migration.split("-- BEGIN SHARED AUDIT\n",1)[1].split("-- END SHARED AUDIT",1)[0]
     assert embedded == files("bi_analyst").joinpath("permissions.sql").read_text(encoding="utf-8")
+
+
+def test_auth_migration_embeds_its_versioned_permission_audit():
+    from importlib.resources import files
+    root = Path(__file__).resolve().parents[4]
+    migration = (root/'src/database/migrations/20261008_005_analyst_auth.sql').read_text(encoding='utf-8')
+    embedded = migration.split('-- BEGIN SHARED AUDIT\n',1)[1].split('-- END SHARED AUDIT',1)[0]
+    assert embedded == files('bi_analyst').joinpath('permissions_auth.sql').read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize('change', [
+    {'monday_client_secret':None}, {'monday_account_id':'*'}, {'session_seconds':901},
+    {'auth_frontend_url':'https://evil.test/callback'},
+    {'auth_frontend_url':'https://analyst.example.test/callback?next=evil'},
+    {'monday_redirect_uri':'https://api.example.test/elsewhere'},
+    {'monday_redirect_uri':'http://api.example.test/auth/callback'},
+    {'monday_redirect_uri':'https://user:secret@api.example.test/auth/callback'},
+])
+def test_auth_configuration_fails_closed(change):
+    values = dict(auth_provider='monday', monday_client_id='client',monday_client_secret='secret',
+        monday_account_id='123',monday_redirect_uri='https://api.example.test/auth/callback',
+        auth_frontend_url='https://analyst.example.test/auth/callback',cors_origins=['https://analyst.example.test'])
+    values.update(change)
+    with pytest.raises(ValidationError):
+        config(**values)

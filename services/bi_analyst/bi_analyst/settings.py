@@ -1,6 +1,7 @@
 """Analyst-only configuration. Never load the repository .env or ETL settings."""
 import os
 from urllib.parse import urlsplit
+import re
 
 from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
@@ -21,6 +22,14 @@ class Settings(BaseModel):
     statement_timeout_ms: int = Field(default=5000, ge=100, le=30000)
     requests_per_minute: int = Field(default=60, ge=1, le=600)
     max_body_bytes: int = Field(default=32768, ge=1024, le=131072)
+    auth_provider: str = "disabled"
+    monday_client_id: str | None = None
+    monday_client_secret: SecretStr | None = None
+    monday_account_id: str | None = None
+    monday_redirect_uri: str | None = None
+    auth_frontend_url: str | None = None
+    session_seconds: int = Field(default=900, ge=60, le=900)
+    auth_requests_per_minute: int = Field(default=120, ge=10, le=600)
 
     @model_validator(mode="after")
     def validate_boundary(self):
@@ -57,6 +66,25 @@ class Settings(BaseModel):
                 raise ValueError("CORS origins must be explicit HTTPS origins")
             if url.path or url.query or url.fragment or url.username or url.password or "*" in origin:
                 raise ValueError("CORS origins must not contain paths, credentials or wildcards")
+        if self.auth_provider not in {"disabled", "monday"}:
+            raise ValueError("auth_provider must be disabled or monday")
+        if self.auth_provider == "monday":
+            if not self.monday_client_id or not self.monday_client_secret or not self.monday_client_secret.get_secret_value().strip():
+                raise ValueError("Monday client credentials are required")
+            if not re.fullmatch(r"[1-9][0-9]{0,29}", self.monday_account_id or ""):
+                raise ValueError("An approved Monday account ID is required")
+            for target in (self.monday_redirect_uri, self.auth_frontend_url):
+                url = urlsplit(target or "")
+                local = self.environment == "test" and url.hostname in {"localhost", "127.0.0.1"}
+                if (not url.netloc or (url.scheme != "https" and not (local and url.scheme == "http"))
+                        or url.username or url.password or url.query or url.fragment
+                        or "*" in (target or "") or any(c.isspace() for c in (target or ""))):
+                    raise ValueError("Authentication redirects require fixed HTTPS URLs")
+            if urlsplit(self.monday_redirect_uri).path != "/auth/callback":
+                raise ValueError("Monday redirect path must be /auth/callback")
+            front = urlsplit(self.auth_frontend_url)
+            if f"{front.scheme}://{front.netloc}" not in self.cors_origins:
+                raise ValueError("The authentication frontend must have an explicit CORS origin")
         return self
 
     @classmethod

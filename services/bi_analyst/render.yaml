@@ -20,6 +20,20 @@ services:
         sync: false
       - key: BI_ANALYST_CORS_ORIGINS
         sync: false
+      - key: BI_ANALYST_AUTH_PROVIDER
+        value: disabled
+      - key: BI_ANALYST_MONDAY_CLIENT_ID
+        sync: false
+      - key: BI_ANALYST_MONDAY_CLIENT_SECRET
+        sync: false
+      - key: BI_ANALYST_MONDAY_ACCOUNT_ID
+        sync: false
+      - key: BI_ANALYST_MONDAY_REDIRECT_URI
+        sync: false
+      - key: BI_ANALYST_AUTH_FRONTEND_URL
+        sync: false
+      - key: BI_ANALYST_SESSION_SECONDS
+        value: 900
       - key: BI_ANALYST_CONNECTION_BUDGET
         value: 4
       - key: BI_ANALYST_REPLICA_COUNT
