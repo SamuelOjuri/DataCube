@@ -5,12 +5,13 @@ import io
 import json
 import logging
 import time
+import asyncio
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 import psycopg
 import httpx
 from psycopg_pool import PoolTimeout, TooManyRequests
@@ -28,6 +29,10 @@ from .monday_source import MondaySourceReader, SourceCheckRequest, SourceCheckSe
 from .metrics.compiler import InvalidMetricRequest
 from .metrics.contracts import EntityRequest, EntityResolution, MetricRequest, MetricResult
 from .metrics.service import MetricService
+from .workflow.contracts import Reply, Submission, WorkflowRun
+from .workflow.provider import GeminiProvider
+from .workflow.service import WorkflowService
+from .workflow.store import TERMINAL
 
 log = logging.getLogger("bi_analyst.audit")
 
@@ -82,11 +87,15 @@ def create_app(settings: Settings) -> FastAPI:
                 app.state.monday_source = MondaySourceReader(config, client)
                 app.state.source_checks = SourceCheckService(app.state.store, app.state.metrics.compiler,
                                                            app.state.monday_source)
-                yield
+                app.state.workflow = WorkflowService(app.state.store, app.state.metrics, GeminiProvider(config,client))
+                try:
+                    yield
+                finally:
+                    await app.state.workflow.close()
         finally:
             await database.close()
 
-    app = FastAPI(title="DataCube BI Analyst", version="0.4.1", lifespan=lifespan,
+    app = FastAPI(title="DataCube BI Analyst", version="0.5.0", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -162,7 +171,8 @@ def create_app(settings: Settings) -> FastAPI:
         if settings.business_timezone is None:
             execution = "unavailable"
         return {"status": "ready", "identity": "monday" if settings.auth_provider == "monday" else "deferred",
-                "metric_execution": execution, "monday_source_reads": request.app.state.monday_source.configured}
+                "metric_execution": execution, "monday_source_reads": request.app.state.monday_source.configured,
+                "workflow": "enabled" if settings.workflow_enabled else "disabled"}
 
     @app.get("/v1/metrics")
     async def metric_catalogue(request: Request, actor: Principal = Depends(principal)):
@@ -238,12 +248,65 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/v1/runs/{run_id}/cancel", response_model=Run)
     async def cancel_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
+        if request.app.state.database.schema_version == 6 and await request.app.state.workflow.cancel(actor,run_id):
+            return await request.app.state.store.run(actor,run_id)
         return await request.app.state.store.run(actor, run_id, cancel=True)
 
     @app.post("/v1/runs/{run_id}/resume")
-    async def resume_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
-        await request.app.state.store.run(actor, run_id)
-        raise HTTPException(501, "workflow_not_implemented")
+    async def resume_run(run_id: UUID, request: Request, body: Reply | None = None, actor: Principal = Depends(principal)):
+        await request.app.state.store.run(actor,run_id)
+        request.app.state.workflow.require_enabled()
+        if body is None:
+            raise HTTPException(422,'clarification_reply_required')
+        return await request.app.state.workflow.resume(actor,run_id,body)
+
+    @app.post("/v1/conversations/{conversation_id}/messages", response_model=WorkflowRun, status_code=202)
+    async def message(conversation_id: UUID, body: Submission, request: Request, actor: Principal = Depends(principal)):
+        return await request.app.state.workflow.submit(actor,conversation_id,body)
+
+    @app.get("/v1/runs/{run_id}/workflow", response_model=WorkflowRun)
+    async def workflow_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
+        workflow = request.app.state.workflow
+        workflow.require_enabled()
+        await workflow.jobs.expire(actor)
+        return workflow.jobs.public(await workflow.jobs.get(actor,run_id))
+
+    @app.get("/v1/runs/{run_id}/events")
+    async def events(run_id: UUID, request: Request, after: int = Query(0,ge=0,le=128),
+                     actor: Principal = Depends(principal), identity: Identity = Depends(current_identity)):
+        workflow = request.app.state.workflow
+        workflow.require_enabled()
+        await workflow.jobs.expire(actor)
+        await workflow.jobs.get(actor,run_id)
+        async def stream():
+            cursor, heartbeat = after, time.monotonic()
+            while not await request.is_disconnected():
+                try:
+                    # Revalidate the same live session throughout a long-lived stream.
+                    if settings.auth_provider == 'monday':
+                        live_identity = await current_identity(request)
+                        if live_identity.subject != actor.subject or live_identity.permissions_version != actor.permissions_version:
+                            raise HTTPException(403,'permissions_changed')
+                    await workflow.jobs.expire(actor)
+                    state = await workflow.jobs.get(actor,run_id)
+                    rows = await workflow.jobs.events(actor,run_id,cursor)
+                except HTTPException:
+                    yield 'event: terminal\ndata: {"status":"access_changed"}\n\n'
+                    return
+                except Exception:
+                    yield 'event: terminal\ndata: {"status":"stream_unavailable"}\n\n'
+                    return
+                for event in rows:
+                    cursor = event['sequence']
+                    yield f"id: {cursor}\nevent: {event['kind']}\ndata: {json.dumps(event['payload'],ensure_ascii=True)}\n\n"
+                if state['status'] in TERMINAL or state['status'] == 'awaiting_clarification':
+                    return
+                if time.monotonic()-heartbeat >= 10:
+                    yield ': heartbeat\n\n'
+                    heartbeat = time.monotonic()
+                await asyncio.sleep(0.5)
+        return StreamingResponse(stream(),media_type='text/event-stream',
+                                 headers={'X-Accel-Buffering':'no','Cache-Control':'no-store'})
 
     @app.get("/v1/results/{result_id}", response_model=Result)
     async def get_result(result_id: UUID, request: Request, actor: Principal = Depends(principal)):

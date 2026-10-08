@@ -58,3 +58,15 @@ services:
         sync: false
       - key: BI_ANALYST_MONDAY_READ_API_VERSION
         value: "2026-07"
+      - key: BI_ANALYST_WORKFLOW_ENABLED
+        value: "false"
+      - key: BI_ANALYST_GEMINI_API_KEY
+        sync: false
+      - key: BI_ANALYST_WORKFLOW_CONCURRENCY
+        value: 2
+      - key: BI_ANALYST_WORKFLOW_TIMEOUT_SECONDS
+        value: 90
+      - key: BI_ANALYST_WORKFLOW_MAX_MODEL_CALLS
+        value: 8
+      - key: BI_ANALYST_MODEL_TIMEOUT_SECONDS
+        value: 25

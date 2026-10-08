@@ -1,0 +1,202 @@
+{
+  "evaluated_at": "2026-10-08T18:15:06.777887+00:00",
+  "model": "gemini-3.8-flash",
+  "prompt": "bi-conversation-1.0.2",
+  "generation": {
+    "temperature": 0,
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingLevel": "LOW"
+    }
+  },
+  "data": "Synthetic result cells; no database or CRM access.",
+  "status": "passed",
+  "results": [
+    {
+      "metric_id": "new_enquiry_value",
+      "case": {},
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total"
+        ],
+        "chart": {
+          "kind": "number",
+          "x": null,
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 649,
+        "candidatesTokenCount": 28,
+        "thoughtsTokenCount": 0
+      },
+      "seconds": 2.339
+    },
+    {
+      "metric_id": "order_parent_value",
+      "case": {},
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total"
+        ],
+        "chart": {
+          "kind": "number",
+          "x": null,
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 650,
+        "candidatesTokenCount": 21,
+        "thoughtsTokenCount": 0
+      },
+      "seconds": 1.447
+    },
+    {
+      "metric_id": "invoice_project_value",
+      "case": {},
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total"
+        ],
+        "chart": {
+          "kind": "number",
+          "x": null,
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 652,
+        "candidatesTokenCount": 51,
+        "thoughtsTokenCount": 73
+      },
+      "seconds": 2.915
+    },
+    {
+      "metric_id": "conversion_five_year",
+      "case": {},
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total"
+        ],
+        "chart": {
+          "kind": "number",
+          "x": null,
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 823,
+        "candidatesTokenCount": 21,
+        "thoughtsTokenCount": 0
+      },
+      "seconds": 2.095
+    },
+    {
+      "metric_id": "gestation_five_year",
+      "case": {},
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total"
+        ],
+        "chart": {
+          "kind": "number",
+          "x": null,
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 776,
+        "candidatesTokenCount": 21,
+        "thoughtsTokenCount": 0
+      },
+      "seconds": 2.648
+    },
+    {
+      "metric_id": "order_parent_value",
+      "case": {
+        "grouped": true,
+        "limited": true
+      },
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total",
+          "row_0"
+        ],
+        "chart": {
+          "kind": "table",
+          "x": "category",
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 787,
+        "candidatesTokenCount": 34,
+        "thoughtsTokenCount": 0
+      },
+      "seconds": 3.008
+    },
+    {
+      "metric_id": "order_parent_value",
+      "case": {
+        "missing": true
+      },
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total"
+        ],
+        "chart": {
+          "kind": "table",
+          "x": null,
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 647,
+        "candidatesTokenCount": 28,
+        "thoughtsTokenCount": 0
+      },
+      "seconds": 2.066
+    },
+    {
+      "metric_id": "conversion_five_year",
+      "case": {
+        "comparison": true
+      },
+      "passed": true,
+      "error_code": null,
+      "presentation": {
+        "claim_ids": [
+          "total",
+          "absolute_change",
+          "percentage_point_change"
+        ],
+        "chart": {
+          "kind": "number",
+          "x": null,
+          "y": "value"
+        }
+      },
+      "usage": {
+        "promptTokenCount": 1981,
+        "candidatesTokenCount": 31,
+        "thoughtsTokenCount": 0
+      },
+      "seconds": 1.803
+    }
+  ]
+}

@@ -42,11 +42,19 @@ class Settings(BaseModel):
     metric_max_bytes: int = Field(default=900000, ge=16384, le=900000)
     metric_concurrency: int = Field(default=2, ge=1, le=20)
     metric_timeout_seconds: float = Field(default=15, ge=1, le=60)
+    workflow_enabled: bool = False
+    gemini_api_key: SecretStr | None = None
+    workflow_concurrency: int = Field(default=2, ge=1, le=8)
+    workflow_timeout_seconds: float = Field(default=90, ge=1, le=300)
+    workflow_max_model_calls: int = Field(default=8, ge=3, le=12)
+    model_timeout_seconds: float = Field(default=25, ge=1, le=60)
 
     @model_validator(mode="after")
     def validate_boundary(self):
         if self.environment not in {"production", "staging", "test"}:
             raise ValueError("environment must be production, staging or test")
+        if self.workflow_enabled and (not self.gemini_api_key or not self.gemini_api_key.get_secret_value().strip()):
+            raise ValueError("Workflow requires an independent Gemini API key")
         if (self.read_pool_size + self.state_pool_size) * self.replica_count > self.connection_budget:
             raise ValueError("Analyst pools across replicas exceed the reserved connection budget")
         targets = []

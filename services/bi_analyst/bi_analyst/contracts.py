@@ -28,7 +28,7 @@ class Run(Contract):
     id: UUID
     conversation_id: UUID
     question: str
-    status: Literal["registered", "cancelled", "completed", "failed"]
+    status: Literal["registered", "running", "awaiting_clarification", "cancelled", "completed", "failed", "interrupted"]
     permissions_version: int
     created_at: datetime
 

@@ -63,7 +63,7 @@ def test_cross_user_access_revocation_export_and_audit(settings, database, users
         export = client.get(f"/v1/results/{result_id}/export")
         assert export.status_code == 200 and "'=HYPERLINK" in export.text
         assert export.headers["X-Export-Scope"] == "stored-result-rows"
-        assert client.post(f"/v1/runs/{rid}/resume").status_code == 501
+        assert client.post(f"/v1/runs/{rid}/resume").status_code == 503
         identity(app,b)
         assert client.get("/v1/conversations").json() == []
         for method,path,kwargs in [

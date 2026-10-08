@@ -1,0 +1,158 @@
+{
+  "evaluated_at": "2026-10-08T18:05:35.501265+00:00",
+  "model": "gemini-3.8-flash",
+  "prompt": "bi-conversation-1.0.2",
+  "generation": {
+    "temperature": 0,
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingLevel": "LOW"
+    }
+  },
+  "catalogue_version": "1.1.0",
+  "catalogue_sha256": "904dd8ea353e3af1a5d6cf2a22441fdf214d32e27e7c7fa71c83b1d7b5ca78ba",
+  "langgraph": "1.2.14",
+  "data": "synthetic questions and catalogue metadata only",
+  "planned_cases": 2,
+  "executed_cases": 2,
+  "passed": 2,
+  "status": "passed",
+  "results": [
+    {
+      "id": "order_parent_total",
+      "passed": true,
+      "expected_metric": "order_parent_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "order_parent_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.682,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3073,
+        "candidatesTokenCount": 43,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "order"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "order_parent_value",
+              "period": "all_stored",
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "enquiry_monthly",
+      "passed": true,
+      "expected_metric": "enquiry_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": {
+        "metric_id": "enquiry_monthly_actual",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "last_month",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "enquiry"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.888,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2896,
+        "candidatesTokenCount": 127,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "enquiry"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "enquiry_monthly_actual",
+              "period": "last_month",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    }
+  ]
+}

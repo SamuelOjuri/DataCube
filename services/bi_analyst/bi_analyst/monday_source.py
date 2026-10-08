@@ -206,7 +206,7 @@ class SourceCheckService:
         # Ownership/version checks run before any external request, even for an
         # uncertified metric. Source inspection does not complete or modify a run.
         state = await self.store.run(actor, run_id)
-        if state["status"] not in {"registered", "completed"}:
+        if state["status"] not in {"registered", "running", "awaiting_clarification", "completed"}:
             raise HTTPException(409, "run_not_inspectable")
         self.compiler.metric(body.metric_id, body.metric_version, body.population)
         task = asyncio.create_task(self.reader.lookup(body))
@@ -214,7 +214,7 @@ class SourceCheckService:
             while not task.done():
                 await asyncio.wait({task}, timeout=0.2)
                 state = await self.store.run(actor, run_id)
-                if state["status"] not in {"registered", "completed"}:
+                if state["status"] not in {"registered", "running", "awaiting_clarification", "completed"}:
                     raise HTTPException(409, "run_not_inspectable")
                 if request is not None and await request.is_disconnected():
                     raise HTTPException(409, "request_disconnected")

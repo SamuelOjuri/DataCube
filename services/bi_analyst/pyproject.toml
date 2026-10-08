@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datacube-bi-analyst"
-version = "0.4.1"
+version = "0.5.0"
 description = "Isolated DataCube analyst API and analytical contracts (no ETL startup)"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic==2.11.7", "psycopg[binary]==3.2.12", "psycopg-pool==3.2.8",
     "tzdata==2025.2", "fastapi==0.116.1", "uvicorn==0.35.0", "httpx==0.28.1",
+    "langgraph==1.2.14", "langgraph-checkpoint-postgres==3.1.2",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +23,7 @@ bi-catalogue = "bi_analyst.semantic.check:main"
 include = ["bi_analyst*"]
 
 [tool.setuptools.package-data]
-"bi_analyst" = ["permissions.sql", "permissions_auth.sql"]
+"bi_analyst" = ["permissions.sql", "permissions_auth.sql", "permissions_workflow.sql"]
 "bi_analyst.semantic" = ["catalogue.json", "acceptance.json"]
 
 [tool.pytest.ini_options]

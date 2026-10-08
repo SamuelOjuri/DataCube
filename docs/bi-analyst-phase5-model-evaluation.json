@@ -1,0 +1,400 @@
+{
+  "evaluated_at": "2026-10-08T18:00:00.239703+00:00",
+  "model": "gemini-3.8-flash",
+  "prompt": "bi-conversation-1.0.0",
+  "generation": {
+    "temperature": 0,
+    "maxOutputTokens": 4096
+  },
+  "catalogue_version": "1.1.0",
+  "catalogue_sha256": "904dd8ea353e3af1a5d6cf2a22441fdf214d32e27e7c7fa71c83b1d7b5ca78ba",
+  "langgraph": "1.2.14",
+  "data": "synthetic questions and catalogue metadata only",
+  "planned_cases": 22,
+  "executed_cases": 17,
+  "passed": 10,
+  "status": "not_accepted",
+  "results": [
+    {
+      "id": "enquiry_total",
+      "passed": true,
+      "expected_metric": "new_enquiry_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "new_enquiry_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 10.51,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2463,
+        "candidatesTokenCount": 50,
+        "thoughtsTokenCount": 842
+      }
+    },
+    {
+      "id": "order_parent_total",
+      "passed": false,
+      "expected_metric": "order_parent_value",
+      "expected_period": "all_stored",
+      "actual_plan": null,
+      "error_code": null,
+      "seconds": 9.009,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2597,
+        "candidatesTokenCount": 52,
+        "thoughtsTokenCount": 653
+      }
+    },
+    {
+      "id": "order_hidden",
+      "passed": true,
+      "expected_metric": "order_hidden_complete_subtotal",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "order_hidden_complete_subtotal",
+        "metric_version": "1.0.0",
+        "population": "hidden_inventory",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 10.464,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2609,
+        "candidatesTokenCount": 75,
+        "thoughtsTokenCount": 769
+      }
+    },
+    {
+      "id": "invoice_parent",
+      "passed": true,
+      "expected_metric": "invoice_project_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "invoice_project_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 11.127,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2742,
+        "candidatesTokenCount": 76,
+        "thoughtsTokenCount": 928
+      }
+    },
+    {
+      "id": "invoice_hidden",
+      "passed": true,
+      "expected_metric": "invoice_hidden_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "invoice_hidden_value",
+        "metric_version": "1.0.0",
+        "population": "hidden_inventory",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 14.411,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2734,
+        "candidatesTokenCount": 72,
+        "thoughtsTokenCount": 1201
+      }
+    },
+    {
+      "id": "invoice_children",
+      "passed": false,
+      "expected_metric": "invoice_stored_child_value",
+      "expected_period": "all_stored",
+      "actual_plan": null,
+      "error_code": null,
+      "seconds": 12.266,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2750,
+        "candidatesTokenCount": 41,
+        "thoughtsTokenCount": 1051
+      }
+    },
+    {
+      "id": "enquiry_monthly",
+      "passed": false,
+      "expected_metric": "enquiry_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": null,
+      "error_code": "unsupported_question",
+      "seconds": 13.601,
+      "model_calls": 1,
+      "usage": {
+        "promptTokenCount": 1919,
+        "candidatesTokenCount": 35,
+        "thoughtsTokenCount": 1404
+      }
+    },
+    {
+      "id": "bookings_monthly",
+      "passed": false,
+      "expected_metric": "bookings_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": null,
+      "error_code": "unsupported_question",
+      "seconds": 12.927,
+      "model_calls": 1,
+      "usage": {
+        "promptTokenCount": 1925,
+        "candidatesTokenCount": 34,
+        "thoughtsTokenCount": 1233
+      }
+    },
+    {
+      "id": "revenue_monthly",
+      "passed": true,
+      "expected_metric": "invoice_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": {
+        "metric_id": "invoice_monthly_actual",
+        "metric_version": "1.1.0",
+        "population": "reportable",
+        "period": "last_month",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 12.328,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2752,
+        "candidatesTokenCount": 79,
+        "thoughtsTokenCount": 915
+      }
+    },
+    {
+      "id": "inclusive_five",
+      "passed": false,
+      "expected_metric": "conversion_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": null,
+      "error_code": "unsupported_question",
+      "seconds": 7.251,
+      "model_calls": 1,
+      "usage": {
+        "promptTokenCount": 1925,
+        "candidatesTokenCount": 17,
+        "thoughtsTokenCount": 690
+      }
+    },
+    {
+      "id": "inclusive_two",
+      "passed": true,
+      "expected_metric": "conversion_two_year",
+      "expected_period": "two_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_two_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "two_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 11.465,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2759,
+        "candidatesTokenCount": 46,
+        "thoughtsTokenCount": 819
+      }
+    },
+    {
+      "id": "closed_five",
+      "passed": true,
+      "expected_metric": "conversion_closed_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_closed_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 10.599,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2763,
+        "candidatesTokenCount": 52,
+        "thoughtsTokenCount": 868
+      }
+    },
+    {
+      "id": "closed_two",
+      "passed": true,
+      "expected_metric": "conversion_closed_two_year",
+      "expected_period": "two_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_closed_two_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "two_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 9.416,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2763,
+        "candidatesTokenCount": 73,
+        "thoughtsTokenCount": 676
+      }
+    },
+    {
+      "id": "gestation_five",
+      "passed": false,
+      "expected_metric": "gestation_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": null,
+      "error_code": "unsupported_question",
+      "seconds": 29.095,
+      "model_calls": 1,
+      "usage": {
+        "promptTokenCount": 1922,
+        "candidatesTokenCount": 21,
+        "thoughtsTokenCount": 3442
+      }
+    },
+    {
+      "id": "gestation_two",
+      "passed": true,
+      "expected_metric": "gestation_two_year",
+      "expected_period": "two_year_cohort",
+      "actual_plan": {
+        "metric_id": "gestation_two_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "two_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 13.43,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2595,
+        "candidatesTokenCount": 51,
+        "thoughtsTokenCount": 1144
+      }
+    },
+    {
+      "id": "gestation_median",
+      "passed": true,
+      "expected_metric": "gestation_median_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "gestation_median_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "error_code": null,
+      "seconds": 11.612,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2595,
+        "candidatesTokenCount": 50,
+        "thoughtsTokenCount": 891
+      }
+    },
+    {
+      "id": "ambiguous_order",
+      "passed": false,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "error_code": "model_unavailable",
+      "seconds": 60.126,
+      "model_calls": 2,
+      "usage": {}
+    }
+  ]
+}

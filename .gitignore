@@ -37,6 +37,12 @@ outputs/
 outputs/analysis/
 *.csv
 *.json
+# Reviewed Phase 5 evidence contains only synthetic questions/results and metadata.
+!docs/bi-analyst-phase5-model-evaluation.json
+!docs/bi-analyst-phase5-model-diagnostic.json
+!docs/bi-analyst-phase5-model-diagnostic-1.0.2.json
+!docs/bi-analyst-phase5-model-evaluation-1.0.2.json
+!docs/bi-analyst-phase5-presentation-evaluation.json
 !services/bi_analyst/bi_analyst/semantic/catalogue.json
 !scripts/monday_review_cleanup_31_targets.json
 !scripts/monday_review_cleanup_2_targets.json

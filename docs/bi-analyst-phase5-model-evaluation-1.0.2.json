@@ -1,0 +1,1820 @@
+{
+  "evaluated_at": "2026-10-08T18:10:58.261239+00:00",
+  "model": "gemini-3.8-flash",
+  "prompt": "bi-conversation-1.0.2",
+  "generation": {
+    "temperature": 0,
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingLevel": "LOW"
+    }
+  },
+  "catalogue_version": "1.1.0",
+  "catalogue_sha256": "904dd8ea353e3af1a5d6cf2a22441fdf214d32e27e7c7fa71c83b1d7b5ca78ba",
+  "langgraph": "1.2.14",
+  "data": "synthetic questions and catalogue metadata only",
+  "planned_cases": 27,
+  "executed_cases": 27,
+  "passed": 27,
+  "status": "passed",
+  "results": [
+    {
+      "id": "enquiry_total",
+      "passed": true,
+      "expected_metric": "new_enquiry_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "new_enquiry_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "enquiry"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.691,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2906,
+        "candidatesTokenCount": 51,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "enquiry"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "new_enquiry_value",
+              "period": "all_stored",
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "order_parent_total",
+      "passed": true,
+      "expected_metric": "order_parent_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "order_parent_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.29,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3073,
+        "candidatesTokenCount": 57,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "order"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "order_parent_value",
+              "period": "all_stored",
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "order_hidden",
+      "passed": true,
+      "expected_metric": "order_hidden_complete_subtotal",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "order_hidden_complete_subtotal",
+        "metric_version": "1.0.0",
+        "population": "hidden_inventory",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 5.75,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3085,
+        "candidatesTokenCount": 75,
+        "thoughtsTokenCount": 192
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "order"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "order_hidden_complete_subtotal",
+              "period": "all_stored",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "invoice_parent",
+      "passed": true,
+      "expected_metric": "invoice_project_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "invoice_project_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 7.023,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3205,
+        "candidatesTokenCount": 124,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "invoice_project_value",
+              "period": "all_stored",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "invoice_hidden",
+      "passed": true,
+      "expected_metric": "invoice_hidden_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "invoice_hidden_value",
+        "metric_version": "1.0.0",
+        "population": "hidden_inventory",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.723,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3197,
+        "candidatesTokenCount": 123,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "invoice_hidden_value",
+              "period": "all_stored",
+              "grain": "total",
+              "dimensions": [],
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": true,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "invoice_children",
+      "passed": true,
+      "expected_metric": "invoice_stored_child_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "invoice_stored_child_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 5.905,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3213,
+        "candidatesTokenCount": 78,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "invoice_stored_child_value",
+              "period": "all_stored",
+              "grain": "total",
+              "dimensions": [],
+              "filters": [],
+              "comparison": null,
+              "clear_comparison": true,
+              "ordering": [],
+              "limit": null,
+              "include_share": false
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "enquiry_monthly",
+      "passed": true,
+      "expected_metric": "enquiry_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": {
+        "metric_id": "enquiry_monthly_actual",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "last_month",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "enquiry"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 6.258,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2896,
+        "candidatesTokenCount": 125,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "enquiry"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "enquiry_monthly_actual",
+              "period": "last_month",
+              "grain": "total",
+              "dimensions": [],
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "bookings_monthly",
+      "passed": true,
+      "expected_metric": "bookings_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": {
+        "metric_id": "bookings_monthly_actual",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "last_month",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 5.021,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3075,
+        "candidatesTokenCount": 124,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "order"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "bookings_monthly_actual",
+              "period": "last_month",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "revenue_monthly",
+      "passed": true,
+      "expected_metric": "invoice_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": {
+        "metric_id": "invoice_monthly_actual",
+        "metric_version": "1.1.0",
+        "population": "reportable",
+        "period": "last_month",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 5.875,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3215,
+        "candidatesTokenCount": 124,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "invoice_monthly_actual",
+              "period": "last_month",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "inclusive_five",
+      "passed": true,
+      "expected_metric": "conversion_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.385,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3254,
+        "candidatesTokenCount": 123,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "conversion"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "conversion_five_year",
+              "period": "five_year_cohort",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "inclusive_two",
+      "passed": true,
+      "expected_metric": "conversion_two_year",
+      "expected_period": "two_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_two_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "two_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.504,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3242,
+        "candidatesTokenCount": 71,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "conversion"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "conversion_two_year",
+              "period": "two_year_cohort",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "closed_five",
+      "passed": true,
+      "expected_metric": "conversion_closed_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_closed_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.294,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3246,
+        "candidatesTokenCount": 88,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "conversion"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "conversion_closed_five_year",
+              "period": "five_year_cohort",
+              "grain": "total",
+              "dimensions": [],
+              "filters": [],
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": [],
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "closed_two",
+      "passed": true,
+      "expected_metric": "conversion_closed_two_year",
+      "expected_period": "two_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_closed_two_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "two_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.224,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3246,
+        "candidatesTokenCount": 125,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "conversion"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "conversion_closed_two_year",
+              "period": "two_year_cohort",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "gestation_five",
+      "passed": true,
+      "expected_metric": "gestation_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "gestation_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "gestation"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.304,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3044,
+        "candidatesTokenCount": 80,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "gestation"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "gestation_five_year",
+              "period": "five_year_cohort",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "gestation_two",
+      "passed": true,
+      "expected_metric": "gestation_two_year",
+      "expected_period": "two_year_cohort",
+      "actual_plan": {
+        "metric_id": "gestation_two_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "two_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "gestation"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.565,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3044,
+        "candidatesTokenCount": 128,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "gestation"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "gestation_two_year",
+              "period": "two_year_cohort",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "gestation_median",
+      "passed": true,
+      "expected_metric": "gestation_median_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "gestation_median_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "gestation"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 7.488,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3044,
+        "candidatesTokenCount": 85,
+        "thoughtsTokenCount": 252
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "gestation"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "gestation_median_five_year",
+              "period": "five_year_cohort",
+              "grain": "total",
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "ambiguous_order",
+      "passed": true,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": {
+        "id": "8970e58e-0633-4262-8d10-7ac60ef5ad23",
+        "reason": "metric",
+        "question": "Which metric definition should I use?",
+        "options": [
+          "Project Order Value (order_parent_value)",
+          "Hidden Total Customer Order Value (complete-input subtotal) (order_hidden_complete_subtotal)"
+        ],
+        "dimension": null,
+        "value": null,
+        "comparison": false
+      },
+      "error_code": null,
+      "seconds": 4.37,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3053,
+        "candidatesTokenCount": 49,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "order"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "clarify",
+            "patch": {
+              "metric_id": null,
+              "period": null,
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "metric",
+            "candidate_metrics": [
+              "order_parent_value",
+              "order_hidden_complete_subtotal"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ambiguous_conversion",
+      "passed": true,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": {
+        "id": "ad356065-c081-488e-9091-dab02d5075f1",
+        "reason": "metric",
+        "question": "Which metric definition should I use?",
+        "options": [
+          "5-year Inclusive Conversion Rate (conversion_five_year)",
+          "5-year Closed-only Conversion Rate (conversion_closed_five_year)",
+          "2-year Inclusive Conversion Rate (conversion_two_year)",
+          "2-year Closed-only Conversion Rate (conversion_closed_two_year)"
+        ],
+        "dimension": null,
+        "value": null,
+        "comparison": false
+      },
+      "error_code": null,
+      "seconds": 4.305,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3234,
+        "candidatesTokenCount": 70,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "conversion"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "clarify",
+            "patch": {
+              "metric_id": null,
+              "period": null,
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "metric",
+            "candidate_metrics": [
+              "conversion_five_year",
+              "conversion_closed_five_year",
+              "conversion_two_year",
+              "conversion_closed_two_year"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "unsupported_mtd",
+      "passed": true,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": "unsupported_question",
+      "seconds": 29.669,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3183,
+        "candidatesTokenCount": 31,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "unsupported",
+            "patch": {
+              "metric_id": null,
+              "period": null,
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "unsupported",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "unsupported_fiscal",
+      "passed": true,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": "unsupported_question",
+      "seconds": 14.484,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3185,
+        "candidatesTokenCount": 44,
+        "thoughtsTokenCount": 1240
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "unsupported",
+            "patch": {
+              "metric_id": null,
+              "period": null,
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "period",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "unsupported_forecast",
+      "passed": true,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": "unsupported_question",
+      "seconds": 6.332,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3181,
+        "candidatesTokenCount": 34,
+        "thoughtsTokenCount": 286
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "unsupported",
+            "patch": {
+              "metric_id": null,
+              "period": null,
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "unsupported",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "injection",
+      "passed": true,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "interpretation": null,
+      "clarification": null,
+      "error_code": "unsupported_question",
+      "seconds": 7.859,
+      "model_calls": 1,
+      "usage": {
+        "promptTokenCount": 2153,
+        "candidatesTokenCount": 18,
+        "thoughtsTokenCount": 194
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [],
+            "supported": false,
+            "asks_for_cause": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "followup_revenue",
+      "passed": true,
+      "expected_metric": "invoice_monthly_actual",
+      "expected_period": "previous_month",
+      "actual_plan": {
+        "metric_id": "invoice_monthly_actual",
+        "metric_version": "1.1.0",
+        "population": "reportable",
+        "period": "previous_month",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [
+          {
+            "dimension": "category",
+            "operator": "in",
+            "values": [
+              "A"
+            ]
+          }
+        ],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.734,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3401,
+        "candidatesTokenCount": 37,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "invoice"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": null,
+              "period": "previous_month",
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "followup_closed",
+      "passed": true,
+      "expected_metric": "conversion_closed_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_closed_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [
+          {
+            "dimension": "category",
+            "operator": "in",
+            "values": [
+              "A"
+            ]
+          }
+        ],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.243,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3460,
+        "candidatesTokenCount": 36,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "conversion"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "conversion_closed_five_year",
+              "period": null,
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "followup_cohort",
+      "passed": true,
+      "expected_metric": "conversion_two_year",
+      "expected_period": "two_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_two_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "two_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [
+          {
+            "dimension": "category",
+            "operator": "in",
+            "values": [
+              "A"
+            ]
+          }
+        ],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.732,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3460,
+        "candidatesTokenCount": 45,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "conversion"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": "conversion_two_year",
+              "period": "two_year_cohort",
+              "grain": null,
+              "dimensions": null,
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "followup_dimension",
+      "passed": true,
+      "expected_metric": "order_parent_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "order_parent_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [
+          "type"
+        ],
+        "filters": [
+          {
+            "dimension": "category",
+            "operator": "in",
+            "values": [
+              "A"
+            ]
+          }
+        ],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 5.277,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3275,
+        "candidatesTokenCount": 48,
+        "thoughtsTokenCount": 0
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "order"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": null,
+              "period": null,
+              "grain": null,
+              "dimensions": [
+                "type"
+              ],
+              "filters": null,
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "followup_clear",
+      "passed": true,
+      "expected_metric": "order_parent_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "order_parent_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 8.381,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3281,
+        "candidatesTokenCount": 39,
+        "thoughtsTokenCount": 190
+      },
+      "decisions": [
+        {
+          "stage": "interpret",
+          "decision": {
+            "families": [
+              "order"
+            ],
+            "supported": true,
+            "asks_for_cause": false
+          }
+        },
+        {
+          "stage": "plan",
+          "decision": {
+            "action": "plan",
+            "patch": {
+              "metric_id": null,
+              "period": null,
+              "grain": null,
+              "dimensions": null,
+              "filters": [],
+              "comparison": null,
+              "clear_comparison": false,
+              "ordering": null,
+              "limit": null,
+              "include_share": null
+            },
+            "reason": "scope",
+            "candidate_metrics": []
+          }
+        }
+      ]
+    }
+  ]
+}

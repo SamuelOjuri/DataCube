@@ -1,0 +1,265 @@
+{
+  "evaluated_at": "2026-10-08T18:03:09.413844+00:00",
+  "model": "gemini-3.8-flash",
+  "prompt": "bi-conversation-1.0.1",
+  "generation": {
+    "temperature": 0,
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingLevel": "LOW"
+    }
+  },
+  "catalogue_version": "1.1.0",
+  "catalogue_sha256": "904dd8ea353e3af1a5d6cf2a22441fdf214d32e27e7c7fa71c83b1d7b5ca78ba",
+  "langgraph": "1.2.14",
+  "data": "synthetic questions and catalogue metadata only",
+  "planned_cases": 7,
+  "executed_cases": 7,
+  "passed": 5,
+  "status": "not_accepted",
+  "results": [
+    {
+      "id": "order_parent_total",
+      "passed": false,
+      "expected_metric": "order_parent_value",
+      "expected_period": "all_stored",
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": {
+        "id": "df292677-d006-439f-8d44-9b12f598be95",
+        "reason": "scope",
+        "question": "Please specify a supported metric definition and reporting period.",
+        "options": [],
+        "dimension": null,
+        "value": null,
+        "comparison": false
+      },
+      "error_code": null,
+      "seconds": 4.852,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2887,
+        "candidatesTokenCount": 49,
+        "thoughtsTokenCount": 0
+      }
+    },
+    {
+      "id": "invoice_children",
+      "passed": true,
+      "expected_metric": "invoice_stored_child_value",
+      "expected_period": "all_stored",
+      "actual_plan": {
+        "metric_id": "invoice_stored_child_value",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "all_stored",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "invoice"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.743,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3027,
+        "candidatesTokenCount": 86,
+        "thoughtsTokenCount": 0
+      }
+    },
+    {
+      "id": "enquiry_monthly",
+      "passed": false,
+      "expected_metric": "enquiry_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "enquiry"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": {
+        "id": "e633f761-2b0a-4a11-b32c-7b5a9e2b324b",
+        "reason": "metric",
+        "question": "Which metric definition should I use?",
+        "options": [
+          "New Enquiry Value (new_enquiry_value)",
+          "Monthly New Enquiry Value (enquiry_monthly_actual)"
+        ],
+        "dimension": null,
+        "value": null,
+        "comparison": false
+      },
+      "error_code": null,
+      "seconds": 10.628,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2710,
+        "candidatesTokenCount": 49,
+        "thoughtsTokenCount": 864
+      }
+    },
+    {
+      "id": "bookings_monthly",
+      "passed": true,
+      "expected_metric": "bookings_monthly_actual",
+      "expected_period": "last_month",
+      "actual_plan": {
+        "metric_id": "bookings_monthly_actual",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "last_month",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 5.002,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2889,
+        "candidatesTokenCount": 77,
+        "thoughtsTokenCount": 0
+      }
+    },
+    {
+      "id": "inclusive_five",
+      "passed": true,
+      "expected_metric": "conversion_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "conversion_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "conversion"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 4.671,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 3068,
+        "candidatesTokenCount": 79,
+        "thoughtsTokenCount": 0
+      }
+    },
+    {
+      "id": "gestation_five",
+      "passed": true,
+      "expected_metric": "gestation_five_year",
+      "expected_period": "five_year_cohort",
+      "actual_plan": {
+        "metric_id": "gestation_five_year",
+        "metric_version": "1.0.0",
+        "population": "reportable",
+        "period": "five_year_cohort",
+        "grain": "total",
+        "dimensions": [],
+        "filters": [],
+        "comparison": null,
+        "ordering": [],
+        "limit": 100,
+        "include_total": true,
+        "include_share": false
+      },
+      "interpretation": {
+        "families": [
+          "gestation"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": null,
+      "error_code": null,
+      "seconds": 7.263,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2858,
+        "candidatesTokenCount": 58,
+        "thoughtsTokenCount": 160
+      }
+    },
+    {
+      "id": "ambiguous_order",
+      "passed": true,
+      "expected_metric": null,
+      "expected_period": null,
+      "actual_plan": null,
+      "interpretation": {
+        "families": [
+          "order"
+        ],
+        "supported": true,
+        "asks_for_cause": false
+      },
+      "clarification": {
+        "id": "132b5191-4b77-4a9e-89bc-cf9070f90d12",
+        "reason": "metric",
+        "question": "Which metric definition should I use?",
+        "options": [
+          "Project Order Value (order_parent_value)",
+          "Hidden Total Customer Order Value (complete-input subtotal) (order_hidden_complete_subtotal)"
+        ],
+        "dimension": null,
+        "value": null,
+        "comparison": false
+      },
+      "error_code": null,
+      "seconds": 5.65,
+      "model_calls": 2,
+      "usage": {
+        "promptTokenCount": 2867,
+        "candidatesTokenCount": 49,
+        "thoughtsTokenCount": 185
+      }
+    }
+  ]
+}
