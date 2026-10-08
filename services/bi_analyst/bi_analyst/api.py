@@ -33,6 +33,7 @@ from .workflow.contracts import Reply, Submission, WorkflowRun
 from .workflow.provider import GeminiProvider
 from .workflow.service import WorkflowService
 from .workflow.store import TERMINAL
+from .presentation import Feedback, projects, save_feedback
 
 log = logging.getLogger("bi_analyst.audit")
 
@@ -95,7 +96,7 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             await database.close()
 
-    app = FastAPI(title="DataCube BI Analyst", version="0.5.0", lifespan=lifespan,
+    app = FastAPI(title="DataCube BI Analyst", version="0.6.0", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -248,7 +249,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/v1/runs/{run_id}/cancel", response_model=Run)
     async def cancel_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
-        if request.app.state.database.schema_version == 6 and await request.app.state.workflow.cancel(actor,run_id):
+        if request.app.state.database.schema_version in (6, 7) and await request.app.state.workflow.cancel(actor,run_id):
             return await request.app.state.store.run(actor,run_id)
         return await request.app.state.store.run(actor, run_id, cancel=True)
 
@@ -322,6 +323,15 @@ def create_app(settings: Settings) -> FastAPI:
         return Response(buffer.getvalue().encode("utf-8-sig"), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="result-{result_id}.csv"',
                                  "X-Export-Scope": "stored-result-rows"})
+
+    @app.get("/v1/results/{result_id}/projects")
+    async def result_projects(result_id: UUID, request: Request, limit: int = Query(25, ge=1, le=100),
+                              offset: int = Query(0, ge=0, le=10000), actor: Principal = Depends(principal)):
+        return await projects(request.app.state.metrics, actor, result_id, limit, offset, request)
+
+    @app.post("/v1/results/{result_id}/feedback")
+    async def result_feedback(result_id: UUID, body: Feedback, request: Request, actor: Principal = Depends(principal)):
+        return await save_feedback(request.app.state.store, actor, result_id, body)
 
     # Keep request IDs/audit outside the body guard. CORS wraps error responses too.
     app.user_middleware.append(Middleware(BodyLimit, limit=settings.max_body_bytes))

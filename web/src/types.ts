@@ -1,0 +1,27 @@
+export type Cell = string | number | null;
+export type Session = {subject: string; expires_at: string} | null;
+export type Conversation = {id: string; title: string; created_at: string};
+export type Run = {id: string; conversation_id: string; question: string; status: string; created_at: string};
+export type ChartIntent = {kind: 'table' | 'number' | 'bar' | 'line'; x?: 'month' | 'category' | 'type' | null; y: 'value'};
+export type Workflow = {run_id: string; conversation_id: string; status: string; error_code: string | null;
+  clarification: null | {id: string; question: string; options: string[]};
+  answer: null | {text: string; result: {result_id: string}; chart: ChartIntent; notices: string[]; scope_changes: Record<string, unknown>}};
+export type Column = {name: string; type: string; unit?: string | null; precision?: number | null};
+export type MetricResult = {id: string; run_id: string; columns: string[]; rows: Cell[][]; provenance: {
+  metric_id: string; metric_version: string; metric_label: string; unit: string; source_population: string;
+  source_relation: string; source_grain: string; catalogue_version: string; catalogue_sha256: string; query_reference: string;
+  request: {period: string; filters: {dimension: string; operator: string; values: string[]}[]; dimensions: string[];
+    comparison?: null | {period: string; filters: null | {dimension: string; operator: string; values: string[]}[]}};
+  resolved_period: null | {start_date: string; end_date_exclusive: string | null}; business_timezone: string;
+  columns: Column[]; total: null | {value: Cell; source_rows: number; known_values: number; numerator?: Cell; denominator?: Cell}; total_scope: string;
+  comparison_period?: null | {start_date: string; end_date_exclusive: string | null};
+  comparison?: null | {baseline: {value: Cell}; absolute_change: Cell; percentage_change: Cell; percentage_point_change: Cell; zero_denominator: boolean};
+  freshness: {status: string; queried_at: string; limitation: string}; coverage: Record<string, number>; coverage_scope: string;
+  limitations: string[]; truncated: boolean; returned_rows: number; matched_groups: number; dataset_scope: string;
+  evaluation_only: boolean;
+}};
+export type ProjectPage = {columns: string[]; rows: Cell[][]; has_more: boolean; offset: number; queried_at: string; limitation: string};
+export type MetricDefinition = {id: string; version: string; source: {priority: string[]};
+  calculation: {aggregation: string; nulls: string; zeroes: string; negatives: string; empty: string}};
+export type Auth = {login: () => Promise<void>; logout: () => Promise<void>; finish: () => Promise<boolean>;
+  request: (path: string, options?: RequestInit & {query?: Record<string, number>}) => Promise<Response>};

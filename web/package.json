@@ -1,18 +1,26 @@
 {
   "name": "datacube-analyst-web",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test",
+    "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@tanstack/react-table": "8.21.3",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "vega": "6.4.0",
+    "vega-interpreter": "2.3.2",
+    "vega-lite": "6.5.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.64.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "typescript": "7.0.2",

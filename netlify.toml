@@ -15,4 +15,5 @@ Cache-Control = "no-store"
 Referrer-Policy = "no-referrer"
 X-Content-Type-Options = "nosniff"
 X-Frame-Options = "DENY"
-Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https:; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+# CSP is generated into dist/_headers with the exact VITE_API_ORIGIN at build time.
+# Nonproduction Netlify builds must explicitly match the build-only STAGING_API_ORIGIN.

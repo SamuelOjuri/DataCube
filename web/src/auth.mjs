@@ -27,7 +27,8 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
     clear();
     const verifier = b64(browser.crypto.getRandomValues(new Uint8Array(32)));
     const challenge = b64(await browser.crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
-    browser.sessionStorage.setItem(PENDING, JSON.stringify({verifier, created: Date.now()}));
+    const returnTo = /^\/conversations\/[0-9a-f-]{36}$/.test(browser.location.pathname) ? browser.location.pathname : '/';
+    browser.sessionStorage.setItem(PENDING, JSON.stringify({verifier, created: Date.now(), returnTo}));
     browser.location.assign(`${apiOrigin}/auth/login?client_challenge=${encodeURIComponent(challenge)}`);
   }
 
@@ -55,6 +56,7 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
       throw new Error('Sign-in could not be completed. Please try again.');
     }
     session = received;
+    browser.history.replaceState(null, '', /^\/conversations\/[0-9a-f-]{36}$/.test(pending.returnTo) ? pending.returnTo : '/');
     timer = browser.setTimeout(clear, lifetime);
     onChange({subject: session.subject, expires_at: session.expires_at});
     return true;
@@ -71,10 +73,21 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
     const current = generation;
     const controller = new AbortController();
     active.add(controller);
+    const abort = () => controller.abort();
+    options.signal?.addEventListener('abort', abort, {once: true});
+    if (options.signal?.aborted) controller.abort();
+    const release = () => {active.delete(controller); options.signal?.removeEventListener('abort', abort);};
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(options.query || {})) {
+      if (!['after', 'limit', 'offset'].includes(key) || !Number.isSafeInteger(value) || value < 0 || value > 10000) {
+        release(); throw new Error('Unsupported API query');
+      }
+      query.set(key, String(value));
+    }
     const headers = new Headers(options.headers);
     headers.set('Authorization', `Bearer ${session.access_token}`);
     try {
-      const response = await browser.fetch(apiOrigin + path, {
+      const response = await browser.fetch(apiOrigin + path + (query.size ? '?' + query : ''), {
         ...options, headers, credentials: 'omit', redirect: 'error', signal: controller.signal,
       });
       if (current !== generation) throw new Error('Your session has ended.');
@@ -82,10 +95,20 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
         clear();
         throw new Error('Your session has ended. Please sign in again.');
       }
-      return response;
-    } finally {
-      active.delete(controller);
-    }
+      if (!response.body) {release(); return response;}
+      const reader = response.body.getReader();
+      // Retain cancellation through body consumption, including long-lived SSE.
+      return new Response(new ReadableStream({
+        async pull(stream) {
+          try {
+            const {done, value} = await reader.read();
+            if (current !== generation || controller.signal.aborted) throw new Error('Your session has ended.');
+            if (done) {release(); stream.close();} else stream.enqueue(value);
+          } catch (error) {release(); stream.error(error); await reader.cancel().catch(() => {});}
+        },
+        async cancel() {controller.abort(); release(); await reader.cancel().catch(() => {});},
+      }), {status: response.status, statusText: response.statusText, headers: response.headers});
+    } catch (error) {controller.abort(); release(); throw error;}
   }
 
   async function logout() {

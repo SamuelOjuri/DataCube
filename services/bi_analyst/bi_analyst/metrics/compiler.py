@@ -37,6 +37,7 @@ class CompiledQuery:
     total: Statement
     columns: list[Column]
     reference: str
+    filtered: Statement
 
 
 class Compiler:
@@ -169,4 +170,5 @@ class Compiler:
             columns.append(Column(name="share", type="decimal", unit="ratio"))
         reference = sha256(json.dumps([COMPILER_VERSION, self.catalogue_hash, request.model_dump(mode="json"), statement, params],
                                      default=str, sort_keys=True).encode()).hexdigest()
-        return CompiledQuery(metric, request, period, Statement(statement, tuple(params)), total, columns, reference)
+        return CompiledQuery(metric, request, period, Statement(statement, tuple(params)), total, columns, reference,
+                             Statement(base, total.params))

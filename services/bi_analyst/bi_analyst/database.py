@@ -66,26 +66,29 @@ class Database:
                 await conn.execute(sql.SQL("SELECT * FROM analyst_query.{} LIMIT 0").format(sql.Identifier(relation)))
         async with self.transaction() as conn:
             row = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
-            if row not in ({"version": 3}, {"version": 5}, {"version": 6}) or (self.settings.auth_provider == "monday" and row == {"version": 3}):
+            if row not in ({"version": 3}, {"version": 5}, {"version": 6}, {"version": 7}) or (self.settings.auth_provider == "monday" and row == {"version": 3}):
                 raise RuntimeError("Unexpected analyst schema version")
-            if self.settings.workflow_enabled and row != {"version": 6}:
+            if self.settings.workflow_enabled and row not in ({"version": 6}, {"version": 7}):
                 raise RuntimeError("Workflow requires migration 006")
-            if row in ({"version": 5}, {"version": 6}):
+            if row in ({"version": 5}, {"version": 6}, {"version": 7}):
                 for relation in AUTH_TABLES:
                     await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
-            if row == {"version": 6}:
+            if row in ({"version": 6}, {"version": 7}):
                 for relation in WORKFLOW_TABLES:
                     await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
                 versions = await (await conn.execute("SELECT v FROM analyst_state.checkpoint_migrations ORDER BY v")).fetchall()
                 if versions != [{'v': i} for i in range(10)]:
                     raise RuntimeError("Unexpected checkpointer schema version")
+            if row == {"version": 7}:
+                await conn.execute("SELECT * FROM analyst_state.result_feedback LIMIT 0")
 
     async def verify_permissions(self):
         async with self.transaction() as conn:
             version = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
         self.schema_version = version['version'] if version else None
-        auth_installed = version in ({"version": 5}, {"version": 6})
-        workflow_installed = version == {"version": 6}
+        auth_installed = version in ({"version": 5}, {"version": 6}, {"version": 7})
+        workflow_installed = version in ({"version": 6}, {"version": 7})
+        presentation_installed = version == {"version": 7}
         for analytical, expected in (
             (True, "bi_analyst_reader"),
             (False, "bi_analyst_state"),
@@ -95,7 +98,8 @@ class Database:
                 if row["role"] != expected:
                     raise RuntimeError("Unexpected analyst connection role")
                 violations = await (await conn.execute(
-                    files("bi_analyst").joinpath("permissions_workflow.sql" if workflow_installed else
+                    files("bi_analyst").joinpath("permissions_presentation.sql" if presentation_installed else
+                                                "permissions_workflow.sql" if workflow_installed else
                                                 "permissions_auth.sql" if auth_installed else "permissions.sql").read_text(encoding="utf-8")
                 )).fetchall()
                 if violations:
@@ -109,7 +113,8 @@ class Database:
                         AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity
                           OR has_table_privilege(c.oid,'DELETE,TRUNCATE,TRIGGER,REFERENCES')) LIMIT 1
                     """, (list(STATE_TABLES[1:] + (AUTH_TABLES if auth_installed else ()) +
-                               (WORKFLOW_TABLES if workflow_installed else ())),))).fetchone()
+                               (WORKFLOW_TABLES if workflow_installed else ()) +
+                               (("result_feedback",) if presentation_installed else ())),))).fetchone()
                     permission_drift = await (await conn.execute("""
                         SELECT has_table_privilege('analyst_state.principals','INSERT,UPDATE')
                           OR has_any_column_privilege('analyst_state.principals','INSERT,UPDATE')
@@ -121,6 +126,15 @@ class Database:
                     """)).fetchone()
                     if state_drift or permission_drift['unsafe']:
                         raise RuntimeError("Unsafe state permissions or row security")
+                    if presentation_installed:
+                        drift = await (await conn.execute("""SELECT
+                            has_column_privilege('analyst_state.result_feedback','owner_id','UPDATE')
+                            OR has_column_privilege('analyst_state.result_feedback','result_id','UPDATE')
+                            OR has_column_privilege('analyst_state.result_feedback','permissions_version','UPDATE')
+                            OR has_column_privilege('analyst_state.result_feedback','created_at','UPDATE') AS unsafe
+                        """)).fetchone()
+                        if drift['unsafe']:
+                            raise RuntimeError("Unsafe feedback permissions")
                     if workflow_installed:
                         drift = await (await conn.execute("""SELECT
                             has_any_column_privilege('analyst_state.workflow_events','UPDATE')

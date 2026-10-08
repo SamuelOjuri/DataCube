@@ -107,3 +107,28 @@ test('a reconnect uses the active bearer and tokens cannot be sent to arbitrary 
   }
   assert.throws(()=>createAuth({apiOrigin:'https://api.example.test/path',browser:f.browser}),/explicit API/);
 });
+
+test('bounded pagination and SSE cursors are encoded without allowing arbitrary query parameters',async () => {
+  const f=fixture(); await login(f);
+  await f.auth.request('/v1/runs/123/events',{query:{after:4}});
+  assert.match(f.seen.at(-1)[0],/events\?after=4$/);
+  for (const query of [{token:'bad'},{after:-1},{offset:10001},{limit:1.5}]) await assert.rejects(f.auth.request('/v1/conversations',{query}),/Unsupported/);
+});
+
+test('sign-out and caller cancellation abort streams after response headers arrive',async () => {
+  for (const logout of [true,false]) {
+    const f=fixture(); await login(f); let signal, push;
+    f.browser.fetch=async (url,options) => {
+      if(url.endsWith('/auth/logout')) return new Response('{}');
+      signal=options.signal;
+      return new Response(new ReadableStream({start(c){push=c;}}),{headers:{'Content-Type':'text/event-stream'}});
+    };
+    const controller = new AbortController();
+    const response = await f.auth.request('/v1/runs/123/events',{signal:controller.signal});
+    const reading = response.text();
+    if(logout) await f.auth.logout(); else controller.abort();
+    assert.equal(signal.aborted,true);
+    push.enqueue(new TextEncoder().encode('private late data')); push.close();
+    await assert.rejects(reading,/session has ended/);
+  }
+});
