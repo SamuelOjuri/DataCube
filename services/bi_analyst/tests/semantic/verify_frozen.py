@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / 'services/bi_analyst'))
 sys.path.insert(0, str(ROOT / 'services/bi_analyst/tests/evals'))
 from bi_analyst.semantic import load_catalogue
-from dataset import equivalent, names, restore_result_types, verify_snapshot
+from dataset import REFERENCE_VERSIONS, equivalent, names, reference_version, restore_result_types, verify_snapshot
 from manage import connect
 from phase1 import typed_rows
 
@@ -34,18 +34,25 @@ def statements(path):
     return dict(zip(parts[1::2], (q.strip().removesuffix(';') for q in parts[2::2])))
 
 
-def view_definitions():
-    definitions = dict(re.findall(
-        r'CREATE OR REPLACE VIEW analytics\.([a-z_0-9]+) WITH \([^\n]+\) AS\n(.*?);',
-        MIGRATION.read_text(encoding='utf-8'), flags=re.S))
+def view_definitions(contract_version='1.0.0'):
+    if contract_version not in REFERENCE_VERSIONS:
+        raise ValueError('Unsupported analytical contract version')
+    migrations = [MIGRATION]
+    if contract_version == '1.1.0':
+        migrations.append(ROOT/'src/database/migrations/20261008_004_analyst_reportable_population.sql')
+    definitions = {}
+    for migration in migrations:
+        definitions.update(re.findall(
+            r'CREATE OR REPLACE VIEW analytics\.([a-z_0-9]+) WITH \([^\n]+\) AS\n(.*?);',
+            migration.read_text(encoding='utf-8'), flags=re.S))
     if definitions.keys() != {r.id for r in load_catalogue().relations if not r.optional}:
         raise ValueError('Migration/catalogue relation mismatch')
     return definitions
 
 
-def frozen_ctes(dataset):
+def frozen_ctes(dataset, contract_version='1.0.0'):
     names(dataset)  # Strict versioned identifier allowlist before interpolation.
-    definitions = view_definitions()
+    definitions = view_definitions(contract_version)
     ctes = []
     for name, query in definitions.items():
         def source(match):
@@ -60,10 +67,10 @@ def frozen_ctes(dataset):
     return ',\n'.join(ctes)
 
 
-def expanded_query(dataset, query):
+def expanded_query(dataset, query, contract_version='1.0.0'):
     query = re.sub(r'analytics\.([a-z_0-9]+)', r'phase2_\1', query)
     # Nest the acceptance query to preserve its own WITH and ORDER BY clauses.
-    return f'WITH {frozen_ctes(dataset)} SELECT * FROM ({query}) phase2_result'
+    return f'WITH {frozen_ctes(dataset, contract_version)} SELECT * FROM ({query}) phase2_result'
 
 
 def compare_results(actual, expected):
@@ -78,16 +85,17 @@ def verify(connection, dataset, identity):
     # Read sealed answers as the evaluator, then execute candidates as reader.
     # Never expose numerical cells in the output report.
     artifacts, _ = verify_snapshot(connection, identity, dataset)
+    contract_version = reference_version(artifacts['manifest'])
     expected = artifacts['expected']
     connection.execute(f'SET LOCAL ROLE {reader}')
     connection.execute(f'SET LOCAL search_path TO {schema}, pg_catalog')
     results = {}
     for name, query in queries.items():
-        cursor = connection.execute(expanded_query(schema, query))
+        cursor = connection.execute(expanded_query(schema, query, contract_version))
         actual = {'columns': [{'name': d.name, 'type_oid': d.type_code} for d in cursor.description],
                   'rows': cursor.fetchall()}
         results[name] = compare_results(actual, restore_result_types(expected[name]))
-    return results
+    return results, contract_version
 
 
 def main():
@@ -101,8 +109,9 @@ def main():
             connection.execute("SET LOCAL statement_timeout='60s'")
             connection.execute("SET LOCAL lock_timeout='3s'")
             connection.execute("SET LOCAL timezone='Europe/London'")
-            results = verify(connection, args.dataset, identity)
-        print(json.dumps({'dataset': args.dataset, 'checks': results, 'business_certification': 'pending'}, indent=2))
+            results, contract_version = verify(connection, args.dataset, identity)
+        print(json.dumps({'dataset': args.dataset, 'reference_contract_version': contract_version,
+                          'checks': results, 'business_certification': 'pending'}, indent=2))
         return 0 if all(r['matches'] for r in results.values()) else 2
     except psycopg.Error as exc:
         print(f'Frozen parity failed (SQLSTATE {exc.sqlstate or "connection_error"}); details suppressed')

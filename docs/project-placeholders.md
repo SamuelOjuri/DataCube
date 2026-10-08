@@ -2,18 +2,19 @@
 
 ## Scope clarification: 8 October 2026
 
-The owner confirms this feature is not fully implemented and must not define the
-BI analyst's eligibility. The [corrected analyst plan](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
-uses current Monday API `state = active`; an otherwise active item is not excluded
-solely by a placeholder classification. This also applies to monthly revenue,
-without requiring the manually maintained closed-invoiced business label.
+The owner's later 8 October decision supersedes the earlier API-active analyst
+population: genuine archived projects must remain in historical reporting.
+The [analyst plan](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
+therefore uses retained `reportable_projects`, excluding only effective reviewed
+redundant placeholders. Lifecycle state alone does not exclude retained records.
+The analyst must not substitute active-only `current_*` views for this population.
 
-The workflow and deployment details below describe the existing classification
-feature, not proof that its reporting population is approved for the analyst.
-Existing `current_projects` also derives from `reportable_projects`, so the
-analyst implementation must address indirect exclusions, not merely rename its
-source. This documentation correction does not change existing consumers,
-classification decisions, Monday items or historical evidence.
+Monthly revenue uses reportable parents without requiring the manually maintained
+closed-invoiced business label. Catalogue 1.1.0 and analyst migration 004 implement
+that correction. Source reconciliation and deployment certification remain
+separate from agreement on this population. No approval to archive or delete
+Monday items is implied; existing lifecycle processing and historical snapshots
+retain their independent operational contracts.
 
 `projects` remains the complete synced source table. The classification-based
 business reporting and model-selection paths use `reportable_projects`.
@@ -62,6 +63,7 @@ catalog or staged SQL changes. Drops use no CASCADE. The apply is transactional.
 ```powershell
 & .\report.venv\Scripts\python.exe -m scripts.project_reporting stage --run-dir outputs/project_placeholders/migration_run
 & .\report.venv\Scripts\python.exe -m scripts.project_reporting apply --run-dir outputs/project_placeholders/migration_run
+& .\report.venv\Scripts\python.exe -m scripts.project_reporting verify --run-dir outputs/project_placeholders/migration_run
 ```
 
 Deploy the Python changes to both Render services described in
@@ -132,3 +134,58 @@ retention, automatic re-entry, release/audit behavior, migration dependencies,
 ACL/index preservation and stable historical snapshots. Unit tests verify that
 excluded projects do not trigger numeric/LLM analysis or Monday pushes and that
 missing or changed source evidence cannot authorize archival.
+
+Run these ETL tests separately from the isolated analyst suite, whose import
+checks deliberately reject an ETL-loaded process. For reporting-only completion,
+the migration verifier must report no unfiltered reporting objects, and the batch
+verifier must report matching expected exclusions, no reporting/forecast leaks
+and no changed business records. Pending archive IDs are not a failure unless
+`--require-archived` was explicitly requested. Confirm external Power BI sources
+and refreshes separately; the migration verifier does not inspect external reports.
+
+## Verified rollout: 8 October 2026
+
+The reporting migration was staged, applied and verified in TEST, then in
+production after explicit owner approval. Both reporting plans required no
+existing reporting-view rewrites. The existing 27 exclusions already matched
+fresh staged evidence, so no classification decision was overwritten.
+
+| Check | TEST | Production |
+|---|---:|---:|
+| Retained projects | 15,232 | 15,237 |
+| Reportable/analyst projects | 15,205 | 15,210 |
+| Effective reviewed exclusions | 27 | 27 |
+| Held records in the reviewed batch | 1 | 1 |
+| Reviewed project and analysis rows retained | 28 each | 28 each |
+| Reporting/forecast leaks in the reviewed batch | 0 | 0 |
+
+Analyst migrations 001 and 004 were also applied in both databases. Post-commit
+schema checks passed, including exact project, child and invoice ID comparisons.
+Source-table and historical-snapshot fingerprints were unchanged by the analyst
+migrations. The revised invoice view includes 290 TEST and 289 production
+eligible child invoices whose parents lack the closed-invoiced label.
+
+The scoped Monday reads observed six archived, fourteen active and eight
+unreturned items. No archive/delete command ran; unreturned items remain
+unresolved lifecycle evidence, not deletion or zero-value proof. Both database
+lifecycle ledgers identified zero reportable projects as archived at this check;
+archived-history retention is covered by real PostgreSQL regression cases,
+not a claim of complete live lifecycle evidence.
+
+Validation passed: 95 isolated analyst tests and 35 placeholder tests, including
+PostgreSQL integration tests with no skips. All 16 historical 1.0.0 parity queries
+still matched the sealed TEST answers. Those passes do not certify revised
+financial definitions, live mirror wiring, external Power BI refreshes or a
+new reference-answer version.
+
+Private evidence is retained in git-ignored run directories:
+
+- `outputs/project_placeholders/test_population_20261008_migration`
+- `outputs/project_placeholders/test_population_20261008_review`
+- `outputs/project_placeholders/production_population_20261008_migration`
+- `outputs/project_placeholders/production_population_20261008_review`
+
+Each migration run includes staged SQL, its manifest, verification and
+`analyst-rollout.json`; each review run retains the staged source evidence and
+batch verification. The analyst permission bootstrap, application deployment and
+business certification were not performed by this rollout.

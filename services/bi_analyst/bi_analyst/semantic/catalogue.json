@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "populations": [
     {
       "id": "legacy_revenue",
@@ -12,10 +12,12 @@
       "id": "reportable",
       "kind": "reportable",
       "available": true,
-      "description": "Deployed approved reporting population, including historical cohorts; not auto-substituted with current_*.",
+      "description": "Primary project population: retained projects minus effective reviewed redundant-placeholder exclusions. Genuine archived projects remain included; API lifecycle state is not an eligibility filter.",
       "requirements": [
         "Preserve public.reportable_projects exclusions",
-        "Phase 1 population approval"
+        "Unreviewed and held records remain included; meaningful changes suspend exclusions",
+        "Do not substitute current_* views or filter retained projects by API lifecycle state",
+        "Phase 1 deployment, population and source verification"
       ]
     },
     {
@@ -32,7 +34,7 @@
       "id": "verified_active",
       "kind": "verified_active",
       "available": false,
-      "description": "Reserved; requires archive rollout and complete coverage before adding separate wrappers.",
+      "description": "Operational archive diagnostics only; not the analyst's project eligibility policy. No metric uses this population.",
       "requirements": [
         "MONDAY_ARCHIVE_ENABLED and MONDAY_ARCHIVE_REPORTING_ENABLED observed on all deployed writers",
         "All five archive.coverage counters zero",
@@ -64,7 +66,7 @@
         "unresolved_archive_jobs": "int8"
       },
       "population": "verified_active",
-      "description": "Optional migration 002: exact five monday_archive.coverage counters. Zero is necessary but does not certify rollout or financial values.",
+      "description": "Optional migration 002: operational monday_archive.coverage counters. They gate active-only operational reporting, not inclusion of retained reportable projects; financial findings still require review.",
       "optional": true
     },
     {
@@ -230,7 +232,7 @@
         "actual_revenue": "numeric"
       },
       "population": "legacy_revenue",
-      "description": "Diagnostic baseline only. Deployed TEST lacks reportable-parent and stage restrictions; never use as intended monthly invoice metric."
+      "description": "Diagnostic baseline only. Deployed TEST lacks the required reportable-parent restriction; never use as the certified monthly invoice metric."
     },
     {
       "id": "invoice_reporting_facts_v1",
@@ -238,7 +240,7 @@
         "analytics.children_v1",
         "analytics.projects_v1"
       ],
-      "grain": "positive dated child invoice for a currently closed-invoiced parent in a completed month",
+      "grain": "positive dated child invoice for a retained reportable parent in a completed month",
       "key": [
         "monday_id"
       ],
@@ -251,7 +253,7 @@
         "type": "text"
       },
       "population": "reportable",
-      "description": "positive dated child invoice for a currently closed-invoiced parent in a completed month"
+      "description": "Includes retained archived parents and all business stages; only effective placeholder exclusions, positive amounts, invoice dates and completed months restrict eligibility."
     },
     {
       "id": "conversion_cohorts_v1",
@@ -805,7 +807,7 @@
     },
     {
       "id": "invoice_monthly_actual",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "family": "invoice",
       "label": "Monthly Invoiced Revenue (intended definition)",
       "aliases": [
@@ -846,7 +848,6 @@
         "completed_12_months"
       ],
       "status_filters": [
-        "pipeline_stage = 'Won - Closed (Invoiced)'",
         "amount_invoiced > 0"
       ],
       "unit": "source_currency",
@@ -864,7 +865,7 @@
         "Show monthly invoiced revenue (intended definition) for its stated population."
       ],
       "limitations": [
-        "Candidate intended contract. Restored deployed revenue differs; revenue_monthly_baseline_v1 is diagnostic only.",
+        "Requires migration 004. Retained reportable parents, including archived projects; no parent business-stage filter. The sealed 1.0.0 revenue references are historical only.",
         "Candidate definition: Phase 1 owner review pending."
       ],
       "certification": "pending_phase1"
@@ -1361,6 +1362,7 @@
   ],
   "notices": [
     "All metrics are pending certification. A successful schema/parity check is not business approval.",
+    "The owner selected retained reportable projects on 8 October 2026, superseding API-active eligibility. Archive flags must not silently narrow this population. Deleted source records are not restored by this contract.",
     "Currency and tax basis require owner review; source_currency never silently means GBP/net/gross.",
     "Business timezone must be supplied explicitly; Europe/London is only the frozen evaluation assumption. No fiscal calendar or MTD definition is registered.",
     "vw_enquiry_value_forecast_chart_v1.actual_enquiry_value is weighted actual_pipeline_value; gross_enquiry_value is the unweighted measure.",

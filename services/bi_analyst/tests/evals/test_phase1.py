@@ -39,7 +39,8 @@ def complete_review():
         for record in review[group].values():
             record.update(approved())
     for record in review['metrics'].values():
-        record.update(population='frozen_reportable_projects', source_contract='Reviewed exact-ID scope')
+        record.update(population='reportable', source_contract='Reviewed exact-ID scope')
+    review['decisions']['report_population']['value'] = 'reportable'
     for record in review['issues'].values():
         record.update(status='resolved', affected_scope='reviewed release population')
     for record in review['freshness'].values():
@@ -74,6 +75,44 @@ def test_complete_owner_attestations_pass(complete_review):
     result = evaluate_gate(*complete_review, now=NOW)
     assert result['blockers'] == []
     assert result['status'] == 'passed_with_owner_attestations'
+
+
+def test_revised_references_require_separate_bound_approval(complete_review):
+    packet, review, power_bi = complete_review
+    packet['payload']['manifest'] = {'reference_contract_version': '1.1.0'}
+    packet['payload']['reference_evidence_sha256'] = 'revised-reference-evidence'
+    result = evaluate_gate(packet, review, None, now=NOW)
+    assert any('revised reference answers' in item for item in result['blockers'])
+    approval = seal_packet({'status': 'approved_with_owner_attestation',
+        'scope': 'reference_answers_only', 'dataset': packet['payload']['dataset'],
+        'manifest_sha256': packet['payload']['manifest_sha256'],
+        'reference_evidence_sha256': 'revised-reference-evidence'})
+    result = evaluate_gate(packet, review, None, now=NOW, reference_packet=approval)
+    assert not any('revised reference answers' in item for item in result['blockers'])
+    assert result['reference_approval_sha256'] == approval['sha256']
+    assert any('Power BI comparison missing' in item for item in result['blockers'])
+    approval['payload']['reference_evidence_sha256'] = 'old-reference-evidence'
+    assert any('revised reference answers' in item for item in
+               evaluate_gate(packet, review, None, now=NOW, reference_packet=approval)['blockers'])
+
+
+def test_revised_gate_rejects_comparisons_without_snapshot_alignment(complete_review):
+    packet, review, power_bi = complete_review
+    packet['payload']['manifest'] = {
+        'reference_contract_version': '1.1.0', 'dataset': packet['payload']['dataset'],
+        'as_of_date': '2026-10-07', 'business_timezone': 'Europe/London'}
+    result = evaluate_gate(packet, review, power_bi, now=NOW)
+    assert any('Power BI alignment:' in item for item in result['blockers'])
+
+
+@pytest.mark.parametrize('population', ['verified_active', 'current_projects', 'frozen_reportable_projects'])
+def test_superseded_population_cannot_be_certified(complete_review, population):
+    packet, review, power_bi = complete_review
+    review['decisions']['report_population']['value'] = population
+    review['metrics']['invoice']['population'] = population
+    blockers = evaluate_gate(packet, review, power_bi, now=NOW)['blockers']
+    assert any('report_population:' in blocker for blocker in blockers)
+    assert 'metric/source/population sign-off: invoice' in blockers
 
 
 @pytest.mark.parametrize('group,name,field', [

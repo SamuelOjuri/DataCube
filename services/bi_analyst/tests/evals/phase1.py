@@ -14,11 +14,12 @@ from pathlib import Path
 
 from psycopg import sql
 
-from dataset import (equivalent, fingerprint, json_value, references,
+from dataset import (equivalent, fingerprint, json_value, references, reference_version,
                      set_path, verify_snapshot)
 from manage import ROOT, connect, encode, inventory
 
 VERSION = 1
+REPORT_POPULATION = 'reportable'
 METRICS = ('enquiry', 'order', 'invoice', 'conversion', 'gestation')
 POWER_BI_REFERENCES = ('enquiry_monthly', 'order_monthly', 'invoice_monthly',
                      'conversion_five_year', 'conversion_two_year',
@@ -45,9 +46,9 @@ ISSUES = {
     'invoice_rollup': 'Reconcile stored parent invoices against verified current child membership.',
     'enquiry_rollup': 'Review exact-reason child formula and Open-only current-membership sums.',
     'gestation_fallback': 'Verify stored actual and source/fallback rules for date differences.',
-    'archive_coverage': 'Account for every unverified project/value and unresolved archive job.',
+    'archive_coverage': 'Review lifecycle/source findings without excluding retained archived projects or making active-only rollout a reportable-population prerequisite.',
     'relationships': 'Resolve or label missing links and verify repeated source contributions.',
-    'classification': 'Review placeholder exclusions and outstanding needs_review records.',
+    'classification': 'Verify effective reviewed placeholder exclusions, retained archived projects, held/unreviewed inclusion and automatic re-entry after meaningful changes.',
     'writer_conflict': 'Prove deployed writers share an agreed source-precedence contract.',
     'report_reader_access': 'Resolve or explicitly scope the observed Power BI reader permission failures.',
 }
@@ -84,7 +85,7 @@ CONTRACTS = {
         'Bookings retain order date, positive amounts, won-stage rules and completed months.'],
     'invoice': ['Hidden Amount Invoiced retains signed values.',
         'Parent mirrors sum complete current children across business statuses; all-blank NULL, zero zero.',
-        'Resolve monthly plan/view difference explicitly; no silent adoption of either definition.'],
+        'Monthly revenue: positive dated invoices for retained reportable parents in completed months, without a business-stage or API lifecycle filter.'],
     'conversion': ['Inclusive closed-invoiced wins / all eligible; closed-only variant separately named.',
         'Aggregate counts before division; preserve five/two-year lower-bound cohorts and three-decimal ratios.',
         'Expected conversion is a prediction, not this observed metric.'],
@@ -248,7 +249,7 @@ def review_template(packet):
         'reports': {name: pending('BI report owner', report_name=None, report_version=None,
                                  definition_sha256=None) for name in POWER_BI_REFERENCES},
         'power_bi_exceptions': {},
-        'notes': 'Owner attestations must cover the intended release population. Sample success never certifies an entire dataset.'}
+        'notes': 'Use reportable for the report_population decision value and each metric population. Retain genuine archived projects; exclude only effective reviewed redundant placeholders. Bind source/release versions explicitly. Sample success never certifies an entire dataset.'}
 
 
 def capture(args):
@@ -285,6 +286,8 @@ def capture(args):
             'plans': frozen_plans, 'measured_load': False,
             'remaining_workload': ['ambiguity clarification', 'follow-up', 'authorised drill-down/export'],
             'note': 'Query plans are EXPLAIN only; latency/concurrency/cost targets require owner approval.'}}
+    from reference_review import reference_evidence
+    payload['reference_evidence_sha256'] = reference_evidence(artifacts)['sha256']
     views = {view['name']: view for view in artifacts['inventory']['views']}
     payload['report_source_candidates'] = {
         name: {'status': 'pending_Power_BI_mapping', 'definitions': {
@@ -337,10 +340,37 @@ def typed_rows(result):
     return sorted(rows, key=order)
 
 
+def validate_power_bi_alignment(exports, manifest, now=None):
+    if reference_version(manifest) == '1.0.0':
+        return
+    alignment = exports.get('alignment')
+    required = {
+        'dataset': manifest['dataset'],
+        'as_of_date': str(manifest['as_of_date']),
+        'business_timezone': manifest['business_timezone'],
+        'reference_contract_version': reference_version(manifest),
+        'source_kind': 'frozen_TEST',
+        'population': 'reportable',
+    }
+    if not isinstance(alignment, dict) or any(alignment.get(key) != value for key, value in required.items()):
+        raise ValueError('Power BI alignment must match the frozen TEST dataset, contract, timezone and population')
+    captured = timestamp(manifest['captured_at'])
+    if timestamp(alignment.get('snapshot_captured_at')) != captured:
+        raise ValueError('Power BI model snapshot capture differs from the frozen reference')
+    execution = exports.get('execution')
+    if not isinstance(execution, dict) or execution.get('engine') != 'Power BI':
+        raise ValueError('Independent Power BI execution evidence is required')
+    refreshed = timestamp(execution.get('model_refreshed_at'))
+    exported = timestamp(execution.get('exported_at'))
+    if not captured <= refreshed <= exported <= (now or datetime.now(timezone.utc)):
+        raise ValueError('Power BI refresh/export times must follow the frozen capture and not be in the future')
+
+
 def compare_power_bi(exports, expected, manifest):
     """Compare typed results; preserve duplicate rows, NULL/zero and numeric precision."""
     if exports.get('dataset') != manifest['schemas']['data'] or exports.get('manifest_sha256') != fingerprint(manifest):
         raise ValueError('Power BI export must identify this exact frozen manifest')
+    validate_power_bi_alignment(exports, manifest)
     entries = exports.get('comparisons')
     if not isinstance(entries, list) or not entries:
         raise ValueError('Power BI comparisons must be a nonempty list')
@@ -356,6 +386,8 @@ def compare_power_bi(exports, expected, manifest):
                 raise ValueError('Power BI comparison metadata missing: ' + field)
         if entry['as_of_date'] != str(manifest['as_of_date']):
             raise ValueError('Power BI export reporting date differs from frozen date')
+        if reference_version(manifest) == '1.1.0' and entry['population'] != REPORT_POPULATION:
+            raise ValueError('Power BI reference population must be reportable')
         columns = expected[name]['columns']
         if entry.get('columns') != columns:
             raise ValueError('Power BI export columns/types differ: ' + name)
@@ -373,7 +405,8 @@ def compare_power_bi(exports, expected, manifest):
 
 
 def power_bi(args):
-    exports = json.loads(args.input.read_text(encoding='utf-8'))
+    from powerbi import load_exports
+    exports = load_exports(args.input)
     conn, identity = connect()
     with conn:
         conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
@@ -382,6 +415,8 @@ def power_bi(args):
         comparisons = compare_power_bi(exports, artifacts['expected'], artifacts['manifest'])
     packet = seal_packet({'version': VERSION, 'dataset': args.dataset,
         'manifest_sha256': fingerprint(artifacts['manifest']), 'captured_at': utc_now(),
+        'reference_contract_version': reference_version(artifacts['manifest']),
+        'alignment': exports.get('alignment'), 'execution': exports.get('execution'),
         'export_sha256': fingerprint(exports), 'comparisons': comparisons})
     save_new(args.output / 'power_bi_comparison.json', packet)
     print(json.dumps({'compared': len(comparisons), 'matched': sum(r['matches'] for r in comparisons.values()),
@@ -449,7 +484,7 @@ def deployment_problems(deployment):
     return problems
 
 
-def evaluate_gate(packet, review, power_bi_packet=None, now=None):
+def evaluate_gate(packet, review, power_bi_packet=None, now=None, reference_packet=None):
     evidence = packet['payload']
     now = now or datetime.now(timezone.utc)
     blockers = []
@@ -470,9 +505,11 @@ def evaluate_gate(packet, review, power_bi_packet=None, now=None):
     for name in DECISIONS:
         if not reviewed(review.get('decisions', {}).get(name)):
             blockers.append('decision: ' + name)
+    if review.get('decisions', {}).get('report_population', {}).get('value') != REPORT_POPULATION:
+        blockers.append('report_population: require reportable, retaining genuine archived projects')
     for name in METRICS:
         metric = review.get('metrics', {}).get(name, {})
-        if not reviewed(metric) or not metric.get('population') or not metric.get('source_contract'):
+        if not reviewed(metric) or metric.get('population') != REPORT_POPULATION or not metric.get('source_contract'):
             blockers.append('metric/source/population sign-off: ' + name)
     for name in ISSUES:
         issue = review.get('issues', {}).get(name, {})
@@ -516,10 +553,24 @@ def evaluate_gate(packet, review, power_bi_packet=None, now=None):
         + budget['analyst_replicas'] * (budget['read_pool_per_replica'] + budget['state_pool_per_replica']) > budget['database_limit']):
         blockers.append('connection budget: allocated pools exceed capacity or are empty')
     comparisons = {}
+    if reference_version(evidence.get('manifest', {})) == '1.1.0':
+        approval = reference_packet['payload'] if reference_packet else {}
+        if (approval.get('status') != 'approved_with_owner_attestation'
+                or approval.get('scope') != 'reference_answers_only'
+                or approval.get('dataset') != evidence['dataset']
+                or approval.get('manifest_sha256') != evidence['manifest_sha256']
+                or not evidence.get('reference_evidence_sha256')
+                or approval.get('reference_evidence_sha256') != evidence['reference_evidence_sha256']):
+            blockers.append('revised reference answers: matching explicit owner approval required')
     if power_bi_packet:
         payload = power_bi_packet['payload']
         if payload.get('dataset') != evidence['dataset'] or payload.get('manifest_sha256') != evidence['manifest_sha256']:
             raise ValueError('Power BI comparison belongs to a different frozen dataset')
+        if reference_version(evidence.get('manifest', {})) == '1.1.0':
+            try:
+                validate_power_bi_alignment(payload, evidence['manifest'], now=now)
+            except ValueError as exc:
+                blockers.append('Power BI alignment: ' + str(exc))
         comparisons = payload['comparisons']
     for name in POWER_BI_REFERENCES:
         result = comparisons.get(name)
@@ -535,6 +586,7 @@ def evaluate_gate(packet, review, power_bi_packet=None, now=None):
     return {'version': VERSION, 'dataset': evidence['dataset'], 'evaluated_at': now.isoformat(),
         'evidence_sha256': packet['sha256'], 'review_sha256': fingerprint(review),
         'power_bi_sha256': power_bi_packet['sha256'] if power_bi_packet else None,
+        'reference_approval_sha256': reference_packet['sha256'] if reference_packet else None,
         'status': 'blocked' if blockers else 'passed_with_owner_attestations',
         'blockers': blockers,
         'basis': 'TEST evidence plus supplied owner attestations; no automatic production certification',
@@ -545,7 +597,8 @@ def review_command(args):
     packet = load_packet(args.evidence)
     review = json.loads(args.review.read_text(encoding='utf-8'))
     comparison = load_packet(args.power_bi) if args.power_bi else None
-    result = evaluate_gate(packet, review, comparison)
+    reference_approval = load_packet(args.reference_review) if args.reference_review else None
+    result = evaluate_gate(packet, review, comparison, reference_packet=reference_approval)
     save_new(args.output / 'phase1_gate.json', result)
     lines = ['# Phase 1 certification review', '', 'Status: ' + result['status'], '',
              result['basis'], '', 'Dataset: `' + result['dataset'] + '`', '',

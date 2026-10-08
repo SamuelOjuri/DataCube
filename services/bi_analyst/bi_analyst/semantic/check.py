@@ -9,8 +9,19 @@ from psycopg.rows import dict_row
 from .catalogue import Catalogue, load_catalogue
 
 
+EXPECTED_POPULATIONS = {
+    "projects_v1": "SELECT monday_id FROM public.reportable_projects",
+    "children_v1": """SELECT s.monday_id FROM public.subitems s
+        JOIN public.reportable_projects p ON p.monday_id=s.parent_monday_id""",
+    "invoice_reporting_facts_v1": """SELECT s.monday_id FROM public.subitems s
+        JOIN public.reportable_projects p ON p.monday_id=s.parent_monday_id
+        WHERE s.amount_invoiced>0 AND s.invoice_date IS NOT NULL
+          AND s.invoice_date<date_trunc('month',CURRENT_DATE)::date""",
+}
+
+
 def check_database(connection, catalogue: Catalogue) -> list[str]:
-    """Check exact public surface, types, comments, security mode and declared keys.
+    """Check surface, types, comments, security mode, keys and exact eligible IDs.
 
     Caller owns the transaction. This routine neither grants nor mutates anything.
     Successful checks describe structure, not source/business certification.
@@ -45,6 +56,19 @@ def check_database(connection, catalogue: Catalogue) -> list[str]:
         """).format(sql.Identifier(relation.id), keys, sql.Identifier(relation.id), nulls)).fetchone()
         if duplicate['invalid']:
             problems.append(f"{name}: declared key is NULL or not unique")
+        expected = EXPECTED_POPULATIONS.get(relation.id)
+        if expected:
+            mismatch = connection.execute(sql.SQL("""
+                WITH expected AS ({})
+                SELECT EXISTS(
+                    SELECT monday_id FROM analytics.{} EXCEPT SELECT monday_id FROM expected
+                ) OR EXISTS(
+                    SELECT monday_id FROM expected EXCEPT SELECT monday_id FROM analytics.{}
+                ) AS invalid
+            """).format(sql.SQL(expected), sql.Identifier(relation.id),
+                        sql.Identifier(relation.id))).fetchone()
+            if mismatch['invalid']:
+                problems.append(f"{name}: eligible IDs differ from the retained reportable contract")
     return problems
 
 

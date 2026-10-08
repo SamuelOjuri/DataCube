@@ -16,6 +16,7 @@ from verify_frozen import compare_results, statements
 
 ROOT = Path(__file__).resolve().parents[4]
 MIGRATION = ROOT/'src/database/migrations/20261007_001_analytics_contracts.sql'
+POPULATION_MIGRATION = ROOT/'src/database/migrations/20261008_004_analyst_reportable_population.sql'
 pytestmark = pytest.mark.postgres
 
 
@@ -43,6 +44,7 @@ def database():
                     conn.execute(definition)
                 with conn.transaction():
                     conn.execute(MIGRATION.read_text(encoding='utf-8'))
+                    conn.execute(POPULATION_MIGRATION.read_text(encoding='utf-8'))
                 yield conn
         finally:
             # Random database name created above, never supplied externally.
@@ -59,6 +61,7 @@ def test_real_migration_matches_catalogue_and_reapply_preserves_sources(database
     before=database.execute('SELECT * FROM projects ORDER BY monday_id').fetchall()
     with database.transaction():
         database.execute(MIGRATION.read_text(encoding='utf-8'))
+        database.execute(POPULATION_MIGRATION.read_text(encoding='utf-8'))
     assert before==database.execute('SELECT * FROM projects ORDER BY monday_id').fetchall()
     assert check_database(database,load_catalogue()) == []
 
@@ -103,6 +106,41 @@ def test_current_month_excluded_and_null_stage_remains_conversion_eligible(datab
     row=database.execute("SELECT * FROM analytics.conversion_cohorts_v1 WHERE monday_id='E4' AND cohort_years=5").fetchone()
     assert (row['eligible_count'],row['win_count'],row['closed_count'])==(1,0,0)
     assert database.execute("SELECT count(*) AS n FROM analytics.conversion_cohorts_v1 WHERE monday_id='future'").fetchone()['n']==2
+
+
+@pytest.mark.parametrize('state', ['active', 'archived', None])
+def test_retained_projects_and_invoices_do_not_depend_on_lifecycle_or_stage(database, state):
+    with database.transaction(force_rollback=True):
+        database.execute('CREATE TABLE monday_item_lifecycle(monday_id text, monday_state text)')
+        database.execute('INSERT INTO monday_item_lifecycle VALUES (%s,%s)', ('E2', state))
+        database.execute("""UPDATE subitems SET amount_invoiced=25,
+            invoice_date=(date_trunc('month',CURRENT_DATE)-interval '1 month')::date
+            WHERE monday_id='C3'""")
+        assert database.execute("SELECT monday_id FROM analytics.projects_v1 WHERE monday_id='E2'").fetchone()
+        assert database.execute("SELECT amount_invoiced FROM analytics.invoice_reporting_facts_v1 WHERE monday_id='C3'").fetchone()['amount_invoiced'] == 25
+        assert database.execute("SELECT eligible_count FROM analytics.conversion_cohorts_v1 WHERE monday_id='E2' AND cohort_years=5").fetchone()['eligible_count'] == 1
+        assert check_database(database, load_catalogue()) == []
+
+
+def test_schema_check_rejects_equal_count_but_wrong_project_population(database):
+    with database.transaction(force_rollback=True):
+        definition = database.execute("SELECT pg_get_viewdef('analytics.projects_v1'::regclass,true) AS sql").fetchone()['sql'].rstrip().removesuffix(';')
+        database.execute("""CREATE OR REPLACE VIEW analytics.projects_v1
+            WITH(security_invoker=true,security_barrier=true) AS SELECT
+            CASE WHEN monday_id='E2' THEN 'wrong_id' ELSE monday_id END AS monday_id,
+            pipeline_stage,category,type,account,product_type,date_created,date_order_received,
+            first_date_designed,first_date_invoiced,new_enquiry_value,total_order_value,
+            total_amount_invoiced,gestation_period FROM (""" + definition + ') original')
+        assert any('projects_v1: eligible IDs differ' in problem for problem in check_database(database, load_catalogue()))
+
+
+def test_schema_check_rejects_old_closed_invoiced_restriction(database):
+    with database.transaction(force_rollback=True):
+        database.execute("""UPDATE subitems SET amount_invoiced=25,
+            invoice_date=(date_trunc('month',CURRENT_DATE)-interval '1 month')::date
+            WHERE monday_id='C3'""")
+        database.execute(MIGRATION.read_text(encoding='utf-8'))
+        assert any('invoice_reporting_facts_v1: eligible IDs differ' in problem for problem in check_database(database, load_catalogue()))
 
 
 def test_default_public_cannot_access_analytics(database):

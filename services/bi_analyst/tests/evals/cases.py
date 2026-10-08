@@ -89,9 +89,20 @@ FIXTURES = {
 }
 
 
-def cases():
+REFERENCE_VERSIONS = ('1.0.0', '1.1.0')
+
+
+def cases(contract_version='1.0.0'):
+    if contract_version not in REFERENCE_VERSIONS:
+        raise ValueError('Unsupported reference contract version')
+    questions = dict(QUESTIONS)
+    if contract_version == '1.1.0':
+        questions.update(
+            invoice_last_month='What was revenue last month from positive dated child invoices on retained reportable parents, regardless of business stage or API lifecycle state?',
+            invoice_previous_month='What was revenue in the month before last with the same retained-reportable-parent rules and no business-stage filter?',
+            invoice_monthly='Show revenue for the last 12 completed months from retained reportable parents at any business stage, including empty months.')
     result = []
-    for index, (reference, question) in enumerate(QUESTIONS.items(), 1):
+    for index, (reference, question) in enumerate(questions.items(), 1):
         metric = reference.split('_')[0]
         result.append({'id': f'Q{index:03}', 'kind': 'metric', 'metric': metric,
                        'question': question, 'reference': reference, 'population': (
@@ -100,8 +111,10 @@ def cases():
                        'expected_action': 'answer_with_provenance', 'split': 'holdout' if index % 4 == 0 else 'development',
                        'certification': 'pending_business_and_source_review'})
     for index, (first, followup, reference) in enumerate(FOLLOWUPS, 1):
+        if contract_version == '1.1.0' and first == 'invoice_last_month':
+            followup = 'Now the month before last with the same retained-reportable population and no business-stage filter.'
         result.append({'id': f'F{index:03}', 'kind': 'follow_up', 'metric': reference.split('_')[0],
-                       'turns': [{'user': QUESTIONS[first], 'reference': first},
+                       'turns': [{'user': questions[first], 'reference': first},
                                  {'user': followup, 'reference': reference}],
                        'reference': reference, 'expected_action': 'answer_preserving_unchanged_scope',
                        'split': 'holdout' if index % 3 == 0 else 'development',

@@ -4,18 +4,19 @@ Prepared: 7 October 2026. Repository baseline reviewed: `9a62b35`.
 
 ## Business-definition correction: 8 October 2026
 
-The following owner clarification supersedes the original Phase 1/2 population,
-monthly revenue and Order Value requirements:
+The owner's later 8 October decision supersedes the earlier API-active population
+requirement: genuine archived projects must remain in historical reporting.
+The financial corrections remain in force:
 
-- **Current analytical population:** use projects/items whose current Monday API
-  lifecycle `state` is `active`. This is not a board business-status label.
-  `reportable_projects` and its placeholder classifications are not the eligibility
-  authority; the owner confirms that feature is not fully implemented. Do not
-  exclude an otherwise active item solely through that feature. Verify current
-  child membership and the API state of contributing child/hidden items as well.
-  Missing, stale or unreadable state evidence is a coverage gap, not proof of
-  active status or a zero amount.
-- **Monthly revenue:** use invoices belonging to currently API-active parents,
+- **Analytical project population:** use retained `reportable_projects`: all
+  retained projects minus effective, explicitly reviewed redundant-placeholder
+  exclusions. Genuine archived projects, unreviewed candidates and held records
+  remain included. Meaningful data or children suspend an exclusion; `released`
+  permanently removes it. API lifecycle state is not an analytical eligibility
+  filter. Do not substitute active-only `current_*` views. Retain lifecycle
+  processing for operational safety and source evidence; missing financial or
+  relationship evidence remains a coverage limitation, not a zero amount.
+- **Monthly revenue:** use invoices belonging to retained reportable parents,
   without requiring `Won - Closed (Invoiced)` or another business-stage label.
   That label is manually maintained and may be absent on invoiced projects.
   Retain the existing positive-amount, invoice-date and completed-month rules;
@@ -31,18 +32,19 @@ monthly revenue and Order Value requirements:
   remain open. Record the clarification in the owner review and bind certification
   to corrected catalogue, source, deployment and reference-dataset versions.
   Preserve the sealed 7 October evaluation and historical snapshots; do not
-  relabel them as active-population results.
+  relabel their old revenue results as the revised contract.
 
 The supplied [board schema](../app_data/BoardSchema.txt) confirms the formula and
 child mirror `lookup_mknc7a23`. However, its saved parent `mirror5__1` sums child
 `mirror17__1`, which points to material `numbers98__1`, not the total formula.
 Verify the live mirror chain and reconcile this discrepancy against the required
 definition; the schema excerpt alone does not prove the parent is wired correctly.
-Also, the existing [archive runtime view](../src/database/schema/monday_lifecycle_archive_runtime.sql)
-builds `current_projects` from `reportable_projects`, so switching to that view
-alone would retain unwanted exclusions. These are implementation gaps, not
-reasons to retain the superseded business rules. This documentation correction
-does not change code, Monday configuration, SQL, data or sealed answers.
+The existing [archive runtime view](../src/database/schema/monday_lifecycle_archive_runtime.sql)
+narrows `reportable_projects` to verified active records for operational consumers.
+That is not the analyst's retained-history population. Catalogue 1.1.0 and migration
+004 retain reportable eligibility and remove the monthly revenue stage gate;
+source certification, live mirror alignment and production rollout require their
+own evidence. Previously deleted source records are not restored by this policy.
 
 This plan turns the agreed recommendation into an implementation sequence for a natural-language query and insight layer over the existing Monday-to-Supabase BI pipeline. The frontend will run on **Netlify** and the analyst API on a separate **Render web service**. The remaining agreed stack is retained.
 
@@ -105,12 +107,12 @@ DataCube/
 └── docs/
 ```
 
-Keep the analyst dependency lockfile alongside its `pyproject.toml`. Give the analyst API and frontend their own environment configuration, tests and deployment settings. Phase 1 evaluation tooling now exists under `services/bi_analyst/tests/evals/`; the API and frontend locations remain planned.
+Keep the analyst dependency lockfile alongside its `pyproject.toml`. Give the analyst API and frontend their own environment configuration, tests and deployment settings. Phase 1 evaluation tooling and the Phase 2 candidate catalogue are implemented. The Phase 3 isolated API skeleton, permission migration and Render configuration are now implemented; the frontend remains planned.
 
 Recent repository work changes the starting point from the original recommendation:
 
 - Additional customer charges are now mapped in [config.py](../src/config.py), and the ordinary order rollup in [sync_service.py](../src/database/sync_service.py) sums material plus charges. Newer [Monday comparison](order_value_monday_compare.md) and archive-enabled workflows preserve the actual typed parent mirror. A material-only mirror is a source/configuration discrepancy against the required total formula, not an alternative approved Order Value definition. Phase 1 must reconcile the live mirror chain and all deployed writers before certification. Existing [scoped correction](order-value-scopes.md) and [targeted correction](order-value-scopes-targeted.md) tooling can support reviewed repairs; its presence does not certify every production row.
-- [Reportable projects](project-placeholders.md) document a separate, incompletely implemented classification feature. Its exclusions must not define the new analyst's population or override current Monday API `active` status.
+- [Reportable projects](project-placeholders.md) define the analyst's retained-project population. Complete the reviewed classification rollout and verify exact exclusions, archived-project retention, held/unreviewed inclusion and automatic re-entry.
 - [Archive-aware reporting](monday-lifecycle.md) introduces `current_projects`, `current_subitems`, `current_hidden_items` and associated forecast sources. Their use requires the documented coverage checks and rollout state. Reading a `current_*` view alone does not establish readiness.
 - [Worker monitoring and durable recovery](worker-monitoring.md) now describe database-backed job processing and the existing Render service layout. The analyst can reuse operational patterns while keeping an independent startup entrypoint.
 - [PostgreSQL maintenance](../src/tasks/postgres_maintenance.py) now explicitly refreshes the conversion and monthly pipeline aggregates in addition to the SQL refresh function. Phase 1 must verify the deployed path and successful refresh timestamps rather than repeat the earlier assumption that those refreshes are absent.
@@ -120,12 +122,12 @@ The semantic contracts below are requirements for certification. Existing monthl
 | Metric | Required contract | Distinctions to retain |
 |---|---|---|
 | New Enquiry Value | Existing child formula: quote amount for Reason For Change exactly `New Enquiry`, otherwise zero. Current source-authoritative parent refresh sums current API-active children for Open parents and retains stored values for Won/Lost parents | Preserve typed blank/empty versus missing/unreadable evidence. Unweighted value differs from weighted enquiry/pipeline. Monthly actuals use creation month, positive values and completed months. |
-| Order Value | Hidden-board **Total Customer Order Value**, `formula_mkncjq9 = numbers98__1 + numbers3__1`, mirrored through eligible children to an API-active parent | Verify that the parent mirror carries the complete formula, not just material. Reconcile equivalent membership and verified multiplicity; an independent hidden-inventory total need not equal a project total. Preserve separate bookings date/positive-value/stage rules. |
-| Invoiced Value | Hidden-board **Amount Invoiced**. Derived API-active project totals use complete current eligible child invoice mirrors without business-stage filtering; all-blank stays NULL and numeric zero stays zero | Monthly revenue retains invoice dates, positive amounts and completed months, with API-active parents and no closed-invoiced-stage requirement. Stored parent values remain distinct from sums of all persisted children until current membership is reconciled. |
+| Order Value | Hidden-board **Total Customer Order Value**, `formula_mkncjq9 = numbers98__1 + numbers3__1`, mirrored through verified contributing children to a retained reportable parent | Verify that the parent mirror carries the complete formula, not just material. Reconcile equivalent membership and verified multiplicity; an independent hidden-inventory total need not equal a project total. Preserve separate bookings date/positive-value/stage rules. |
+| Invoiced Value | Hidden-board **Amount Invoiced**. Retained reportable-project totals preserve signed values; source-authoritative refresh uses verified contributing invoice mirrors without business-stage filtering. All-blank stays NULL and numeric zero stays zero | Monthly revenue retains invoice dates, positive amounts and completed months, with reportable parents including genuine archived projects and no closed-invoiced-stage requirement. Stored parent values remain distinct from sums of all persisted children until membership is reconciled. |
 | Conversion Rate | Preserve the current inclusive rate: closed-invoiced wins divided by all eligible projects; expose closed-only wins divided by wins plus losses as a named variant | Preserve the five-year/two-year cohorts and rounding. Expected conversion probability is a separate predictive metric. Aggregate counts before dividing. |
 | Gestation Period | Use stored actual gestation and existing source/fallback semantics: first design completion to first invoice | Historical averages/percentiles exclude values at or below zero. Expected gestation uses separate model rules and must have a distinct label. |
 
-The catalogue must distinguish the required current API-active population from legacy reportable-population diagnostics and historical snapshots. Selecting a population is part of the resolved query plan, not a decision left to SQL generation. Current analytical cohorts use active eligibility plus their metric-specific date rules; sealed historical cohorts and snapshots keep their recorded populations and must be labelled accordingly. Do not assume existing `current_*` views implement the corrected contract without checking their dependencies and coverage.
+The catalogue uses one primary project population: retained reportable projects, with each metric's date/cohort rules. Hidden inventory remains a distinct grain and dated snapshots retain their recorded populations. Population is part of the resolved query plan, not a decision left to SQL generation or operational archive flags. Active-only operational views and coverage diagnostics must not silently remove archived history from analyst results.
 
 Implement the work in the following phases. Owners below are responsibilities; one engineer may cover several roles.
 
@@ -139,13 +141,13 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    Trace ordinary sync, comparison and archive-enabled refresh paths separately. Verify which ones are deployed and how their source-precedence rules interact. Prevent alternating writers from producing incompatible totals. The Order Value contract is Total Customer Order Value, including additional charges, mirrored to the parent. Verify the complete live formula/mirror chain against the supplied schema; resolve a material-only parent source through reviewed configuration/implementation changes, not an undocumented SQL substitution. Retain separate parent and hidden grains and verified source multiplicity.
 
-   Certify the current Monday API-active population, including active items that legacy placeholder classifications exclude. Record exact state/membership evidence, archive coverage, outstanding financial issues and deployed reporting flags. Audit source dependencies so `reportable_projects` exclusions are not inherited indirectly. An unresolved subset must not silently disappear from company totals or be interpreted as zero. If totals cannot be certified, return an explicit coverage limitation or an explicitly requested, labelled verified subset.
+   Certify the retained reportable population. Compare exact eligible IDs, not only counts; verify reviewed exclusions, inclusion of genuine archived and held/unreviewed records, and re-entry after meaningful changes. Audit source dependencies and deployed consumers for raw-project bypasses or unintended active-only filters. Review financial/membership findings without treating zero active-only coverage counters as a prerequisite for retaining archived projects. Unresolved financial evidence must be an explicit limitation, not silent omission or zero.
 
    Verify successful ingestion, rollup, materialised-view refresh and snapshot timestamps separately. Capture present row counts, representative query plans and the available database connection budget. Do not infer freshness from a scheduled job or the newest individual row.
 
    Assemble 50-100 representative questions with independent reference SQL and expected results on a frozen, access-controlled nonproduction dataset. Include follow-ups and ambiguous questions. Compare with Power BI; document any differing DAX/filter logic rather than silently adopting it.
 
-   **Evaluation dataset created:** `bi_eval_20261007_v1` in the TEST Supabase project contains 70 scenarios, 50 independent reference SQL queries and a restricted answer key. See the [dataset handoff and review findings](bi-analyst-phase1-evaluation.md) and [evaluation runbook](../services/bi_analyst/tests/evals/README.md). Its checks pass for the original 7 October definitions, not this correction. Preserve both the copied monthly revenue view and the old reportable/closed-invoiced reference calculation as historical evidence. Create a new reviewed reference version for active-parent revenue without the business-stage gate; source certification and aligned Power BI comparison remain pending.
+   **Evaluation datasets created:** `bi_eval_20261007_v1` remains the sealed historical 1.0.0 baseline. New TEST snapshot `bi_eval_20261008_v2` implements reference contract 1.1.0 with 70 scenarios, 50 reference queries, 20 independent checks and 16 passing curated-view parity comparisons. Revised invoice references remove the business-stage gate; old/new results are retained in the new restricted key. The [owner-review and aligned Power BI handoff](bi-analyst-phase1-certification.md#revised-reference-release-and-handoff) is implemented and prepared. Actual owner approval, independent Power BI execution and source certification remain pending; no historical key was overwritten.
 
    You can use the following database for evaluation/test (You can load detail from .env):
 
@@ -173,7 +175,7 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    Create narrowly scoped `analytics` wrappers over certified sources. Preserve authoritative SQL expressions; avoid implementing another copy of the five metric formulas in Python. Use a deterministic latest-analysis selection with a timestamp and tie-breaker where the source contract requires it.
 
-   Implement current API-active eligibility without `reportable_projects` exclusions, including in monthly wrappers and current cohort dependencies. Remove the closed-invoiced business-stage gate from monthly revenue only. Adopt archive-aware sources through a reviewed rollout and coverage contract; existing `current_projects` also inherits legacy exclusions and needs alignment. Reuse compatible coverage logic, expanding its scope to all API-active candidates rather than only the old reportable subset.
+   Use retained `reportable_projects` consistently in project views, monthly wrappers and cohort dependencies. Do not inherit active-only filters from operational archive views. Remove the closed-invoiced business-stage gate from monthly revenue only. Validate exact project/child/invoice eligibility and retain existing financial coverage diagnostics; source and membership uncertainties require review rather than fabricated zeros.
 
    Encode safe breakdowns. Pre-aggregate child facts before joining project totals. Preserve multiplicity explicitly required by a verified source mirror; distinguish it from accidental SQL join amplification and unresolved duplicate-source evidence. Multi-account/product membership can repeat an entire project's value: define attributable detail amounts or clearly labelled overlapping membership totals. Distinct project counts alone do not solve duplicated monetary sums.
 
@@ -197,7 +199,7 @@ Implement the work in the following phases. Owners below are responsibilities; o
    Use the agreed organisational sign-in approach. Supabase Auth can federate Microsoft sign-in if Entra ID is the organisation's provider; confirm tenant restrictions and access provisioning. Validate token signature, issuer, audience and expiry server-side. Maintain permissions in trusted server-controlled state. See [Supabase Microsoft authentication](https://supabase.com/docs/guides/auth/social-login/auth-azure).
    """
 
-   Create distinct database read-only roles for analytical reads, application-state writes and migrations. The analyst query role must not be an owner, superuser, service role or RLS-bypass role. Grant only approved relations/functions; do not grant broad future-object access automatically. Keep the analytical and state schemas outside direct browser/Data API access.
+   Use distinct runtime roles for analytical reads and application-state writes. Following the owner's 8 October 2026 clarification, retain `bi_analyst_migrator` only as a non-login owner of analyst schemas/state and administrator-controlled principals. The existing platform administrator handles bootstrap role creation and shared source grants/policies; the migrator has no operational-table or shared-schema administration grants and no runtime membership. The analyst query role must not be an owner, superuser, service role or RLS-bypass role. Grant only approved relations/functions; do not grant broad future-object access automatically. Keep the analytical and state schemas outside direct browser/Data API access.
 
    Design identity-to-database scope explicitly. Direct Psycopg connections do not inherit the user's browser JWT. Validate view owners and security modes: `security_invoker` requires suitable underlying privileges and is not a blanket replacement for access design. Restrict company-wide aggregates to roles entitled to their complete population. See [Supabase view security](https://supabase.com/docs/guides/database/views).
 
@@ -206,6 +208,10 @@ Implement the work in the following phases. Owners below are responsibilities; o
    Introduce authenticated conversation/run/result APIs, liveness/readiness endpoints, request IDs, audit events, rate limits and ownership checks. Reauthorise access on every follow-up, result fetch, export and resume. A supplied thread/result ID does not prove ownership.
 
    **Deliverables:** isolated service skeleton, permission matrix, restricted roles, authentication, connection configuration, health endpoints and access-control tests.
+
+   **Implementation update (8 October 2026):** the owner requested skipping authentication for now. The isolated service, restricted-role bootstrap, ownership/RLS checks, bounded pools, health endpoints, state APIs, audit/rate limits and Render configuration are implemented. Data endpoints return `identity_not_configured` until trusted identity is supplied; tests inject identities without adding an HTTP bypass. Authentication, corrected source certification and production deployment remain open. See the [Phase 3 assessment and runbook](bi-analyst-phase3.md).
+
+   **Option A update (8 October 2026):** the owner approved broader company-wide SELECT access to the named source dependencies, preserving existing PUBLIC/ETL/Power BI privileges and the ten gateway views. The bootstrap no longer rejects schema USAGE or database TEMP alone. It and API startup audit effective write/CREATE privileges, role escalation and unreviewed functions; unsafe inherited permissions remain blockers. The scoped non-login migrator owns the new analyst schemas/state and provisions access records. It is included in the effective-privilege audit, receives no operational grants and supplies no runtime credentials. Authentication remains deferred.
 
    **Exit gate:** permitted reference queries succeed; forbidden data, functions, cross-user histories and results are inaccessible. Starting or scaling the analyst does not start ETL jobs.
 
@@ -244,7 +250,7 @@ Implement the work in the following phases. Owners below are responsibilities; o
    Ground each numerical claim in identified result cells or computed comparisons, including metric, unit, period and denominator. Distinguish measured contributors from causal explanations. Handle empty results, incomplete coverage and stale sources explicitly. Stream public progress events and validated answer content; keep raw prompts/debug state out of the product stream.
 
    Use gemini-3.8-flash for this application:
-   Benchmark Gemini model choices against the golden set; pin the selected model configuration, prompt, catalogue and dependency versions. Keep the provider adapter independent of the existing predictive-scoring/Monday-write workflow.
+   Benchmark Gemini model choice against the golden set; pin the selected model configuration, prompt, catalogue and dependency versions. Keep the provider adapter independent of the existing predictive-scoring/Monday-write workflow.
 
    **Deliverables:** graph, typed state, checkpointing, clarification/follow-up handling, evidence validator, bounded retry policy, run audit and model evaluation report.
 
@@ -318,8 +324,8 @@ The release evidence must cover these cases:
 |---|---|
 | Core metrics | Independent reference SQL agrees with the five enabled metrics at contract precision |
 | Order Value | Nonzero-charge examples verify `formula_mkncjq9` through child and parent mirrors on matching eligible membership; repeated contributions are verified and missing inputs are not guessed |
-| Population | Current API-active items are eligible regardless of placeholder classifications; API-archived/deleted items are excluded, unknown state is a coverage gap, and business labels do not substitute for lifecycle evidence |
-| Enquiry and invoice values | Existing enquiry source/fallback rules, signed totals and blank-versus-zero remain distinct; a positive dated invoice on an API-active parent qualifies for a completed month even without a closed-invoiced label |
+| Population | Exact retained reportable IDs match; genuine archived and held/unreviewed records remain included, effective reviewed placeholders are excluded, and meaningful changes restore inclusion independently of API lifecycle state |
+| Enquiry and invoice values | Existing enquiry source/fallback rules, signed totals and blank-versus-zero remain distinct; a positive dated invoice on a reportable parent qualifies for a completed month even without a closed-invoiced label |
 | Conversion and gestation | Cohorts, numerator/denominator, zero/null rules and observed/predicted variants are correct |
 | Join behaviour | Multiple children, shared source links and multi-value dimensions preserve certified source contributions without accidental join amplification |
 | Time and snapshots | Completed months, explicit month-to-date variants, timezone/fiscal boundaries and historical population are correct |
@@ -329,6 +335,6 @@ The release evidence must cover these cases:
 | Netlify/Render integration | Allowed origins, redirects, direct links, stream reconnection and independent rollbacks pass staging checks |
 | Operations | Per-source freshness, coverage, concurrency and measured cost/latency remain visible and within agreed limits |
 
-Implementation locations follow the repository structure above: `services/bi_analyst/bi_analyst/` for the independent API, graph, query tools and policy; `services/bi_analyst/bi_analyst/semantic/` for the catalogue; `src/database/migrations/` for new ordered analyst migrations; `web/` for the Netlify frontend; and `services/bi_analyst/tests/evals/` for isolated reference-result and conversation evaluations. Reuse compatible repository utilities after checking for privileged credentials and startup side effects. The Phase 1 evaluation tooling and dataset are implemented; the API, semantic service, production migrations and frontend remain planned.
+Implementation locations follow the repository structure above: `services/bi_analyst/bi_analyst/` for the independent API, graph, query tools and policy; `services/bi_analyst/bi_analyst/semantic/` for the catalogue; `src/database/migrations/` for new ordered analyst migrations; `web/` for the Netlify frontend; and `services/bi_analyst/tests/evals/` for isolated reference-result and conversation evaluations. Reuse compatible repository utilities after checking for privileged credentials and startup side effects. Phase 1 tooling, the Phase 2 candidate catalogue/migrations and the Phase 3 service/permission code are implemented. The [reportable-population rollout](project-placeholders.md#verified-rollout-8-october-2026), including analyst migrations 001/004, passed TEST and owner-approved production checks. Source/mirror certification, revised reference approval, authentication, the Phase 3 permission bootstrap and service deployment, the metric compiler, graph and frontend remain open.
 
 The delivery checkpoints are: **data certification** after Phases 1-2; **authenticated metric API** after Phases 3-4; **conversational UI on Netlify with API on Render** after Phases 5-6; **controlled production release** after Phase 7; and **exploratory analysis** after Phase 8. Frontend contract work can run alongside graph development; deployment configuration can run alongside UI work. Data certification and permission enforcement remain prerequisites for real-user data access.

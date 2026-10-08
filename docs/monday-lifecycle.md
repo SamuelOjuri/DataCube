@@ -7,19 +7,20 @@ deploying Python alone does not enable the feature.
 ## BI analyst contract correction: 8 October 2026
 
 For the BI analyst, [current eligibility](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
-means Monday API `state = active`, not business-stage labels or the incomplete
-reportable-project classification feature. Monthly revenue must not require
+now means retained `reportable_projects`, including genuine archived history and
+excluding only effective reviewed redundant placeholders. The later owner decision
+supersedes the earlier API-active proposal. Monthly revenue must not require
 `Won - Closed (Invoiced)`. Order Value must carry hidden `formula_mkncjq9`
 (material plus customer additional charges) through the child and parent mirrors.
 
 The runtime behaviour documented below has not changed with this clarification.
-In particular, `current_projects` currently starts from `reportable_projects`,
-and existing coverage is scoped accordingly. That implementation must be aligned
-and coverage expanded before certifying all API-active items; a zero legacy
-coverage count alone is insufficient. Parent refresh preserves the configured
+In particular, `current_projects` narrows `reportable_projects` to active records,
+and existing coverage gates that operational population. Do not substitute those
+views or gates for retained-history analyst eligibility. Parent refresh preserves the configured
 mirror, which still needs verification against the required formula chain.
-Keep state/membership freshness checks and explicit incomplete-coverage failures;
-do not infer active status from missing evidence or rewrite historical snapshots.
+Keep operational state/membership freshness checks and explicit incomplete-coverage
+failures. This policy does not change archive processing, infer financial zeros
+from missing evidence, or rewrite historical snapshots.
 
 ## Verified archive handling: staged rollout
 

@@ -105,15 +105,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['inspect','freeze','verify','report','probe',
                                           'phase1-capture','phase1-powerbi','phase1-review',
-                                          'phase1-pbix','phase1-reader'])
+                                          'phase1-pbix','phase1-reader',
+                                          'phase1-reference-review','phase1-powerbi-package'])
     parser.add_argument('--output', type=Path, default=ROOT / 'outputs/bi_analyst_evals/preflight')
     parser.add_argument('--dataset', default='bi_eval_20261007_v1')
     parser.add_argument('--as-of', type=date.fromisoformat)
+    parser.add_argument('--contract-version', choices=['1.0.0','1.1.0'], default='1.1.0',
+                        help='Reference contract for a new freeze; existing datasets select their sealed version')
     parser.add_argument('--sample-size', type=int, default=3)
     parser.add_argument('--input', type=Path, help='Power BI export JSON for phase1-powerbi')
     parser.add_argument('--evidence', type=Path, help='Evidence packet for phase1-review')
     parser.add_argument('--review', type=Path, help='Owner review JSON for phase1-review')
     parser.add_argument('--power-bi', type=Path, help='Optional comparison packet for phase1-review')
+    parser.add_argument('--reference-review', type=Path, help='Reference approval packet for phase1-review')
     parser.add_argument('--pbix', type=Path, help='Optional PBIX inventory packet to bind into capture')
     parser.add_argument('--reader-audit', type=Path, help='Optional PG_* reader inventory packet to bind into capture')
     args = parser.parse_args()
@@ -126,10 +130,12 @@ def main():
     try:
         if args.command.startswith('phase1-'):
             from phase1 import capture, power_bi, review_command
-            from powerbi import inspect_pbix, audit_reader
+            from powerbi import inspect_pbix, audit_reader, prepare_package
+            from reference_review import review_command as reference_review_command
             return {'phase1-capture':capture, 'phase1-powerbi':power_bi,
                     'phase1-review':review_command, 'phase1-pbix':inspect_pbix,
-                    'phase1-reader':audit_reader}[args.command](args) or 0
+                    'phase1-reader':audit_reader, 'phase1-reference-review':reference_review_command,
+                    'phase1-powerbi-package':prepare_package}[args.command](args) or 0
         elif args.command == 'inspect':
             inspect(args)
         else:

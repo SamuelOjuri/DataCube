@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
 from pathlib import Path
@@ -13,7 +13,7 @@ import sys
 from psycopg import sql, Error
 from psycopg.types.json import Jsonb
 
-from cases import cases
+from cases import REFERENCE_VERSIONS, cases
 from manage import HERE, ROOT, connect, encode, inventory, write_json
 
 TABLES = {
@@ -63,6 +63,26 @@ def references(filename):
     if len(queries) != (len(pieces) - 1) // 2:
         raise ValueError('Duplicate reference query name')
     return queries
+
+
+def reference_queries(contract_version='1.0.0'):
+    if contract_version not in REFERENCE_VERSIONS:
+        raise ValueError('Unsupported reference contract version')
+    queries = {**references('reference.sql'), **references('fixture_reference.sql')}
+    if contract_version == '1.1.0':
+        overrides = references('reference_1_1.sql')
+        if set(overrides) != {'invoice_last_month', 'invoice_previous_month', 'invoice_monthly'}:
+            raise ValueError('Unexpected catalogue 1.1.0 reference overrides')
+        queries.update(overrides)
+    return queries
+
+
+def reference_version(manifest):
+    # Sealed 7 October manifests predate explicit contract versioning.
+    version = manifest.get('reference_contract_version', '1.0.0')
+    if version not in REFERENCE_VERSIONS:
+        raise ValueError('Unsupported sealed reference contract version')
+    return version
 
 
 def fingerprint(value):
@@ -161,7 +181,23 @@ def check_access(conn, data_schema, key_schema, reader, tables):
     return checks
 
 
-def independent_checks(conn, expected):
+def invoice_period_results(invoices, as_of):
+    month_index = as_of.year * 12 + as_of.month - 1
+    months = [date(index // 12, index % 12 + 1, 1) for index in range(month_index - 12, month_index + 1)]
+    rows = []
+    for start, end in zip(months, months[1:]):
+        eligible = [row for row in invoices if row['invoice_date'] is not None
+                    and start <= row['invoice_date'] < end
+                    and row['amount_invoiced'] is not None and row['amount_invoiced'] > 0]
+        rows.append({'month': start, 'invoice_rows': len(eligible),
+                     'projects': len({row['parent_monday_id'] for row in eligible}),
+                     'amount': sum((row['amount_invoiced'] for row in eligible), Decimal(0)).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)})
+    return {'invoice_monthly': rows,
+            'invoice_last_month': [{key: value for key, value in rows[-1].items() if key != 'month'}],
+            'invoice_previous_month': [{key: value for key, value in rows[-2].items() if key != 'month'}]}
+
+
+def independent_checks(conn, expected, contract_version='1.0.0'):
     """Decimal/count checks in Python, independently of the reference SQL text."""
     projects = conn.execute('SELECT new_enquiry_value,total_order_value,total_amount_invoiced,date_created,pipeline_stage,gestation_period FROM reportable_projects').fetchall()
     as_of = conn.execute('SELECT as_of_date FROM context').fetchone()['as_of_date']
@@ -176,13 +212,17 @@ def independent_checks(conn, expected):
             cutoff = as_of.replace(year=as_of.year-years,day=28)
         cohort = [p for p in projects if p['date_created'] is not None and p['date_created'] >= cutoff]
         wins = sum(p['pipeline_stage']=='Won - Closed (Invoiced)' for p in cohort)
-        from decimal import ROUND_HALF_UP
         ratio = (Decimal(wins)/Decimal(len(cohort))).quantize(Decimal('.001'),rounding=ROUND_HALF_UP) if cohort else None
         checks[reference] = equivalent(expected[reference]['rows'], [{'eligible':len(cohort),'wins':wins,'rate':ratio}])
         positive = [p['gestation_period'] for p in cohort if p['gestation_period'] is not None and p['gestation_period']>0]
         gestation_ref = 'gestation_five_year' if years==5 else 'gestation_two_year'
         checks[gestation_ref] = equivalent(expected[gestation_ref]['rows'], [{'projects':len(positive),'days':Decimal(sum(positive))/len(positive) if positive else None}])
-    for case in cases():
+    if contract_version == '1.1.0':
+        invoices = conn.execute("""SELECT s.parent_monday_id,s.invoice_date,s.amount_invoiced
+            FROM subitems s JOIN reportable_projects p ON p.monday_id=s.parent_monday_id""").fetchall()
+        for name, rows in invoice_period_results(invoices, as_of).items():
+            checks[name] = equivalent(expected[name]['rows'], rows)
+    for case in cases(contract_version):
         if case['kind']=='synthetic_edge':
             checks[case['reference']] = equivalent(expected[case['reference']]['rows'], case['manual_expected'])
     if not all(checks.values()):
@@ -193,8 +233,9 @@ def independent_checks(conn, expected):
 def freeze(args):
     data_schema,key_schema,reader = names(args.dataset)
     conn,identity = connect()
-    refs = {**references('reference.sql'),**references('fixture_reference.sql')}
-    question_set = cases()
+    contract_version = args.contract_version
+    refs = reference_queries(contract_version)
+    question_set = cases(contract_version)
     if len(question_set)!=70 or len(refs)!=50:
         raise RuntimeError('Expected 70 scenarios and 50 independent reference queries')
     with conn:
@@ -213,6 +254,7 @@ def freeze(args):
         source_inventory = inventory(conn)
         source_inventory['target'] = identity
         manifest = {'dataset':data_schema,'target':identity,'as_of_date':as_of,
+                    'reference_contract_version':contract_version,
                     'business_timezone':'Europe/London','timezone_status':'evaluation_assumption_pending_business_confirmation',
                     'captured_at':source_inventory['server'][0]['captured_at'],
                     'transaction_snapshot':conn.execute('SELECT txid_current_snapshot()::text AS snapshot').fetchone()['snapshot'],
@@ -224,6 +266,12 @@ def freeze(args):
                     'schemas':{'data':data_schema,'answer_key':key_schema},'reader_role':reader,
                     'question_counts':dict(Counter(c['kind'] for c in question_set)),
                     'source_hashes':source_hashes(),'questions_sha256':fingerprint(question_set)}
+        if contract_version == '1.1.0':
+            catalogue_path = ROOT/'services/bi_analyst/bi_analyst/semantic/catalogue.json'
+            catalogue = json.loads(catalogue_path.read_text(encoding='utf-8'))
+            if catalogue['version'] != contract_version:
+                raise ValueError('Reference contract and current catalogue versions differ')
+            manifest['catalogue_sha256'] = hashlib.sha256(catalogue_path.read_bytes()).hexdigest()
         for schema in (data_schema,key_schema):
             conn.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
             revoke_defaults(conn,schema)
@@ -232,8 +280,8 @@ def freeze(args):
         conn.execute(sql.SQL('CREATE ROLE {} NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS').format(sql.Identifier(reader)))
         conn.execute(sql.SQL('GRANT {} TO CURRENT_USER').format(sql.Identifier(reader)))
         set_path(conn,data_schema)
-        conn.execute('CREATE TABLE context (dataset text PRIMARY KEY,as_of_date date NOT NULL,business_timezone text NOT NULL,captured_at timestamptz NOT NULL)')
-        conn.execute('INSERT INTO context VALUES (%s,%s,%s,%s)',(data_schema,as_of,'Europe/London',manifest['captured_at']))
+        conn.execute('CREATE TABLE context (dataset text PRIMARY KEY,as_of_date date NOT NULL,business_timezone text NOT NULL,captured_at timestamptz NOT NULL,reference_contract_version text NOT NULL)')
+        conn.execute('INSERT INTO context VALUES (%s,%s,%s,%s,%s)',(data_schema,as_of,'Europe/London',manifest['captured_at'],contract_version))
         for name,query in TABLES.items():
             conn.execute(sql.SQL('CREATE TABLE {}.{} AS {}').format(sql.Identifier(data_schema),sql.Identifier(name),sql.SQL(query)))
             if name in ('projects','reportable_projects','subitems','hidden_items','current_projects','current_subitems','current_hidden_items'):
@@ -252,7 +300,15 @@ def freeze(args):
                               'columns':[{'name':d.name,'type_oid':d.type_code} for d in cur.description],
                               'rows':cur.fetchall()}
         diagnostics = {name:run_reference(conn,name,query).fetchall() for name,query in references('diagnostics.sql').items()}
-        independent = independent_checks(conn,expected)
+        independent = independent_checks(conn,expected,contract_version)
+        reference_changes = {}
+        for name, old_query in reference_queries('1.0.0').items():
+            if old_query != refs[name]:
+                old_rows = run_reference(conn,name,old_query).fetchall()
+                reference_changes[name] = {
+                    'legacy_sql': old_query, 'legacy_rows': old_rows,
+                    'revised_rows': expected[name]['rows'],
+                    'same_snapshot_results_differ': not equivalent(old_rows, expected[name]['rows'])}
         print('Reference results and independent checks passed.',flush=True)
         freshness = {
             'ingestion':conn.execute("SELECT board_name,max(completed_at) FILTER(WHERE status='completed') AS latest_completed_at FROM public.sync_log GROUP BY board_name ORDER BY board_name").fetchall(),
@@ -267,7 +323,8 @@ def freeze(args):
         conn.execute(sql.SQL('CREATE TABLE {}.artifacts (name text PRIMARY KEY,payload jsonb NOT NULL)').format(sql.Identifier(key_schema)))
         artifacts = {'manifest':manifest,'inventory':source_inventory,'questions':question_set,'expected':expected,
                      'diagnostics':diagnostics,'freshness':freshness,'query_plans':plans,
-                     'validation':{'independent_checks':independent,'access_checks':access}}
+                     'validation':{'independent_checks':independent,'access_checks':access},
+                     'reference_changes':reference_changes}
         for name,payload in artifacts.items():
             conn.execute(sql.SQL('INSERT INTO {}.artifacts VALUES (%s,%s)').format(sql.Identifier(key_schema)),(name,Jsonb(json_value(payload))))
         seal(conn,key_schema,['artifacts'])
@@ -303,12 +360,13 @@ def verify_snapshot(conn, identity, dataset):
         access = check_access(conn,data_schema,key_schema,reader,list(signatures))
         set_path(conn,data_schema)
         expected_results = {name:restore_result_types(result) for name,result in artifacts['expected'].items()}
-        independent = independent_checks(conn,expected_results)
+        contract_version = reference_version(manifest)
+        independent = independent_checks(conn,expected_results,contract_version)
         conn.execute(sql.SQL('SET LOCAL ROLE {}').format(sql.Identifier(reader)))
-        refs = {**references('reference.sql'),**references('fixture_reference.sql')}
+        refs = reference_queries(contract_version)
         if refs.keys() != expected_results.keys():
             raise RuntimeError('Reference query set changed; create a reviewed new dataset version')
-        if fingerprint(cases())!=manifest['questions_sha256']:
+        if fingerprint(cases(contract_version))!=manifest['questions_sha256']:
             raise RuntimeError('Question definitions changed; create a reviewed new dataset version')
         for name,query in refs.items():
             expected = expected_results[name]
@@ -321,6 +379,7 @@ def verify_snapshot(conn, identity, dataset):
                 raise RuntimeError('Reference result mismatch: '+name)
         conn.execute('RESET ROLE')
     result = {'dataset':data_schema,'verified_tables':len(signatures),'reference_queries_passed':len(refs),
+              'reference_contract_version':contract_version,
               'independent_checks_passed':len(independent),'access_checks_passed':len(access),
               'application_conversations_executed':False,'certification':manifest['certification']}
     return artifacts, result

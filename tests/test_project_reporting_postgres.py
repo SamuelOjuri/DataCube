@@ -82,6 +82,19 @@ def test_free_exception_cannot_be_excluded_even_by_a_bad_decision(db):
     assert '601' in ids(db)
 
 
+def test_lifecycle_state_does_not_change_effective_placeholder_exclusions(db):
+    db.execute('CREATE TABLE monday_item_lifecycle(monday_id text, monday_state text)')
+    db.execute("INSERT INTO monday_item_lifecycle VALUES ('600','active'),('601','archived')")
+    decide(db)
+    assert '600' not in ids(db)
+    assert '601' in ids(db)
+    db.execute("UPDATE monday_item_lifecycle SET monday_state='archived' WHERE monday_id='600'")
+    assert '600' not in ids(db)
+    db.execute("UPDATE projects SET project_name='Genuine archived project',total_amount_invoiced=125 WHERE monday_id='600'")
+    assert '600' in ids(db)
+    assert db.execute("SELECT total_amount_invoiced FROM reportable_projects WHERE monday_id='600'").fetchone()['total_amount_invoiced'] == 125
+
+
 def test_sync_updates_keep_decision_and_audit_survives_lifecycle_deletion(db):
     decide(db)
     db.execute("UPDATE projects SET new_enquiry_value=0,product_key='unknown' WHERE monday_id='600'")

@@ -57,6 +57,18 @@ def test_pending_and_unsupported_populations_are_never_queryable():
     assert not next(p for p in catalogue.populations if p.id=='historical_snapshot').available
 
 
+def test_retained_reportable_contract_has_no_active_or_revenue_stage_gate():
+    catalogue = load_catalogue()
+    assert catalogue.version == '1.1.0'
+    projects = next(r for r in catalogue.relations if r.id == 'projects_v1')
+    assert projects.population == 'reportable'
+    assert projects.source_relations == ['public.reportable_projects']
+    assert all(m.population != 'verified_active' for m in catalogue.metrics)
+    invoice = catalogue.resolve('invoice_monthly_actual')
+    assert invoice.version == '1.1.0'
+    assert invoice.status_filters == ['amount_invoiced > 0']
+
+
 def test_money_does_not_allow_membership_expansion():
     catalogue = load_catalogue()
     assert all(not {'account','product_type'} & set(m.dimensions) for m in catalogue.metrics)
@@ -95,6 +107,17 @@ def test_frozen_expansion_cannot_contact_mutable_sources():
     assert 'public.' not in query and 'CURRENT_DATE' not in query and 'analytics.' not in query
     with pytest.raises(ValueError):
         frozen_ctes('public; DROP SCHEMA public')
+
+
+def test_frozen_expansion_selects_sealed_reference_version():
+    old = view_definitions('1.0.0')['invoice_reporting_facts_v1']
+    revised = view_definitions('1.1.0')['invoice_reporting_facts_v1']
+    assert "p.pipeline_stage='Won - Closed (Invoiced)'" in old
+    assert 'pipeline_stage' not in revised
+    query = frozen_ctes('bi_eval_20261008_v2', '1.1.0')
+    assert 'public.' not in query and 'CURRENT_DATE' not in query
+    with pytest.raises(ValueError):
+        view_definitions('unknown')
 
 
 def test_archive_coverage_interface_exactly_reuses_existing_gate():

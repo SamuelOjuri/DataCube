@@ -5,7 +5,9 @@ the DataCube workspace and how to validate and review it for deployment.
 
 Updated: 8 October 2026 to distinguish the
 [corrected business requirements](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
-from the unchanged 1.0.0 candidate implementation.
+and document catalogue 1.1.0. Migration 004 retains reportable-project history
+and removes the monthly revenue business-stage gate; migration 001 and the sealed
+1.0.0 references remain unchanged as historical evidence.
 
 ## Assessment
 
@@ -13,9 +15,10 @@ The implementation plan has an appropriate dependency order: certify source
 definitions and reporting populations, publish stable analytical contracts, then
 build the authenticated application. Phase 1 engineering is implemented, but its
 [assessment](bi-analyst-phase1-assessment.md) records outstanding source/deployment
-verification. The owner has now specified API-active eligibility, monthly revenue
+verification. The owner now selects retained reportable projects, including genuine
+archived history, superseding API-active eligibility. Monthly revenue
 without a closed-invoiced-stage gate, and material-plus-charges Order Value mirrored
-to the parent. Implementing and certifying those rules remains a release prerequisite.
+to the parent remain required. Source alignment and certification remain release prerequisites.
 
 Phase 2 supplies candidate contracts. Catalogue validation and frozen reference
 parity establish reproducibility; they do not certify the live reporting population.
@@ -24,33 +27,33 @@ application queries until a subsequent reviewed release integrates certification
 
 ## Required alignment after the owner clarification
 
-| Area | Required contract | Gap in the 7 October candidate |
+| Area | Required contract | Implementation and remaining evidence |
 |---|---|---|
-| Current population | Current Monday API lifecycle `state = active`, with verified contributing membership; no exclusion solely through the incomplete reportable-project feature | Project views and several upstream aggregates use `reportable_projects`. Even existing `current_projects` inherits that source; a simple view switch is insufficient. |
-| Monthly revenue | Positive dated invoices for currently API-active parents in completed months, regardless of business-stage label | `invoice_reporting_facts_v1` requires reportable parents and `Won - Closed (Invoiced)`; it must be revised. |
+| Project population | Retained `reportable_projects`; genuine archived and held/unreviewed records remain included, effective reviewed placeholders are excluded | Existing project views retain this source. Schema checks compare exact project and child IDs; deployment, reviewed classifications and external consumers still require verification. |
+| Monthly revenue | Positive dated invoices for retained reportable parents in completed months, regardless of business-stage label or API lifecycle state | Migration 004 removes the old stage gate from `invoice_reporting_facts_v1`; metric version 1.1.0 requires new reference approval. |
 | Order Value | Hidden `formula_mkncjq9 = numbers98__1 + numbers3__1`, mirrored through children to the parent | The candidate accepts the configured parent mirror without establishing that it includes charges. The supplied schema's parent chain points to material only; verify and reconcile live wiring. |
-| Reference evidence | New versioned active-population references, aligned Power BI comparison and owner review bound to corrected catalogue/source versions | Existing frozen parity proves the old contracts only; preserve its sealed answers as historical evidence. |
+| Reference evidence | New versioned revenue references, retained-history/exclusion tests, aligned Power BI comparison and version-bound owner review | `bi_eval_20261008_v2` passes all 50 references and 16 parity checks under 1.1.0; historical 1.0.0 still verifies unchanged. [Owner review and Power BI package](bi-analyst-phase1-certification.md#revised-reference-release-and-handoff) are prepared, not yet approved/executed. |
 
-API lifecycle state is not a pipeline-stage label. Missing/unverified state must
-remain an explicit coverage limitation, not be assumed active or silently omitted
-from a purported complete total. Active eligibility also needs source freshness
-and current child/hidden membership checks. The current clarification does not
+API lifecycle state is not an analyst eligibility filter. Operational lifecycle
+checks remain unchanged; source freshness, financial and contributing-membership
+uncertainties still require explicit review. The current clarification does not
 change conversion's win criterion, separate bookings stage rules, signed base
 invoice totals, or saved historical snapshots.
 
-This document update does not modify the catalogue, migrations, source writers,
-Monday configuration, certification records or test results.
+The new analyst migration does not change source writers, Monday configuration,
+classification decisions, source business rows or saved historical answers.
 
 ## Implementation locations
 
 | Artifact | Location relative to the repository root |
 |---|---|
 | Independent package and dependencies | `services/bi_analyst/pyproject.toml`, `services/bi_analyst/requirements.lock` |
-| Catalogue 1.0.0 | `services/bi_analyst/bi_analyst/semantic/catalogue.json` |
+| Catalogue 1.1.0 | `services/bi_analyst/bi_analyst/semantic/catalogue.json` |
 | Pydantic contracts and consistency validation | `services/bi_analyst/bi_analyst/semantic/catalogue.py` |
 | Explicit period resolution | `services/bi_analyst/bi_analyst/semantic/periods.py` |
 | Installed-schema checker | `services/bi_analyst/bi_analyst/semantic/check.py` |
 | Core analytical migration | `src/database/migrations/20261007_001_analytics_contracts.sql` |
+| Reportable-history/revenue alignment | `src/database/migrations/20261008_004_analyst_reportable_population.sql` |
 | Optional archive coverage migration | `src/database/migrations/20261007_002_analytics_archive_coverage.sql` |
 | Isolated contract and PostgreSQL tests | `services/bi_analyst/tests/semantic/` |
 | Frozen parity verifier | `services/bi_analyst/tests/semantic/verify_frozen.py` |
@@ -62,9 +65,9 @@ to a database. The API, identity and permission design belong to later phases.
 
 ## Metric definitions
 
-The following table describes **catalogue 1.0.0 as implemented**, not the corrected
-release contract. Its legacy reportable populations and mirror assumptions are
-subject to the alignment requirements above.
+The following table describes **catalogue 1.1.0 as implemented**. Its retained
+reportable population is agreed; deployed source/mirror and reference certification
+remain subject to the evidence requirements above.
 
 Every entry records a stable ID, version, label and aliases; Monday board/columns;
 database lineage and source priorities; SQL expression and aggregation; numerator
@@ -82,7 +85,7 @@ limitations and examples. Grain and key come from its named relation.
 | `invoice_stored_child_value` | Signed persisted-child invoice sums for reportable parents; current membership still requires source evidence. |
 | `enquiry_monthly_actual` | Existing monthly raw enquiry: positive values, creation month and completed months. |
 | `bookings_monthly_actual` | Existing monthly bookings: positive parent order mirror, order-received month and the existing three won stages. |
-| `invoice_monthly_actual` | Superseded candidate: positive dated child invoices for reportable parents currently closed-invoiced, completed months only. |
+| `invoice_monthly_actual` | Version 1.1.0: positive dated child invoices for retained reportable parents at any business stage, including genuine archived parents, completed months only. |
 | `conversion_five_year`, `conversion_two_year` | Closed-invoiced wins divided by all eligible projects; three-decimal rounding after aggregation. |
 | `conversion_closed_five_year`, `conversion_closed_two_year` | Wins divided by wins plus Lost, with the same creation cohorts. |
 | `gestation_five_year`, `gestation_two_year` | Mean positive stored actual gestation, retaining source/fallback semantics. |
@@ -105,25 +108,22 @@ whether Monday supplied a typed blank or missing/unreadable evidence.
 `revenue_monthly_baseline_v1` exposes the deployed revenue definition for
 comparison under the unavailable `legacy_revenue` population. The frozen source
 differs from the original candidate's reportable-parent and closed-invoiced restrictions.
-No metric uses this diagnostic view. `invoice_reporting_facts_v1` implements the
-original eligibility from the repository schema and independent reference SQL.
-Neither establishes the corrected API-active-parent population. The required
-direction is now explicit: verify active eligibility and remove the business-stage
-gate, while retaining the existing date/positive/completed-month rules. Preserve
-both old calculations for comparison; do not certify either unchanged.
+No metric uses this diagnostic view. After migration 004,
+`invoice_reporting_facts_v1` retains the reportable-parent, date, positive-amount
+and completed-month rules without a business-stage or API lifecycle filter.
+The relation's column interface remains v1; the changed invoice metric and
+catalogue are version 1.1.0. Preserve both old calculations for comparison.
 
-Current candidate project contracts inherit `public.reportable_projects`
-exclusions; this is an implementation gap, not the approved eligibility rule.
-Hidden inventory remains a distinct grain, but its current analytical population
-also needs API-active evidence and verified links before project attribution.
-Verified-active and historical-snapshot populations are reserved and unavailable
-in 1.0.0. Recompute new current-population cohorts under the corrected definition
-without rewriting or relabelling sealed historical cohorts/snapshots.
+Project contracts intentionally inherit `public.reportable_projects` exclusions.
+Hidden inventory remains a distinct grain; project attribution requires verified
+links and source multiplicity. The unavailable verified-active population labels
+operational diagnostics only, not an alternative V1 project population.
+Historical-snapshot contracts remain deferred. Do not rewrite sealed answers.
 
 The optional archive interface retains the five existing `monday_archive.coverage`
 counts. It exposes aggregate counts without raw lifecycle payloads or maintenance
-actions. Zero counts are necessary but do not prove deployment flags, writer
-consistency or financial certification.
+actions. Zero counts gate the separate active-only operational rollout, not
+retention of archived analyst history. Financial findings still require review.
 
 `latest_analysis_v1` selects one analysis per reportable project using timestamp
 descending, NULL timestamps last, then analysis UUID descending. Its expected
@@ -184,7 +184,7 @@ $env:BI_ANALYST_TEST_DSN = 'host=127.0.0.1 port=55439 dbname=postgres user=postg
 & .\report.venv\Scripts\python.exe -m pytest services/bi_analyst/tests/semantic -q
 ```
 
-The frozen parity command uses only the existing `TEST_SUPABASE_*` configuration
+The historical 1.0.0 frozen parity command uses only the existing `TEST_SUPABASE_*` configuration
 and target-isolation checks. It expands migration SELECTs as CTEs over frozen
 sources, with the fixed dataset date, then compares typed results as the restricted
 dataset reader. It does not install migrations or modify the sealed answers.
@@ -195,7 +195,8 @@ dataset reader. It does not install migrations or modify the sealed answers.
 
 After reviewed migration installation, configure `BI_ANALYST_CHECK_DSN` explicitly
 and run the schema checker. It checks relation names, exact columns/types, comments,
-declared-key uniqueness and view security settings in a read-only transaction.
+declared-key uniqueness, view security settings and exact project/child/invoice
+eligibility in a read-only transaction. Equal counts with different IDs fail.
 The optional archive relation is checked if present.
 
 ```powershell
@@ -205,18 +206,19 @@ $env:PYTHONPATH = 'services/bi_analyst'
 
 ## Deployment and recovery
 
-1. Incorporate the 8 October owner clarification into reviewed catalogue/source
-   versions: API-active eligibility rather than reportable exclusions, no monthly
+1. Incorporate the later 8 October owner decision into reviewed catalogue/source
+   versions: retained reportable projects including archived history, no monthly
    revenue business-stage gate, and the total-order formula mirrored to parents.
-   Verify lifecycle/membership coverage, live mirror wiring and deployed writers;
-   update references and complete remaining Phase 1 evidence/decisions. Bind approval
+   Verify effective exclusions, retained-history/membership evidence, live mirror wiring and deployed writers;
+   approve the revised references and complete remaining Phase 1 evidence/decisions. Bind approval
    to those exact versions, not the superseded 1.0.0 definitions.
 2. Verify PostgreSQL 15+ and source dependencies on staging. Apply migration 001
    inside one transaction using `psql --single-transaction --set ON_ERROR_STOP=1
    --file src/database/migrations/20261007_001_analytics_contracts.sql` with an
-   explicitly configured staging connection only for legacy-candidate evaluation.
-   This unchanged migration is not the corrected release: review and apply the
-   required versioned alignment migrations before new-contract acceptance.
+   explicitly configured staging connection. Then apply migration
+   `20261008_004_analyst_reportable_population.sql` in its own reviewed transaction.
+   Existing installations of 001 need only 004 for this analyst change. Do not
+   replay 001 alone after 004: that would restore the superseded revenue filter.
 3. Apply migration 002 separately only where the archive runtime dependencies
    exist. This adds coverage visibility and does not enable active reporting.
 4. Run the installed-schema check, review underlying privileges and RLS, and
@@ -232,7 +234,11 @@ authorization and restricted database roles remain Phase 3 work.
 Application rollback normally retains these additive views. If removal becomes
 necessary, review dependent consumers and drop only the new views in reverse
 dependency order inside a transaction, without CASCADE or source-table changes.
-No production migration application is recorded by this implementation.
+Migrations 001 and 004 were applied and independently checked in TEST and then
+owner-approved production on 8 October. See the
+[population rollout evidence](project-placeholders.md#verified-rollout-8-october-2026).
+The Phase 3 permission bootstrap and Render application deployment were not
+performed by that rollout.
 
 ## Evidence and remaining exit gate
 
@@ -246,6 +252,15 @@ checks and 11 access checks.
 The recorded catalogue, migration 001 and parity-SQL hashes matched the workspace
 versions at that check. This establishes frozen-reference parity for the original
 contracts; it does not validate the 8 October correction or live Power BI results.
-The Phase 2 release exit gate remains open until the corrected contracts are
-implemented, independently tested on a newly versioned reference population, and
-certified with explicit remaining limitations.
+Catalogue 1.1.0 population/revenue implementation now has 130 passing focused
+tests, including real PostgreSQL integration, and post-commit checks on TEST and
+production. The Phase 2 release exit gate remains open until source/mirror
+contracts, newly versioned revenue references and aligned Power BI results are
+reviewed and certified with explicit remaining limitations.
+
+The subsequent 1.1.0 reference run on `bi_eval_20261008_v2` passed all 50 queries,
+20 independent checks and 16 parity comparisons; 115 focused evaluation/contract
+tests also passed. The original dataset still verifies under 1.0.0.
+The [review/export handoff](bi-analyst-phase1-certification.md#revised-reference-release-and-handoff)
+records the pending actual owner approval and Power BI execution. Those passes
+do not establish live source/mirror accuracy or enable the analyst API.

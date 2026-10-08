@@ -10,10 +10,10 @@ accuracy or business approval. Phase 1 therefore remains open.
 The [corrected implementation plan](bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
 settles three previously ambiguous business requirements:
 
-- Current analytical eligibility is Monday API `state = active`, not
-  `reportable_projects` or its placeholder classifications. The owner confirms
-  the reportable-project feature is not fully implemented.
-- Monthly revenue must not require `Won - Closed (Invoiced)`: an API-active
+- The later owner decision supersedes API-active eligibility: retained
+  `reportable_projects` are authoritative, including genuine archived history.
+  Only effective reviewed redundant-placeholder exclusions remove records.
+- Monthly revenue must not require `Won - Closed (Invoiced)`: a reportable
   parent with an eligible invoice qualifies even when that manual label is absent.
   Positive amounts, invoice dates and completed months remain the monthly rules.
 - Order Value must include material plus additional charges via hidden
@@ -21,11 +21,11 @@ settles three previously ambiguous business requirements:
   parent mirror is a wiring discrepancy, not a second approved definition.
 
 These choices no longer await a definition decision. Source/deployment alignment,
-complete active-state and membership evidence, revised reference results and
+reportable-population and membership evidence, revised reference results and
 version-bound certification still remain. The supplied board schema's saved
 parent mirror targets material only; live wiring needs verification. Existing
-`current_projects` also inherits `reportable_projects` exclusions, so neither
-that view nor the old coverage population can be adopted unchanged.
+`current_projects` narrows the retained population to active records and must not
+replace it in the analyst. Operational lifecycle checks remain separate.
 
 The findings and test counts below describe the 7 October baseline. They have not
 been rerun for this correction. Preserve sealed answers and saved historical
@@ -103,8 +103,9 @@ flags, and requires a reviewed source-precedence contract covering manual writer
 
 The revenue implementation/population mismatch, invoice/enquiry discrepancies,
 gestation fallback cases and archive coverage remain findings. Placeholder review
-is separate operational evidence, not authority to exclude an API-active item
-from the analyst. Sample success cannot settle these for every company record.
+now defines analyst exclusions, but its deployed decisions, automatic re-entry
+and archived-history retention require verification. Sample success cannot settle
+these for every company record.
 No financial value or sealed answer has been changed to force parity.
 
 Phase 1's performance work is to agree measurable targets and a workload. Seven

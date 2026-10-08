@@ -4,15 +4,20 @@ The dataset commands build a versioned reference dataset in the **TEST Supabase 
 configured in the repository `.env`. It is independent of the future analyst API
 and never imports DataCube's `src` package, starts workers, or contacts Monday.
 
-**Contract status, 8 October 2026:** this tooling and `bi_eval_20261007_v1` still
-exercise the original definitions. The
+**Contract status, 8 October 2026:** tooling supports historical **1.0.0** and
+revised **1.1.0** references. `bi_eval_20261007_v1` and its sealed key still
+exercise the original definitions; new `bi_eval_20261008_v2` exercises 1.1.0. The
 [owner clarification](../../../../docs/bi-analyst-implementation-plan.md#business-definition-correction-8-october-2026)
-requires current Monday API-active eligibility instead of reportable-project
-exclusions, no closed-invoiced-stage gate for monthly revenue, and material plus
-charges mirrored to the parent as Order Value. Do not treat existing test passes
-as verification of those corrected rules. Update the implementation, references,
-questions and gate expectations together in a new reviewed version; preserve the
-sealed old key and its historical population.
+now selects retained reportable projects, including genuine archived history,
+superseding the earlier API-active proposal. It retains no closed-invoiced-stage
+gate for monthly revenue and material plus
+charges mirrored to the parent as Order Value. Revised invoice references,
+questions, independent checks and frozen parity now implement the revenue
+correction. All 50 references, 20 independent checks and 16 parity comparisons
+passed on the new snapshot. This proves recorded-data reproducibility, not
+source/mirror correctness, owner approval or actual Power BI agreement.
+The version-bound owner-review form and aligned raw-input M/DAX export package
+are prepared; follow the [handoff](../../../../docs/bi-analyst-phase1-certification.md#revised-reference-release-and-handoff).
 
 Additional Phase 1 evidence/review commands are documented in the
 [certification runbook](../../../../docs/bi-analyst-phase1-certification.md).
@@ -41,7 +46,8 @@ ETL application's requirements or startup code is required.
 ```powershell
 & .\report.venv\Scripts\python.exe services/bi_analyst/tests/evals/manage.py inspect
 & .\report.venv\Scripts\python.exe -m pytest services/bi_analyst/tests/evals/test_dataset.py -q
-& .\report.venv\Scripts\python.exe services/bi_analyst/tests/evals/manage.py freeze --dataset bi_eval_20261007_v1 --as-of 2026-10-07
+& .\report.venv\Scripts\python.exe services\bi_analyst\tests\evals\manage.py freeze --dataset bi_eval_20261008_v2 --as-of 2026-10-08 --contract-version 1.1.0
+& .\report.venv\Scripts\python.exe services\bi_analyst\tests\evals\manage.py verify --dataset bi_eval_20261008_v2
 & .\report.venv\Scripts\python.exe services/bi_analyst/tests/evals/manage.py verify --dataset bi_eval_20261007_v1
 & .\report.venv\Scripts\python.exe services/bi_analyst/tests/evals/manage.py probe --dataset bi_eval_20261007_v1
 & .\report.venv\Scripts\python.exe services/bi_analyst/tests/evals/manage.py report --dataset bi_eval_20261007_v1
@@ -54,6 +60,12 @@ database day in Europe/London so copied date-dependent views and reference SQL
 use the same date. Verification continues using the stored date indefinitely.
 `probe` tests actual permission denials and mutation guards using savepoints and
 zero-row UPDATE statements; it does not change business rows.
+
+The illustrated datasets already exist; do not rerun their creation.
+`--contract-version` defaults to 1.1.0 for new freezes. Verification selects the
+version sealed in each manifest; missing version metadata means historical
+1.0.0. Revised snapshots keep old/new invoice-result differences in the private
+`reference_changes` artifact rather than rewriting the old key.
 
 Required `.env` entries are `TEST_SUPABASE_NAME`, `TEST_SUPABASE_URL`, and
 `TEST_SUPABASE_DB_URL`. Use the TEST project's direct or Session pooler connection
@@ -105,7 +117,9 @@ production data. Local reports inherit workspace access controls.
 - Reference SQL can execute reproducibly on the copied data through the restricted
   reader and return the recorded typed results.
 - Python Decimal/count calculations independently cross-check the three parent
-  totals, both inclusive conversion cohorts, and both gestation means.
+  totals, both inclusive conversion cohorts, and both gestation means. Version
+  1.1.0 additionally checks the last month, previous month and twelve completed
+  invoice months without a parent business-stage filter.
 - Ten hand-calculated synthetic cases cover extra charges, blanks versus zero,
   signed invoices, exact enquiry reasons, aggregated conversion counts, positive
   gestation, join amplification, repeated source links, completed months and a
@@ -131,12 +145,13 @@ reference answers, not an assertion that unresolved company totals are correct.
 2. Project invoice totals, child mirrors, hidden invoices, and monthly revenue
    use different grains. Negative values remain in signed base totals.
 3. The restored monthly revenue view omits the parent-status/reportable-population
-   filters specified by the **original 7 October plan**. The reference pack
-   implements that superseded definition and preserves the copied view separately.
-   The corrected contract instead requires API-active parents without a
+   filters specified by the **original 7 October plan**. The 1.0.0 reference pack
+   retains that superseded definition and preserves the copied view separately.
+   The 1.1.0 contract instead requires retained reportable parents without a
    closed-invoiced label, retaining positive amounts, invoice dates and completed
-   months. Neither old calculation certifies active eligibility. No source view
-   is repaired by this tooling.
+   months. Revised references and curated-view parity pass on the new snapshot,
+   but neither old calculation certifies that contract. No source view is repaired
+   by the evaluation tooling.
 4. Conversion rates are fractions rounded to three decimal places, as in the
    existing SQL. Percent presentation multiplies that ratio by 100. Counts are
    aggregated before division. Existing cohorts have a lower date bound only;
