@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from importlib.resources import files
+from hashlib import sha256
+import json
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -157,11 +159,41 @@ class Catalogue(Contract):
         return matches[0]
 
     def require_queryable(self, metric_id: str, population: str) -> Metric:
-        """Phase 2 contains candidates only. No flag or environment variable certifies them."""
+        """Apply the packaged owner acceptance without rewriting sealed catalogue evidence."""
         metric = next((m for m in self.metrics if m.id == metric_id), None)
         if metric is None or metric.population != population:
             raise ValueError("Unknown metric or unsupported population")
-        raise ValueError(f"{metric.id} requires reviewed Phase 1 certification and Phase 2 parity")
+        if not self.owner_accepted:
+            raise ValueError(f"{metric.id} has no matching owner certification record")
+        return metric
+
+    @property
+    def runtime_notices(self) -> list[str]:
+        if not self.owner_accepted:
+            return self.notices
+        superseded = ("All metrics are pending certification.", "Currency and tax basis require owner review;",
+                      "Business timezone must be supplied explicitly;")
+        return [
+            "Phase 1 is closed by owner acceptance for this catalogue version.",
+            "Approved currency is GBP; amounts are presented as stored, with VAT inclusion unspecified.",
+            "Approved business timezone is Europe/London and fiscal year is 1 November-31 October; fiscal-period and MTD queries remain unsupported.",
+        ] + [notice for notice in self.notices if not notice.startswith(superseded)]
+
+    def runtime_limitations(self, metric: Metric) -> list[str]:
+        if not self.owner_accepted:
+            return metric.limitations
+        return [item for item in metric.limitations if item != "Candidate definition: Phase 1 owner review pending."]
+
+    @property
+    def owner_accepted(self) -> bool:
+        # This release record is packaged with code, never supplied by an API caller.
+        try:
+            acceptance = json.loads(files(__package__).joinpath("acceptance.json").read_text(encoding="utf-8"))
+            return (acceptance.get("status") == "closed_by_owner"
+                    and acceptance.get("catalogue_version") == self.version
+                    and acceptance.get("catalogue_sha256") == sha256(self.model_dump_json().encode()).hexdigest())
+        except (OSError, ValueError, AttributeError):
+            return False
 
 
 def load_catalogue(path: Path | None = None) -> Catalogue:

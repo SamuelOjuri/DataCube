@@ -77,6 +77,60 @@ def test_complete_owner_attestations_pass(complete_review):
     assert result['status'] == 'passed_with_owner_attestations'
 
 
+def closed_review(packet):
+    review = review_template(packet)
+    review['owner_closure'] = approved(
+        scope='phase1_progression', dataset=packet['payload']['dataset'],
+        evidence_sha256=packet['sha256'], accepted_metric_families=list(phase1.METRICS),
+        power_bi_required=False, monday_cleanup_required=False,
+        dispositions={'source': 'Owner accepts the implemented app definitions.',
+                      'operations': 'Unmeasured operational evidence is outside Phase 1 closure.'})
+    return review
+
+
+def test_explicit_owner_closure_preserves_unverified_history(complete_review):
+    packet, _, _ = complete_review
+    review = closed_review(packet)
+    original = deepcopy(review)
+    result = evaluate_gate(packet, review, now=NOW)
+    assert result['status'] == 'closed_by_owner'
+    assert result['blockers'] == []
+    assert result['enabled_metrics'] == list(phase1.METRICS)
+    assert 'metric/source/population sign-off: order' in result['superseded_checks']
+    assert any('successful completion' in item for item in result['superseded_checks'])
+    assert result['power_bi_sha256'] is None
+    assert result['power_bi_required'] is False
+    assert review == original  # Acceptance must not fabricate detailed source/deployment reviews.
+
+
+@pytest.mark.parametrize('field,value', [
+    ('status', 'pending'), ('evidence', []), ('reviewed_by', ''),
+    ('reviewed_at', '2026-10-08T12:00:00+00:00'),
+    ('reviewed_at', '2026-10-07T12:00:00'),
+    ('scope', 'production_deployment'), ('dataset', 'another-dataset'),
+    ('evidence_sha256', 'another-capture'), ('accepted_metric_families', ['order']),
+    ('power_bi_required', True), ('monday_cleanup_required', True), ('dispositions', {}),
+])
+def test_incomplete_or_misbound_closure_cannot_close_gate(complete_review, field, value):
+    packet, _, _ = complete_review
+    review = closed_review(packet)
+    review['owner_closure'][field] = value
+    result = evaluate_gate(packet, review, now=NOW)
+    assert result['status'] == 'blocked'
+    assert any(item.startswith('owner closure:') for item in result['blockers'])
+    assert result['enabled_metrics'] == []
+
+
+def test_power_bi_is_optional_without_owner_closure(complete_review):
+    packet, review, _ = complete_review
+    review['reports'] = {}
+    review['issues']['report_reader_access'] = {'status': 'pending'}
+    result = evaluate_gate(packet, review, now=NOW)
+    assert result['blockers'] == []
+    assert result['status'] == 'passed_with_owner_attestations'
+    assert any('not supplied (optional)' in item for item in result['diagnostics'])
+
+
 def test_revised_references_require_separate_bound_approval(complete_review):
     packet, review, power_bi = complete_review
     packet['payload']['manifest'] = {'reference_contract_version': '1.1.0'}
@@ -90,19 +144,21 @@ def test_revised_references_require_separate_bound_approval(complete_review):
     result = evaluate_gate(packet, review, None, now=NOW, reference_packet=approval)
     assert not any('revised reference answers' in item for item in result['blockers'])
     assert result['reference_approval_sha256'] == approval['sha256']
-    assert any('Power BI comparison missing' in item for item in result['blockers'])
+    assert result['blockers'] == []
+    assert any('Power BI comparison not supplied' in item for item in result['diagnostics'])
     approval['payload']['reference_evidence_sha256'] = 'old-reference-evidence'
     assert any('revised reference answers' in item for item in
                evaluate_gate(packet, review, None, now=NOW, reference_packet=approval)['blockers'])
 
 
-def test_revised_gate_rejects_comparisons_without_snapshot_alignment(complete_review):
+def test_revised_gate_reports_optional_comparison_alignment(complete_review):
     packet, review, power_bi = complete_review
     packet['payload']['manifest'] = {
         'reference_contract_version': '1.1.0', 'dataset': packet['payload']['dataset'],
         'as_of_date': '2026-10-07', 'business_timezone': 'Europe/London'}
     result = evaluate_gate(packet, review, power_bi, now=NOW)
-    assert any('Power BI alignment:' in item for item in result['blockers'])
+    assert any('Power BI alignment:' in item for item in result['diagnostics'])
+    assert not any('Power BI alignment:' in item for item in result['blockers'])
 
 
 @pytest.mark.parametrize('population', ['verified_active', 'current_projects', 'frozen_reportable_projects'])
@@ -118,7 +174,7 @@ def test_superseded_population_cannot_be_certified(complete_review, population):
 @pytest.mark.parametrize('group,name,field', [
     ('decisions', 'tax_basis', 'evidence'), ('metrics', 'order', 'population'),
     ('metrics', 'enquiry', 'source_contract'), ('source_samples', 'signed_invoices', 'reviewed_by'),
-    ('issues', 'relationships', 'affected_scope'), ('reports', 'invoice_monthly', 'report_version'),
+    ('issues', 'relationships', 'affected_scope'),
 ])
 def test_missing_review_evidence_blocks(complete_review, group, name, field):
     packet, review, power_bi = complete_review
@@ -163,15 +219,25 @@ def test_mixed_writer_flags_and_reporting_population_block():
     assert any('booleans' in p for p in deployment_problems({'environment': 'production', 'services': [s]}))
 
 
-def test_unexplained_power_bi_difference_blocks_and_exception_is_bound(complete_review):
+def test_optional_power_bi_difference_is_visible_and_exception_is_bound(complete_review):
     packet, review, power_bi = complete_review
     power_bi['payload']['comparisons']['invoice_monthly']['matches'] = False
     power_bi = seal_packet(power_bi['payload'])
-    assert any('unexplained' in b for b in evaluate_gate(packet, review, power_bi, now=NOW)['blockers'])
+    result = evaluate_gate(packet, review, power_bi, now=NOW)
+    assert result['blockers'] == []
+    assert any('unexplained' in b for b in result['diagnostics'])
     review['power_bi_exceptions']['invoice_monthly'] = approved(comparison_sha256='old')
-    assert evaluate_gate(packet, review, power_bi, now=NOW)['blockers']
+    assert evaluate_gate(packet, review, power_bi, now=NOW)['diagnostics']
     review['power_bi_exceptions']['invoice_monthly']['comparison_sha256'] = power_bi['sha256']
-    assert not evaluate_gate(packet, review, power_bi, now=NOW)['blockers']
+    assert not evaluate_gate(packet, review, power_bi, now=NOW)['diagnostics']
+
+
+def test_missing_optional_report_metadata_does_not_block(complete_review):
+    packet, review, power_bi = complete_review
+    review['reports']['invoice_monthly']['report_version'] = None
+    result = evaluate_gate(packet, review, power_bi, now=NOW)
+    assert result['blockers'] == []
+    assert 'BI report definition/version review missing: invoice_monthly' in result['diagnostics']
 
 
 def test_wrong_capture_or_power_bi_manifest_is_rejected(complete_review):

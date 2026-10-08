@@ -47,14 +47,25 @@ def test_invalid_catalogue_rejected(change):
         Catalogue.model_validate(data)
 
 
-def test_pending_and_unsupported_populations_are_never_queryable():
+def test_owner_acceptance_enables_exact_catalogue_but_not_unsupported_populations():
     catalogue = load_catalogue()
     for metric in catalogue.metrics:
-        with pytest.raises(ValueError, match='certification'):
-            catalogue.require_queryable(metric.id, metric.population)
+        assert catalogue.require_queryable(metric.id, metric.population) == metric
     with pytest.raises(ValueError, match='population'):
         catalogue.require_queryable('new_enquiry_value', 'verified_active')
     assert not next(p for p in catalogue.populations if p.id=='historical_snapshot').available
+    assert not any('pending certification' in item or 'evaluation assumption' in item for item in catalogue.runtime_notices)
+    for metric in catalogue.metrics:
+        assert not any('owner review pending' in item for item in catalogue.runtime_limitations(metric))
+    assert any('pending certification' in item for item in catalogue.notices)  # Sealed history is unchanged.
+
+
+def test_changed_definitions_do_not_inherit_owner_acceptance():
+    catalogue = load_catalogue().model_copy(deep=True)
+    metric = catalogue.metrics[0]
+    catalogue.metrics[0] = metric.model_copy(update={'precision': 0})
+    with pytest.raises(ValueError, match='certification'):
+        catalogue.require_queryable(metric.id, metric.population)
 
 
 def test_retained_reportable_contract_has_no_active_or_revenue_stage_gate():

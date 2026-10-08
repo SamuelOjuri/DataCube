@@ -1,5 +1,9 @@
 # Phase 2: assessment and runbook
 
+**Current Phase 1 status: closed by owner acceptance on 8 October 2026.** The
+[closure record](bi-analyst-phase1-closure.md) supersedes earlier source-review
+blockers. Power BI verification and Monday CRM cleanup are not release prerequisites.
+
 Prepared: 7 October 2026. This document describes the Phase 2 code available in
 the DataCube workspace and how to validate and review it for deployment.
 
@@ -13,17 +17,18 @@ and removes the monthly revenue business-stage gate; migration 001 and the seale
 
 The implementation plan has an appropriate dependency order: certify source
 definitions and reporting populations, publish stable analytical contracts, then
-build the authenticated application. Phase 1 engineering is implemented, but its
-[assessment](bi-analyst-phase1-assessment.md) records outstanding source/deployment
-verification. The owner now selects retained reportable projects, including genuine
+build the authenticated application. Phase 1 engineering is implemented and its
+gate is closed by owner acceptance. Historical evidence remains available in the
+[assessment](bi-analyst-phase1-assessment.md). The owner selects retained reportable projects, including genuine
 archived history, superseding API-active eligibility. Monthly revenue
 without a closed-invoiced-stage gate, and material-plus-charges Order Value mirrored
-to the parent remain required. Source alignment and certification remain release prerequisites.
+to the parent remain required and are accepted in the owner's codebase review.
 
 Phase 2 supplies candidate contracts. Catalogue validation and frozen reference
 parity establish reproducibility; they do not certify the live reporting population.
-Every metric currently carries `pending_phase1`, and `require_queryable` rejects
-application queries until a subsequent reviewed release integrates certification.
+The sealed catalogue carries its historical `pending_phase1` metadata.
+`require_queryable` now honours the packaged, fingerprint-bound owner acceptance;
+the API reports effective `owner_accepted` status without rewriting sealed evidence.
 
 ## Required alignment after the owner clarification
 
@@ -31,12 +36,12 @@ application queries until a subsequent reviewed release integrates certification
 |---|---|---|
 | Project population | Retained `reportable_projects`; genuine archived and held/unreviewed records remain included, effective reviewed placeholders are excluded | Existing project views retain this source. Schema checks compare exact project and child IDs; deployment, reviewed classifications and external consumers still require verification. |
 | Monthly revenue | Positive dated invoices for retained reportable parents in completed months, regardless of business-stage label or API lifecycle state | Migration 004 removes the old stage gate from `invoice_reporting_facts_v1`; metric version 1.1.0 requires new reference approval. |
-| Order Value | Hidden `formula_mkncjq9 = numbers98__1 + numbers3__1`, mirrored through children to the parent | The candidate accepts the configured parent mirror without establishing that it includes charges. The supplied schema's parent chain points to material only; verify and reconcile live wiring. |
-| Reference evidence | New versioned revenue references, retained-history/exclusion tests, aligned Power BI comparison and version-bound owner review | `bi_eval_20261008_v2` passes all 50 references and 16 parity checks under 1.1.0; historical 1.0.0 still verifies unchanged. [Owner review and Power BI package](bi-analyst-phase1-certification.md#revised-reference-release-and-handoff) are prepared, not yet approved/executed. |
+| Order Value | Hidden `formula_mkncjq9 = numbers98__1 + numbers3__1`, mirrored through children to the parent | The owner confirms that the app's correct Order Value is implemented. The saved-schema observation is historical and no longer blocks progression. |
+| Reference evidence | Versioned revenue references, retained-history/exclusion tests and owner acceptance; Power BI comparison is optional | `bi_eval_20261008_v2` passes all 50 references and 16 parity checks under 1.1.0; historical 1.0.0 still verifies unchanged. The [owner closure](bi-analyst-phase1-closure.md) records acceptance; the Power BI package remains an unexecuted optional diagnostic. |
 
 API lifecycle state is not an analyst eligibility filter. Operational lifecycle
-checks remain unchanged; source freshness, financial and contributing-membership
-uncertainties still require explicit review. The current clarification does not
+checks remain unchanged; unknown source freshness and contributing membership
+must remain visible in results. The current clarification does not
 change conversion's win criterion, separate bookings stage rules, signed base
 invoice totals, or saved historical snapshots.
 
@@ -66,8 +71,8 @@ to a database. The API, identity and permission design belong to later phases.
 ## Metric definitions
 
 The following table describes **catalogue 1.1.0 as implemented**. Its retained
-reportable population is agreed; deployed source/mirror and reference certification
-remain subject to the evidence requirements above.
+reportable population and app definitions are accepted in the owner closure.
+That acceptance does not fabricate deployed observations.
 
 Every entry records a stable ID, version, label and aliases; Monday board/columns;
 database lineage and source priorities; SQL expression and aggregation; numerator
@@ -254,13 +259,14 @@ versions at that check. This establishes frozen-reference parity for the origina
 contracts; it does not validate the 8 October correction or live Power BI results.
 Catalogue 1.1.0 population/revenue implementation now has 130 passing focused
 tests, including real PostgreSQL integration, and post-commit checks on TEST and
-production. The Phase 2 release exit gate remains open until source/mirror
-contracts, newly versioned revenue references and aligned Power BI results are
-reviewed and certified with explicit remaining limitations.
+production. The subsequent owner closure accepts Phase 1 source/business findings;
+Power BI verification is not required for analyst release. Runtime activation
+now consumes the recorded acceptance for the exact implemented catalogue.
 
 The subsequent 1.1.0 reference run on `bi_eval_20261008_v2` passed all 50 queries,
 20 independent checks and 16 parity comparisons; 115 focused evaluation/contract
 tests also passed. The original dataset still verifies under 1.0.0.
 The [review/export handoff](bi-analyst-phase1-certification.md#revised-reference-release-and-handoff)
-records the pending actual owner approval and Power BI execution. Those passes
-do not establish live source/mirror accuracy or enable the analyst API.
+preserves the earlier pending forms and unexecuted optional Power BI package.
+The later owner closure supersedes their Phase 1 blocker status. Package 0.4.1
+integrates that acceptance and adds [read-only Monday source checks](bi-analyst-monday-source-checks.md).

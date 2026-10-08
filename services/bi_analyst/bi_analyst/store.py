@@ -2,6 +2,7 @@
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import UUID, uuid4
+from psycopg.types.json import Jsonb
 
 from fastapi import HTTPException
 
@@ -119,6 +120,27 @@ class Store:
         if row["permissions_version"] != principal.permissions_version:
             raise HTTPException(403, "permissions_changed")
         return row
+
+    async def finish_metric(self, principal: Principal, result):
+        """Commit one result atomically; cancellation and concurrent completions win safely."""
+        payload = result.model_dump(mode="json")
+        async with self.scoped(principal) as conn:
+            row = await (await conn.execute("""UPDATE analyst_state.runs SET status='completed'
+                WHERE id=%s AND owner_id=%s AND permissions_version=%s AND status='registered'
+                RETURNING id""", (result.run_id, principal.subject, principal.permissions_version))).fetchone()
+            if row is None:
+                raise HTTPException(409, "run_not_executable")
+            await conn.execute("""INSERT INTO analyst_state.results
+                (id,run_id,owner_id,permissions_version,columns,rows,provenance,created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (result.id, result.run_id, principal.subject, principal.permissions_version,
+                 Jsonb(payload['columns']), Jsonb(payload['rows']), Jsonb(payload['provenance']), result.created_at))
+
+    async def fail_metric(self, principal: Principal, run_id: UUID):
+        async with self.scoped(principal) as conn:
+            await conn.execute("""UPDATE analyst_state.runs SET status='failed'
+                WHERE id=%s AND owner_id=%s AND permissions_version=%s AND status='registered'""",
+                (run_id, principal.subject, principal.permissions_version))
 
     async def audit(self, subject: UUID, request_id: UUID, route: str, method: str, status: int):
         async with self.db.transaction(subject=subject) as conn:

@@ -298,3 +298,32 @@ def test_auth_storage_permissions_and_drift(auth_settings, auth_database, pilot)
         asyncio.run(check())
     finally:
         admin.execute('REVOKE UPDATE(expires_at) ON analyst_state.sessions FROM bi_analyst_state')
+
+
+def test_five_metric_families_through_real_bearer_sessions(client, auth_database, auth_settings):
+    """Provider HTTPS is mocked; identity/session verification and RLS are real."""
+    browser, _, _ = client
+    admin, _ = auth_database
+    with admin.transaction():
+        admin.execute((ROOT/'src/database/migrations/20261008_004_analyst_reportable_population.sql').read_text())
+    session, _ = sign_in(browser)
+    headers = {'Authorization': 'Bearer '+session['access_token']}
+    evaluation = auth_settings.model_copy(update={'metric_evaluation_enabled': True,
+                                                  'business_timezone': 'Europe/London'})
+    with TestClient(create_app(evaluation), base_url=BASE) as api:
+        assert api.get('/v1/metrics').status_code == 401
+        assert api.post('/v1/runs/'+str(uuid4())+'/metric', json={}).status_code == 401
+        for metric, period, value in [('new_enquiry_value','all_stored','350.00'),
+                                       ('order_parent_value','all_stored','350.00'),
+                                       ('invoice_project_value','all_stored','95.00'),
+                                       ('conversion_five_year','five_year_cohort','0.200'),
+                                       ('gestation_five_year','five_year_cohort','20.000000')]:
+            cid = api.post('/v1/conversations',json={'title':'Evaluation'},headers=headers).json()['id']
+            rid = api.post(f'/v1/conversations/{cid}/runs',json={'question':'Evaluate'},headers=headers).json()['id']
+            result = api.post(f'/v1/runs/{rid}/metric',json={'metric_id':metric,'metric_version':'1.0.0',
+                              'population':'reportable','period':period},headers=headers)
+            assert result.status_code == 201, result.text
+            assert result.json()['provenance']['total']['value'] == value
+            assert api.get('/v1/results/'+result.json()['id'], headers=headers).status_code == 200
+        assert api.post('/auth/logout', headers=headers).status_code == 204
+        assert api.get('/v1/results/'+result.json()['id'], headers=headers).status_code == 401

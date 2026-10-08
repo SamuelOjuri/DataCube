@@ -42,3 +42,19 @@ services:
         value: 2
       - key: BI_ANALYST_STATE_POOL_SIZE
         value: 2
+      - key: BI_ANALYST_METRIC_EVALUATION_ENABLED
+        value: "false"
+      - key: BI_ANALYST_METRIC_MAX_ROWS
+        value: 1000
+      - key: BI_ANALYST_METRIC_MAX_BYTES
+        value: 900000
+      - key: BI_ANALYST_METRIC_CONCURRENCY
+        value: 2
+      - key: BI_ANALYST_METRIC_TIMEOUT_SECONDS
+        value: 15
+      - key: BI_ANALYST_BUSINESS_TIMEZONE
+        value: Europe/London
+      - key: BI_ANALYST_MONDAY_READ_TOKEN
+        sync: false
+      - key: BI_ANALYST_MONDAY_READ_API_VERSION
+        value: "2026-07"

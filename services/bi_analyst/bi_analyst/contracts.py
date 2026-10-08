@@ -1,4 +1,4 @@
-"""Small Phase 3 storage contracts; metric plans and graph state come later."""
+"""Application-state contracts; typed metric contracts live in metrics.contracts."""
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID

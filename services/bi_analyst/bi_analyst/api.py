@@ -1,4 +1,4 @@
-"""Standalone ASGI application. No ETL, model, scheduler or Monday imports."""
+"""Standalone ASGI application; no ETL, model or scheduler startup."""
 from contextlib import asynccontextmanager
 import csv
 import io
@@ -24,6 +24,10 @@ from .store import Principal, Store
 from .auth import routes as auth_routes
 from .auth_store import AuthStore
 from .monday_auth import MondayOAuth
+from .monday_source import MondaySourceReader, SourceCheckRequest, SourceCheckService, SourceEvidence
+from .metrics.compiler import InvalidMetricRequest
+from .metrics.contracts import EntityRequest, EntityResolution, MetricRequest, MetricResult
+from .metrics.service import MetricService
 
 log = logging.getLogger("bi_analyst.audit")
 
@@ -68,17 +72,21 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.settings = config
         app.state.database = database
         app.state.store = Store(database)
+        app.state.metrics = MetricService(app.state.store)
         app.state.auth_store = AuthStore(database)
         await database.open()
         try:
             async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False,
                                          limits=httpx.Limits(max_connections=8, max_keepalive_connections=4)) as client:
                 app.state.monday = MondayOAuth(config, client)
+                app.state.monday_source = MondaySourceReader(config, client)
+                app.state.source_checks = SourceCheckService(app.state.store, app.state.metrics.compiler,
+                                                           app.state.monday_source)
                 yield
         finally:
             await database.close()
 
-    app = FastAPI(title="DataCube BI Analyst", version="0.3.1", lifespan=lifespan,
+    app = FastAPI(title="DataCube BI Analyst", version="0.4.1", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -115,6 +123,14 @@ def create_app(settings: Settings) -> FastAPI:
         # FastAPI's default includes rejected input; questions can contain sensitive text.
         return JSONResponse({"detail": "invalid_request"}, status_code=422)
 
+    @app.exception_handler(InvalidMetricRequest)
+    async def invalid_metric(request, exc):
+        return JSONResponse({"detail": "invalid_metric_request"}, status_code=422)
+
+    @app.exception_handler(TimeoutError)
+    async def metric_timeout(request, exc):
+        return JSONResponse({"detail": "metric_query_timeout"}, status_code=504)
+
     async def unavailable(request, exc):
         return JSONResponse({"detail": "storage_unavailable"}, status_code=503)
 
@@ -141,8 +157,57 @@ def create_app(settings: Settings) -> FastAPI:
         except Exception:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         # Infrastructure readiness is deliberately distinct from feature availability.
+        accepted = request.app.state.metrics.compiler.catalogue.owner_accepted
+        execution = "evaluation_only" if settings.metric_evaluation_enabled else "owner_accepted" if accepted else "unavailable"
+        if settings.business_timezone is None:
+            execution = "unavailable"
         return {"status": "ready", "identity": "monday" if settings.auth_provider == "monday" else "deferred",
-                "metric_execution": "unavailable"}
+                "metric_execution": execution, "monday_source_reads": request.app.state.monday_source.configured}
+
+    @app.get("/v1/metrics")
+    async def metric_catalogue(request: Request, actor: Principal = Depends(principal)):
+        compiler = request.app.state.metrics.compiler
+        acceptance = "owner_accepted" if compiler.catalogue.owner_accepted else "pending_phase1"
+        return {"catalogue_version": compiler.catalogue.version, "catalogue_sha256": compiler.catalogue_hash,
+                "metrics": [{**m.model_dump(mode="json"), "recorded_certification": m.certification,
+                             "limitations": compiler.catalogue.runtime_limitations(m),
+                             "certification": acceptance} for m in compiler.catalogue.metrics],
+                "source_checks": request.app.state.monday_source.capability(),
+                "notices": compiler.catalogue.runtime_notices}
+
+    @app.get("/v1/metrics/resolve")
+    async def resolve_metric(request: Request, name: str = Query(min_length=1, max_length=128),
+                             actor: Principal = Depends(principal)):
+        catalogue = request.app.state.metrics.compiler.catalogue
+        normalized = name.strip().casefold()
+        matches = [m for m in catalogue.metrics if normalized in
+                   {m.id.casefold(), m.label.casefold(), *(a.casefold() for a in m.aliases)}]
+        return {"status": "resolved" if len(matches) == 1 else "clarification_required" if matches else "not_found",
+                "candidates": [{"metric_id": m.id, "metric_version": m.version, "label": m.label,
+                                "population": m.population} for m in matches]}
+
+    @app.post("/v1/entities/resolve", response_model=EntityResolution)
+    async def resolve_entity(body: EntityRequest, request: Request, actor: Principal = Depends(principal)):
+        try:
+            return await request.app.state.metrics.resolve_entity(actor, body)
+        except (psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable):
+            raise HTTPException(504, "metric_query_timeout") from None
+
+    @app.post("/v1/runs/{run_id}/metric", response_model=MetricResult, status_code=201)
+    async def execute_metric(run_id: UUID, body: MetricRequest, request: Request, actor: Principal = Depends(principal)):
+        try:
+            return await request.app.state.metrics.execute(actor, run_id, body, request)
+        except HTTPException as exc:
+            if exc.detail != "metric_not_certified":
+                raise
+            return JSONResponse(status_code=503, content={"detail": "metric_not_certified",
+                "source_check": {**request.app.state.monday_source.capability(),
+                                 "path": f"/v1/runs/{run_id}/source-check",
+                                 "reason": "metric_not_certified"}})
+
+    @app.post("/v1/runs/{run_id}/source-check", response_model=SourceEvidence)
+    async def check_source(run_id: UUID, body: SourceCheckRequest, request: Request, actor: Principal = Depends(principal)):
+        return await request.app.state.source_checks.check(actor, run_id, body, request)
 
     @app.post("/v1/conversations", response_model=Conversation, status_code=201)
     async def create_conversation(body: ConversationInput, request: Request, actor: Principal = Depends(principal)):

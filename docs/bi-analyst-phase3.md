@@ -3,6 +3,26 @@
 Implemented 8 October 2026. This is a code delivery and deployment runbook, not a
 record of production migration or deployment.
 
+## Source/business gate closure: 8 October 2026
+
+**The named Phase 3 gate is `closed_by_owner`, with zero blockers.** The finding
+"Phase 3 infrastructure acceptance does not establish source/business
+certification" is resolved by the owner's explicit acceptance recorded in the
+[Phase 1 closure](bi-analyst-phase1-closure.md) and reaffirmed in the current
+conversation. See the [machine-readable Phase 3 gate](bi-analyst-phase3-gate.json).
+
+The infrastructure evidence already records 28 successful hosted TEST checks.
+Source/business acceptance is supplied by the owner's review of the implemented
+metric definitions, Order Value corrections, retained reporting population and
+business decisions. Package 0.4.1 consumes that acceptance for the exact catalogue
+fingerprint and provides [read-only Monday source checks](bi-analyst-monday-source-checks.md)
+for doubts. Power BI result verification and Monday CRM cleanup are not required.
+This dependency no longer blocks progression to later implementation phases.
+
+Hosted authentication configuration and production deployment retain their
+separate delivery status. This decision adds no claim of new hosted tests or
+deployment. Earlier open source/business statements below are superseded.
+
 **Authentication follow-up (8 October 2026):** the owner has now requested the
 Monday pilot sign-in implementation. Version 0.3.1 adds OAuth, sessions, migration
 005 and a frontend sign-in shell. The original deferral and TEST evidence below
@@ -17,23 +37,23 @@ The Phase 2 package gives the API a stable interface without importing ETL start
 The later 8 October owner decision selects retained reportable projects, including
 genuine archived history, instead of API-active eligibility. Catalogue 1.1.0 and
 migration 004 retain that population and remove the monthly revenue stage gate.
-The catalogue remains `pending_phase1`: deployment/source verification, revised
-reference approval and the Order Value mirror chain still need certification. See the
-[Phase 2 assessment](bi-analyst-phase2.md). Neither permissions nor passing tests on
-synthetic data certify those business definitions.
+The sealed catalogue retains historical `pending_phase1` metadata. Its effective
+runtime status is now `owner_accepted`, bound to the packaged catalogue fingerprint.
+The owner has accepted the codebase corrections, including Order Value, and closed
+the source/business dependency. See the [Phase 2 assessment](bi-analyst-phase2.md).
+Infrastructure verification and business acceptance have separate recorded bases;
+both are present for this implementation progression.
 
-The owner explicitly requested **skipping authentication for now** during this
-implementation. No Supabase sign-in, Microsoft sign-in or token verifier has been
-implemented. The trusted identity dependency always returns HTTP 503
-`identity_not_configured`. All conversation, run, result, export and resume routes
-use that dependency. No header, query parameter or shared anonymous user supplies
-identity. Tests inject identities in application code to exercise permissions.
-That injection is not exposed through deployment configuration or HTTP.
+The original 0.3.0 delivery deferred authentication at the owner's request.
+The subsequent Monday OAuth/session implementation supersedes that deferral;
+hosted identity remains disabled until configured. No header, query parameter or
+shared anonymous user supplies identity. Tests can inject identities in application
+code; that injection is not exposed through deployment configuration or HTTP.
 
-Consequently the original authenticated Phase 3 exit gate is intentionally open.
-Infrastructure readiness can pass while data routes remain disabled. Connecting
-real users requires a subsequent identity implementation and its security tests;
-running metrics also requires corrected source certification and Phase 4.
+Infrastructure readiness can pass while hosted identity remains unconfigured.
+Hosted authentication acceptance is separate delivery work. The source/business
+dependency is closed, and Phase 4's deterministic metric service and runtime
+acceptance integration are implemented; they require no renewed Phase 1 approval.
 
 ## Code and API
 
@@ -212,8 +232,9 @@ shared default-privilege changes were needed. See the hosted verification below.
 
 The runtime additionally verifies gateway ownership/security, exact runtime
 connection roles, state RLS and restrictions on changing principal grants,
-ownership fields and audit records. Source certification and complete-population
-parity remain separate from permission verification.
+ownership fields and audit records. Permission verification and source/business
+acceptance remain distinct evidence categories. The latter is now satisfied by
+the recorded owner closure, so this distinction is no longer an open gate.
 
 ### Limits of the read-only boundary
 
@@ -232,11 +253,11 @@ grants alone does not address it. PostgreSQL itself distinguishes read-only
 transactions from universal side-effect prevention.
 See [SET TRANSACTION](https://www.postgresql.org/docs/current/sql-set-transaction.html).
 
-Consequently Phase 4 must admit only approved read statements and vetted functions,
-enforce row/byte limits and retain explicit read-only transactions. No arbitrary
-SQL execution endpoint exists now, and authentication remains disabled. Do not
-enable real analytical query execution before those controls and source
-certification pass. The database credentials remain exclusively on the server.
+Phase 4 now admits only approved read statements and vetted functions, enforces
+row/byte limits and retains explicit read-only transactions. No arbitrary SQL
+execution endpoint exists. Runtime consumes the owner's source/business
+acceptance, and identity must be configured for hosted access. Database credentials
+remain exclusively on the server.
 
 ## Migration procedure
 
@@ -329,7 +350,7 @@ provided through process environment/secret storage. Application rollback leaves
 the additive schemas and audit data intact; disable the service or revoke its
 login access without dropping tables or changing ETL data.
 
-## Verification and remaining release gates
+## Verification and separate deployment work
 
 The new isolated tests are under `services/bi_analyst/tests/api`. Unit tests verify
 configuration restrictions, CSV safety and import isolation. Integration tests
@@ -391,7 +412,9 @@ records the migration SHA-256 and before/after snapshot hashes:
   remain NOLOGIN without passwords; the seven state tables and ten gateways are
   installed. Runtime LOGIN/password provisioning remains a separate secret task.
 
-Production deployment, environment-specific effective-privilege review, source certification,
-identity implementation and measured Render/Supabase connectivity/capacity remain
-open. The hosted TEST permission bootstrap is now deployed; production, Monday,
-Render and the frozen evaluation datasets were not changed.
+The hosted TEST permission bootstrap passed and is installed. Source/business
+acceptance is closed by the owner, and Monday identity plus Phase 4 query controls
+are implemented. Hosted identity configuration, production deployment and its
+environment-specific privilege/connectivity/capacity checks remain separate work.
+The historical TEST verification did not change production, Monday, Render or the
+frozen evaluation datasets; this closure introduces no further deployment.

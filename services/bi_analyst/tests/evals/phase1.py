@@ -42,7 +42,7 @@ DECISIONS = {
     'connection_budget': 'Platform owner',
 }
 ISSUES = {
-    'revenue_definition': 'Reconcile restored revenue SQL, intended filters and Power BI DAX.',
+    'revenue_definition': 'Review implemented revenue SQL against the accepted app definition; Power BI comparison is optional.',
     'invoice_rollup': 'Reconcile stored parent invoices against verified current child membership.',
     'enquiry_rollup': 'Review exact-reason child formula and Open-only current-membership sums.',
     'gestation_fallback': 'Verify stored actual and source/fallback rules for date differences.',
@@ -50,7 +50,7 @@ ISSUES = {
     'relationships': 'Resolve or label missing links and verify repeated source contributions.',
     'classification': 'Verify effective reviewed placeholder exclusions, retained archived projects, held/unreviewed inclusion and automatic re-entry after meaningful changes.',
     'writer_conflict': 'Prove deployed writers share an agreed source-precedence contract.',
-    'report_reader_access': 'Resolve or explicitly scope the observed Power BI reader permission failures.',
+    'report_reader_access': 'Optional Power BI diagnostic: review reader access if report comparison is performed.',
 }
 WRITERS = {
     'ordinary_sync': ('src/database/sync_service.py',
@@ -484,22 +484,49 @@ def deployment_problems(deployment):
     return problems
 
 
+def owner_closure_problems(closure, packet, now):
+    """Validate explicit owner acceptance, without inventing missing measurements."""
+    if not reviewed(closure):
+        return ['owner closure: an explicit reviewed owner decision is required']
+    problems = []
+    if timestamp(closure['reviewed_at']) > now:
+        problems.append('owner closure: review timestamp is in the future')
+    if (closure.get('scope') != 'phase1_progression'
+            or closure.get('dataset') != packet['payload']['dataset']
+            or closure.get('evidence_sha256') != packet['sha256']):
+        problems.append('owner closure: scope/dataset/evidence binding does not match')
+    families = closure.get('accepted_metric_families')
+    if not isinstance(families, list) or sorted(families, key=str) != sorted(METRICS):
+        problems.append('owner closure: identify all accepted metric families')
+    if (closure.get('power_bi_required') is not False
+            or closure.get('monday_cleanup_required') is not False):
+        problems.append('owner closure: record withdrawn Power BI and Monday cleanup prerequisites')
+    dispositions = closure.get('dispositions')
+    if not isinstance(dispositions, dict) or not dispositions or any(
+            not isinstance(value, str) or not value.strip() for value in dispositions.values()):
+        problems.append('owner closure: record the disposition of earlier findings')
+    return problems
+
+
 def evaluate_gate(packet, review, power_bi_packet=None, now=None, reference_packet=None):
     evidence = packet['payload']
     now = now or datetime.now(timezone.utc)
     blockers = []
+    diagnostics = []
     if review.get('version') != VERSION or review.get('dataset') != evidence['dataset'] or review.get('evidence_sha256') != packet['sha256']:
         raise ValueError('Review is not bound to this evidence capture')
     for group in ('decisions', 'metrics', 'issues', 'source_samples', 'freshness', 'reports', 'power_bi_exceptions'):
         if not isinstance(review.get(group), dict) or any(not isinstance(v, dict) for v in review[group].values()):
             raise ValueError('Review section must contain named review objects: ' + group)
-        for record in review[group].values():
+        for name, record in review[group].items():
+            optional = group in ('reports', 'power_bi_exceptions') or (group == 'issues' and name == 'report_reader_access')
+            findings = diagnostics if optional else blockers
             if record.get('reviewed_at'):
                 try:
                     if timestamp(record['reviewed_at']) > now:
-                        blockers.append('review timestamp is in the future: ' + group)
+                        findings.append('review timestamp is in the future: ' + group)
                 except (ValueError, TypeError):
-                    blockers.append('invalid review timestamp: ' + group)
+                    findings.append('invalid review timestamp: ' + group)
     if not isinstance(review.get('deployment'), dict):
         raise ValueError('Deployment review must be an object')
     for name in DECISIONS:
@@ -513,6 +540,10 @@ def evaluate_gate(packet, review, power_bi_packet=None, now=None, reference_pack
             blockers.append('metric/source/population sign-off: ' + name)
     for name in ISSUES:
         issue = review.get('issues', {}).get(name, {})
+        if name == 'report_reader_access':
+            if not reviewed(issue, ('resolved', 'accepted_limitation')):
+                diagnostics.append('optional Power BI reader access review not recorded')
+            continue
         if not reviewed(issue, ('resolved', 'accepted_limitation')) or not issue.get('affected_scope'):
             blockers.append('unresolved finding: ' + name)
         elif issue['status'] == 'accepted_limitation':
@@ -570,26 +601,43 @@ def evaluate_gate(packet, review, power_bi_packet=None, now=None, reference_pack
             try:
                 validate_power_bi_alignment(payload, evidence['manifest'], now=now)
             except ValueError as exc:
-                blockers.append('Power BI alignment: ' + str(exc))
+                diagnostics.append('Power BI alignment: ' + str(exc))
         comparisons = payload['comparisons']
     for name in POWER_BI_REFERENCES:
         result = comparisons.get(name)
         report = review.get('reports', {}).get(name, {})
         if not result:
-            blockers.append('Power BI comparison missing: ' + name)
+            diagnostics.append('Power BI comparison not supplied (optional): ' + name)
         elif not reviewed(report) or any(report.get(key) != result.get(key) for key in ('report_name', 'report_version', 'definition_sha256')):
-            blockers.append('BI report definition/version review missing: ' + name)
+            diagnostics.append('BI report definition/version review missing: ' + name)
         elif not result['matches']:
             exception = review.get('power_bi_exceptions', {}).get(name, {})
             if not reviewed(exception) or exception.get('comparison_sha256') != power_bi_packet['sha256']:
-                blockers.append('unexplained Power BI difference: ' + name)
+                diagnostics.append('unexplained Power BI difference: ' + name)
+    closure = review.get('owner_closure')
+    closed_by_owner = False
+    superseded_checks = []
+    if closure is not None:
+        problems = owner_closure_problems(closure, packet, now)
+        if problems:
+            blockers.extend(problems)
+        else:
+            closed_by_owner = True
+            superseded_checks, blockers = blockers, []
     return {'version': VERSION, 'dataset': evidence['dataset'], 'evaluated_at': now.isoformat(),
         'evidence_sha256': packet['sha256'], 'review_sha256': fingerprint(review),
         'power_bi_sha256': power_bi_packet['sha256'] if power_bi_packet else None,
         'reference_approval_sha256': reference_packet['sha256'] if reference_packet else None,
-        'status': 'blocked' if blockers else 'passed_with_owner_attestations',
+        'status': 'closed_by_owner' if closed_by_owner else ('blocked' if blockers else 'passed_with_owner_attestations'),
         'blockers': blockers,
-        'basis': 'TEST evidence plus supplied owner attestations; no automatic production certification',
+        'basis': ('Phase 1 closed by explicit owner acceptance for progression to later phases; '
+                  'superseded checks are not claims of independently executed verification or deployment'
+                  if closed_by_owner else
+                  'TEST evidence plus supplied owner attestations; no automatic production certification'),
+        'owner_closure': closure,
+        'superseded_checks': superseded_checks,
+        'diagnostics': diagnostics,
+        'power_bi_required': False,
         'enabled_metrics': list(METRICS) if not blockers else []}
 
 
@@ -599,13 +647,28 @@ def review_command(args):
     comparison = load_packet(args.power_bi) if args.power_bi else None
     reference_approval = load_packet(args.reference_review) if args.reference_review else None
     result = evaluate_gate(packet, review, comparison, reference_packet=reference_approval)
+    save_new(args.output / 'review_snapshot.json', review)
     save_new(args.output / 'phase1_gate.json', result)
     lines = ['# Phase 1 certification review', '', 'Status: ' + result['status'], '',
              result['basis'], '', 'Dataset: `' + result['dataset'] + '`', '',
-             '## Outstanding evidence', '']
+             '## Phase 1 blockers', '']
     lines.extend('- ' + issue for issue in result['blockers'])
     if not result['blockers']:
-        lines.append('All required owner attestations and comparison reviews are present.')
+        lines.append('None. Power BI verification is not a Phase 1 prerequisite.')
+    if result['status'] == 'closed_by_owner':
+        closure = result['owner_closure']
+        lines.extend(['', '## Owner closure', '',
+                      'Recorded for ' + closure['owner'] + ' at ' + closure['reviewed_at'] + '.', '',
+                      str(closure['value']), ''])
+        lines.extend('- ' + name + ': ' + value for name, value in closure['dispositions'].items())
+        lines.extend(['', 'Monday CRM cleanup is not a prerequisite. '
+                      'See review_snapshot.json for the complete owner decision.', '',
+                      '## Superseded evidence checklist', '',
+                      'These checks are retained as history, not open Phase 1 blockers or completed measurements.', ''])
+        lines.extend('- ' + item for item in result['superseded_checks'])
+    if result['diagnostics']:
+        lines.extend(['', '## Optional diagnostics', ''])
+        lines.extend('- ' + item for item in result['diagnostics'])
     path = output_path(args.output / 'phase1_gate.md')
     with path.open('x', encoding='utf-8') as stream:
         stream.write('\n'.join(lines) + '\n')

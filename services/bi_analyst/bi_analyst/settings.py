@@ -2,6 +2,7 @@
 import os
 from urllib.parse import urlsplit
 import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
@@ -27,9 +28,20 @@ class Settings(BaseModel):
     monday_client_secret: SecretStr | None = None
     monday_account_id: str | None = None
     monday_redirect_uri: str | None = None
+    monday_read_token: SecretStr | None = None
+    monday_read_api_version: str = Field(default="2026-07", pattern=r"^20[0-9]{2}-(01|04|07|10)$")
+    monday_read_timeout_seconds: float = Field(default=10, ge=1, le=30)
+    monday_read_max_bytes: int = Field(default=262144, ge=4096, le=524288)
+    monday_read_concurrency: int = Field(default=2, ge=1, le=4)
     auth_frontend_url: str | None = None
     session_seconds: int = Field(default=900, ge=60, le=900)
     auth_requests_per_minute: int = Field(default=120, ge=10, le=600)
+    business_timezone: str | None = "Europe/London"
+    metric_evaluation_enabled: bool = False
+    metric_max_rows: int = Field(default=1000, ge=1, le=1000)
+    metric_max_bytes: int = Field(default=900000, ge=16384, le=900000)
+    metric_concurrency: int = Field(default=2, ge=1, le=20)
+    metric_timeout_seconds: float = Field(default=15, ge=1, le=60)
 
     @model_validator(mode="after")
     def validate_boundary(self):
@@ -59,6 +71,18 @@ class Settings(BaseModel):
             targets.append((info["host"], info.get("port", "5432"), info["dbname"]))
         if targets[0] != targets[1]:
             raise ValueError("Analyst pools must target the same database")
+        if self.business_timezone is not None:
+            try:
+                ZoneInfo(self.business_timezone)
+            except (ZoneInfoNotFoundError, ValueError):
+                raise ValueError("Use an explicit IANA business timezone") from None
+        if self.metric_evaluation_enabled and (
+            self.environment != "test" or targets[0][0] not in {"127.0.0.1", "localhost", "::1"}
+            or self.business_timezone is None
+        ):
+            raise ValueError("Uncertified metric evaluation requires a loopback test database and explicit timezone")
+        if self.metric_concurrency > self.read_pool_size:
+            raise ValueError("Metric concurrency must fit the analytical pool")
         for origin in self.cors_origins:
             url = urlsplit(origin)
             local = self.environment == "test" and url.hostname in {"localhost", "127.0.0.1"}
@@ -68,6 +92,12 @@ class Settings(BaseModel):
                 raise ValueError("CORS origins must not contain paths, credentials or wildcards")
         if self.auth_provider not in {"disabled", "monday"}:
             raise ValueError("auth_provider must be disabled or monday")
+        if self.monday_read_token is not None:
+            token = self.monday_read_token.get_secret_value()
+            if not token.strip() or len(token) > 16384 or any(c.isspace() for c in token):
+                raise ValueError("Monday source reads require a valid server token")
+            if not re.fullmatch(r"[1-9][0-9]{0,29}", self.monday_account_id or ""):
+                raise ValueError("Monday source reads require the approved account ID")
         if self.auth_provider == "monday":
             if not self.monday_client_id or not self.monday_client_secret or not self.monday_client_secret.get_secret_value().strip():
                 raise ValueError("Monday client credentials are required")

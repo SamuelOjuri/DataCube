@@ -2,6 +2,26 @@
 
 Prepared: 7 October 2026. Repository baseline reviewed: `9a62b35`.
 
+## Phase 1 closed by owner: 8 October 2026
+
+**`phase1_gate` is `closed_by_owner`, with zero blockers.** The owner has assessed
+the earlier findings, confirmed their resolution in the codebase including the
+app's correct Order Value, and authorised progression to later phases. See the
+[closure decision and current gate](bi-analyst-phase1-closure.md).
+Power BI result verification is optional; Monday CRM cleanup is not a
+prerequisite. Read-only Monday GraphQL may clarify source questions when needed.
+GBP, Europe/London, the 1 November–31 October fiscal year and as-stored amounts
+with VAT inclusion unspecified are approved. This closure supersedes earlier
+pending source/business and reference-review requirements in this plan. It does
+not claim new source measurements or hosted deployment checks. Runtime activation
+now reuses this acceptance through a packaged catalogue fingerprint. Package 0.4.1
+also provides [bounded read-only Monday source checks](bi-analyst-monday-source-checks.md)
+for exact records when there is doubt, including any remaining `metric_not_certified` case.
+
+The matching [Phase 3 source/business gate](bi-analyst-phase3.md#sourcebusiness-gate-closure-8-october-2026)
+is also explicitly `closed_by_owner` with zero blockers. This reuses the same
+business acceptance alongside the existing hosted TEST infrastructure evidence.
+
 ## Business-definition correction: 8 October 2026
 
 The owner's later 8 October decision supersedes the earlier API-active population
@@ -34,17 +54,19 @@ The financial corrections remain in force:
   Preserve the sealed 7 October evaluation and historical snapshots; do not
   relabel their old revenue results as the revised contract.
 
-The supplied [board schema](../app_data/BoardSchema.txt) confirms the formula and
-child mirror `lookup_mknc7a23`. However, its saved parent `mirror5__1` sums child
-`mirror17__1`, which points to material `numbers98__1`, not the total formula.
-Verify the live mirror chain and reconcile this discrepancy against the required
-definition; the schema excerpt alone does not prove the parent is wired correctly.
+The supplied historical [board schema](../app_data/BoardSchema.txt) records the
+formula and child mirror `lookup_mknc7a23`, but its saved parent `mirror5__1`
+points through child `mirror17__1` to material `numbers98__1`. The owner has since
+confirmed that the app's correct Order Value is implemented and accepted the
+codebase corrections. That historical observation no longer blocks Phase 1 or
+Phase 3; read-only Monday checks can clarify particular records when needed.
 The existing [archive runtime view](../src/database/schema/monday_lifecycle_archive_runtime.sql)
 narrows `reportable_projects` to verified active records for operational consumers.
 That is not the analyst's retained-history population. Catalogue 1.1.0 and migration
-004 retain reportable eligibility and remove the monthly revenue stage gate;
-source certification, live mirror alignment and production rollout require their
-own evidence. Previously deleted source records are not restored by this policy.
+004 retain reportable eligibility and remove the monthly revenue stage gate.
+Source/business acceptance is recorded in the owner closure; production rollout
+retains its separate delivery checks. Previously deleted source records are not
+restored by this policy.
 
 This plan turns the agreed recommendation into an implementation sequence for a natural-language query and insight layer over the existing Monday-to-Supabase BI pipeline. The frontend will run on **Netlify** and the analyst API on a separate **Render web service**. The remaining agreed stack is retained.
 
@@ -146,9 +168,9 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    Verify successful ingestion, rollup, materialised-view refresh and snapshot timestamps separately. Capture present row counts, representative query plans and the available database connection budget. Do not infer freshness from a scheduled job or the newest individual row.
 
-   Assemble 50-100 representative questions with independent reference SQL and expected results on a frozen, access-controlled nonproduction dataset. Include follow-ups and ambiguous questions. Compare with Power BI; document any differing DAX/filter logic rather than silently adopting it.
+   Assemble 50-100 representative questions with independent reference SQL and expected results on a frozen, access-controlled nonproduction dataset. Include follow-ups and ambiguous questions. Power BI comparison is optional diagnostic work; if performed, document differing DAX/filter logic. It is not a release prerequisite or the authority for corrected app definitions.
 
-   **Evaluation datasets created:** `bi_eval_20261007_v1` remains the sealed historical 1.0.0 baseline. New TEST snapshot `bi_eval_20261008_v2` implements reference contract 1.1.0 with 70 scenarios, 50 reference queries, 20 independent checks and 16 passing curated-view parity comparisons. Revised invoice references remove the business-stage gate; old/new results are retained in the new restricted key. The [owner-review and aligned Power BI handoff](bi-analyst-phase1-certification.md#revised-reference-release-and-handoff) is implemented and prepared. Actual owner approval, independent Power BI execution and source certification remain pending; no historical key was overwritten.
+   **Evaluation datasets created:** `bi_eval_20261007_v1` remains the sealed historical 1.0.0 baseline. New TEST snapshot `bi_eval_20261008_v2` implements reference contract 1.1.0 with 70 scenarios, 50 reference queries, 20 independent checks and 16 passing curated-view parity comparisons. Revised invoice references remove the business-stage gate; old/new results are retained in the new restricted key. The [review and optional Power BI tooling](bi-analyst-phase1-certification.md#revised-reference-release-and-handoff) remains available. The later owner acceptance closes Phase 1 without requiring Power BI execution; no historical key was overwritten.
 
    You can use the following database for evaluation/test (You can load detail from .env):
 
@@ -160,11 +182,11 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    Record decisions on access scope, currency/tax presentation, reporting timezone, fiscal calendar, current-period behaviour, provider data handling and required historical classifications. Set target response latency, concurrent-user/query load, run limits and cost per successful answer, together with the representative test workload. The Nov-Oct budget rows are evidence to check, not sufficient proof of the organisation-wide fiscal calendar.
 
-   **Implementation update:** Phase 1 evidence capture, exact-ID reconciliation selections, deployment/freshness/decision review, offline PBIX inspection, typed Power BI comparison and an explicit certification gate are now implemented. See the [assessment](bi-analyst-phase1-assessment.md) and [runbook](bi-analyst-phase1-certification.md). The supplied reports and live reader audit provide additional evidence but do not close source/business certification or same-snapshot numerical parity.
+   **Implementation update:** Phase 1 evidence capture, reconciliation selections, deployment/freshness/decision review, offline PBIX inspection, optional typed Power BI comparison and an explicit gate are implemented. The gate now records owner closure while preserving unperformed checklist items as historical evidence. See the [closure](bi-analyst-phase1-closure.md) and [runbook](bi-analyst-phase1-certification.md).
 
    **Deliverables:** deployed inventory, metric/source reconciliation, coverage and freshness report, decision register, versioned reference dataset and golden-question set.
 
-   **Exit gate:** all five metric definitions and their eligible reporting populations are certified for the first release. Remaining issues have explicit scope and owners; no completed pilot is presented as certification of the entire dataset.
+   **Exit gate: closed by owner acceptance.** All five implemented metric definitions and their reportable populations are accepted for progression. Power BI verification and CRM cleanup are not required. Operational measurements and hosted acceptance belong to subsequent implementation/deployment work; closure does not fabricate them.
 
 2. **Phase 2: publish semantic contracts and the curated query surface.**
 
@@ -208,13 +230,15 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    **Deliverables:** isolated service skeleton, permission matrix, restricted roles, authentication, connection configuration, health endpoints and access-control tests.
 
-   **Implementation update (8 October 2026):** the earlier authentication deferral is superseded by the Monday pilot decision. The isolated service, restricted-role bootstrap, ownership/RLS checks, bounded pools, state APIs, audit/rate limits and Monday authentication/session code are implemented. Additive migration 005 supplies identity mappings and session storage; the already verified migration 003 remains unchanged. A minimal React sign-in shell is implemented. Authentication stays disabled until the dedicated Monday app, credentials, approved mappings and hosted migration are configured. Source certification, hosted authentication acceptance and deployment remain open. See the [Phase 3 infrastructure runbook](bi-analyst-phase3.md) and [authentication runbook](bi-analyst-auth.md).
+   **Implementation update (8 October 2026):** the earlier authentication deferral is superseded by the Monday pilot decision. The isolated service, restricted-role bootstrap, ownership/RLS checks, bounded pools, state APIs, audit/rate limits and Monday authentication/session code are implemented. Additive migration 005 supplies identity mappings and session storage; the already verified migration 003 remains unchanged. A minimal React sign-in shell is implemented. Authentication stays disabled until the dedicated Monday app, credentials, approved mappings and hosted migration are configured. Phase 1 is closed by owner acceptance; hosted authentication acceptance and deployment remain separate. See the [Phase 3 infrastructure runbook](bi-analyst-phase3.md) and [authentication runbook](bi-analyst-auth.md).
 
    **Option A update (8 October 2026):** the owner approved broader company-wide SELECT access to the named source dependencies, preserving existing PUBLIC/ETL/Power BI privileges and the ten gateway views. Following inspection of the provided TEST database, the owner explicitly approved a service-level read-only boundary: retain ordinary PUBLIC SECURITY INVOKER helpers, schema USAGE, database TEMP and the two existing PUBLIC-readable `pg_stat_statements` extension views. This does not grant new helper access or approve arbitrary SQL. The bootstrap and API startup still reject operational write/CREATE privileges, role escalation and unreviewed SECURITY DEFINER/private function grants. The scoped non-login migrator owns only analyst schemas/state and supplies no runtime credentials. No existing consumer grants or source definitions are rewritten.
 
-   **Hosted TEST acceptance (8 October 2026):** corrected migration 003 passed a transactional rehearsal, was committed to the guarded configured TEST database, and passed 28 hosted checks with actual restricted logins and certificate-verified TLS. All ten gateways matched source counts within the statement limit; operational DML/CREATE and cross-user state access were denied. Before/after snapshots confirmed 13,082 shared ACL entries and existing source definitions/policies were unchanged. Forty API/permission regression tests passed separately. Temporary test credentials were removed; roles remain NOLOGIN pending deployment secret provisioning. Production was not contacted. See the [verification evidence and migration procedure](bi-analyst-phase3.md#hosted-test-acceptance-8-october-2026). Authentication and source certification remain deferred.
+   **Hosted TEST acceptance (8 October 2026):** corrected migration 003 passed a transactional rehearsal, was committed to the guarded configured TEST database, and passed 28 hosted checks with actual restricted logins and certificate-verified TLS. All ten gateways matched source counts within the statement limit; operational DML/CREATE and cross-user state access were denied. Before/after snapshots confirmed 13,082 shared ACL entries and existing source definitions/policies were unchanged. Forty API/permission regression tests passed separately. Temporary test credentials were removed; roles remain NOLOGIN pending deployment secret provisioning. Production was not contacted. See the [verification evidence and migration procedure](bi-analyst-phase3.md#hosted-test-acceptance-8-october-2026). Hosted authentication remains separate; Phase 1 acceptance is recorded in the subsequent owner closure.
 
-   **Exit gate:** permitted reference queries succeed; operational writes, privilege escalation, cross-user histories and results are denied. The service admits only approved statements/functions through its controlled query path, not arbitrary SQL using the role's inherited PUBLIC access. Starting or scaling the analyst does not start ETL jobs. Authentication and the Phase 4 query controls remain required before real-user metric access.
+   **Gate status:** the named source/business dependency is **closed by owner acceptance**, with zero blockers in the [Phase 3 gate record](bi-analyst-phase3-gate.json). The existing infrastructure acceptance and Phase 1 closure supply its two evidence bases. Power BI verification and Monday cleanup are not prerequisites.
+
+   **Infrastructure exit criteria:** permitted reference queries succeed; operational writes, privilege escalation, cross-user histories and results are denied. The service admits only approved statements/functions through its controlled query path, not arbitrary SQL using the role's inherited PUBLIC access. Starting or scaling the analyst does not start ETL jobs. These controls passed the recorded hosted TEST checks. Hosted authentication configuration and production deployment remain separate delivery work; Phase 4 query controls are implemented.
 
 4. **Phase 4: implement the deterministic metric-query service.**
 
@@ -234,6 +258,8 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    **Deliverables:** metric request/result contracts, compiler, entity resolution, executor, deterministic comparison tools and golden-result tests.
 
+   **Implementation update (8 October 2026):** Phase 4 code is implemented in analyst package 0.4.1: typed plans/results, deterministic compilation of all 16 catalogue variants across the five metric families, approved alias/dimension resolution, complete filtered totals and comparisons, consistent read-only execution, bounded output/concurrency, durable cancellation and owner-scoped persistence. Runtime now consumes the fingerprint-bound Phase 1 acceptance, removing the hardcoded rejection for accepted metrics. Authenticated read-only Monday source checks support doubts about exact records, including remaining certification errors. See the [Phase 4 assessment and API runbook](bi-analyst-phase4.md). Hosted authentication/deployment acceptance remains separate delivery work.
+
    **Exit gate:** all five metrics can be queried correctly through the authenticated API without model-generated business formulas.
 
 5. **Phase 5: add LangGraph interpretation, clarification and evidence checks.**
@@ -243,6 +269,8 @@ Implement the work in the following phases. Owners below are responsibilities; o
    Implement one explicit graph: authenticate/load authorised context; interpret intent; retrieve relevant catalogue entries; clarify if necessary; produce a structured plan; call the metric service; validate results; select presentation; produce a grounded answer; persist run outcome. Consult latest LangGraph documentation for optimization and efficiency of the solution.
 
    Use Pydantic contracts for interpretation, plans, result references, evidence claims and chart intent. Give the model only permitted catalogue entries and necessary data. CRM text is untrusted content and cannot alter tool permissions, query policy or application instructions.
+
+   The owner permits read-only Monday GraphQL lookups when source clarification is needed. Any such tool must use bounded, authorised queries and preserve the distinction between live source observations and the metric result's dataset. This permission does not require CRM cleanup or grant mutation access.
 
    Use PostgreSQL-backed LangGraph checkpoints with a separate state role. Store large datasets outside graph state and retain references. Persist a structured clarification and resume only from an authenticated reply. Follow-ups modify the previous resolved plan and show material changes in scope. See [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence) and [interrupt behaviour](https://docs.langchain.com/oss/python/langgraph/interrupts).
 
@@ -336,6 +364,6 @@ The release evidence must cover these cases:
 | Netlify/Render integration | Allowed origins, redirects, direct links, stream reconnection and independent rollbacks pass staging checks |
 | Operations | Per-source freshness, coverage, concurrency and measured cost/latency remain visible and within agreed limits |
 
-Implementation locations follow the repository structure above: `services/bi_analyst/bi_analyst/` for the independent API, graph, query tools and policy; `services/bi_analyst/bi_analyst/semantic/` for the catalogue; `src/database/migrations/` for new ordered analyst migrations; `web/` for the Netlify frontend; and `services/bi_analyst/tests/evals/` for isolated reference-result and conversation evaluations. Reuse compatible repository utilities after checking for privileged credentials and startup side effects. Phase 1 tooling, the Phase 2 candidate catalogue/migrations and the Phase 3 service/permission/authentication code are implemented. The [reportable-population rollout](project-placeholders.md#verified-rollout-8-october-2026), including analyst migrations 001/004, passed TEST and owner-approved production checks. Phase 3 migration 003 is applied and verified in TEST with existing grants preserved; its production rollout and service deployment remain open. Authentication migration 005, the Monday adapter and frontend sign-in shell are implemented and locally tested; hosted migration, provider setup, approved-user provisioning and live acceptance remain open. Source/mirror certification, revised reference approval, the metric compiler, graph and analytical frontend also remain open.
+Implementation locations follow the repository structure above: `services/bi_analyst/bi_analyst/` for the independent API, graph, query tools and policy; `services/bi_analyst/bi_analyst/semantic/` for the catalogue; `src/database/migrations/` for new ordered analyst migrations; `web/` for the Netlify frontend; and `services/bi_analyst/tests/evals/` for isolated reference-result and conversation evaluations. Reuse compatible repository utilities after checking for privileged credentials and startup side effects. Phase 1 tooling, the Phase 2 catalogue/migrations, the Phase 3 service/permission/authentication code and the Phase 4 deterministic metric service are implemented. The [reportable-population rollout](project-placeholders.md#verified-rollout-8-october-2026), including analyst migrations 001/004, passed TEST and owner-approved production checks. Phase 3 migration 003 is applied and verified in TEST with existing grants preserved; its production rollout and service deployment remain open. Authentication migration 005, the Monday adapter and frontend sign-in shell are implemented and locally tested; hosted migration, provider setup, approved-user provisioning and live acceptance remain open. Phase 1 is closed by owner acceptance, now consumed by runtime activation. Phase 4 covers all five metric families and bounded read-only Monday source checks. Hosted metric acceptance, the graph and analytical frontend remain delivery work. Power BI verification and CRM cleanup are not release prerequisites.
 
 The delivery checkpoints are: **data certification** after Phases 1-2; **authenticated metric API** after Phases 3-4; **conversational UI on Netlify with API on Render** after Phases 5-6; **controlled production release** after Phase 7; and **exploratory analysis** after Phase 8. Frontend contract work can run alongside graph development; deployment configuration can run alongside UI work. Data certification and permission enforcement remain prerequisites for real-user data access.

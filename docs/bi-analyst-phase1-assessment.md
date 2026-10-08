@@ -1,9 +1,15 @@
 # Phase 1 implementation assessment
 
+**Current status: closed by owner acceptance on 8 October 2026.** See the
+[closure record](bi-analyst-phase1-closure.md). The owner accepted the codebase
+corrections and withdrew Power BI verification and Monday cleanup prerequisites.
+The assessment below is historical; its open findings do not reopen Phase 1.
+
 The plan has a sound dependency order: certify source definitions and populations,
 then publish the semantic interface, then enable the application. The existing
 70-scenario dataset is a reproducible baseline, but does not establish source
-accuracy or business approval. Phase 1 therefore remains open.
+accuracy or business approval. Phase 1 was therefore open at this assessment;
+the subsequent explicit owner acceptance closes it.
 
 ## Owner clarification: 8 October 2026
 

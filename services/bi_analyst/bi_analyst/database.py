@@ -50,7 +50,7 @@ class Database:
         async with pool.connection() as conn:
             async with conn.transaction():
                 if analytical:
-                    await conn.execute("SET TRANSACTION READ ONLY")
+                    await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 await conn.execute("SELECT set_config('statement_timeout', %s, true), "
                                    "set_config('lock_timeout', '1000', true), "
                                    "set_config('search_path', 'pg_catalog', true)",
