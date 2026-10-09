@@ -3,7 +3,10 @@
 Implemented on 8 October 2026 in frontend/API package **0.6.0**. This is a code
 delivery, with local integration evidence. No hosted migration, Monday provider
 configuration, Render deployment or Netlify publication was performed. The
-hosted Phase 6 exit gate remains a staging acceptance task.
+hosted checks were originally planned for staging. The owner-approved
+[Phase 7 single-deployment plan](bi-analyst-phase7.md) now uses one production API
+and frontend with a restricted pilot, not separate staging sites. The historical
+test results below do not establish hosted acceptance.
 
 ## Assessment and implementation decisions
 
@@ -115,19 +118,20 @@ Do not delete conversation, feedback, checkpoint or result tables for rollback.
 
 ## Environment matrix
 
-The hostnames below are placeholders, not deployed resources. Use separate
-staging frontend, API, Monday application/session configuration and TEST database.
+The hostnames below are placeholders. Use local/CI fixtures for development and
+one hosted production deployment for the restricted pilot. No staging Render or
+Netlify site is required by the revised Phase 7 plan.
 
-| Setting | Local synthetic tests | Dedicated staging | Production |
-|---|---|---|---|
-| Frontend | `http://127.0.0.1:4173` | `https://STAGING_FRONTEND.netlify.app` | `https://PRODUCTION_FRONTEND.netlify.app` |
-| `VITE_API_ORIGIN` | `http://127.0.0.1:4174` (intercepted) | `https://STAGING_API.onrender.com` | `https://PRODUCTION_API.onrender.com` |
-| `BI_ANALYST_ENVIRONMENT` | `test` for backend fixtures | `staging` | `production` |
-| `BI_ANALYST_CORS_ORIGINS` | Exact loopback test origin | Exact staging frontend origin | Exact production frontend origin |
-| `BI_ANALYST_AUTH_FRONTEND_URL` | Synthetic `/auth/callback` | Exact staging frontend `/auth/callback` | Exact production frontend `/auth/callback` |
-| `BI_ANALYST_MONDAY_REDIRECT_URI` | Synthetic provider | Exact staging API `/auth/callback` | Exact production API `/auth/callback` |
-| Database | Disposable loopback fixtures | Dedicated TEST database | Accepted production database |
-| `STAGING_API_ORIGIN` | Unneeded | Same staging API origin for nonproduction Netlify builds | Do not use for production routing |
+| Setting | Local synthetic tests | Single production deployment |
+|---|---|---|
+| Frontend | `http://127.0.0.1:4173` | `https://PRODUCTION_FRONTEND.netlify.app` |
+| `VITE_API_ORIGIN` | `http://127.0.0.1:4174` (intercepted) | `https://PRODUCTION_API.onrender.com` |
+| `BI_ANALYST_ENVIRONMENT` | `test` for backend fixtures | `production` |
+| `BI_ANALYST_CORS_ORIGINS` | Exact loopback test origin | Exact production frontend origin |
+| `BI_ANALYST_AUTH_FRONTEND_URL` | Synthetic `/auth/callback` | Exact production frontend `/auth/callback` |
+| `BI_ANALYST_MONDAY_REDIRECT_URI` | Synthetic provider | Exact production API `/auth/callback` |
+| Database | Disposable loopback fixtures | Explicitly approved production database |
+| `STAGING_API_ORIGIN` | Unneeded | Unset; no deploy previews or branch deploys |
 
 Only `VITE_API_ORIGIN` is public frontend configuration; builds reject other
 `VITE_` variables. Monday credentials, read/state DSNs, service credentials and
@@ -137,14 +141,12 @@ with an exact API origin in `connect-src`, alongside the root Netlify SPA
 fallback and other security headers. The standard build remains `web/` to
 `dist`, following [Netlify's Vite setup](https://docs.netlify.com/build/frameworks/framework-setup-guides/vite/).
 
-Nonproduction Netlify contexts fail unless their public API origin matches the
-explicit build-only `STAGING_API_ORIGIN`. Configure values in the corresponding
-Netlify environment context. Use a stable staging frontend for real sign-in.
-A preview that needs sign-in also needs its exact origin and callback approved
-on a dedicated staging API configuration; the API has one fixed frontend
-callback, and PKCE storage is origin-bound. Arbitrary preview URLs must not be
-added to production CORS. Synthetic browser fixtures run only in tests and are
-not bundled in the product.
+The existing nonproduction build guard remains unchanged. For the single-hosted
+deployment, disable Netlify deploy previews and branch deploys rather than setting
+`STAGING_API_ORIGIN` to the production API. The API has one fixed frontend callback,
+and PKCE storage is origin-bound. Do not add preview URLs to production CORS.
+Synthetic browser fixtures run only in local/CI tests and are not bundled in the
+product.
 
 ## Validation and remaining hosted acceptance
 
@@ -156,7 +158,7 @@ npm test
 npx playwright install chromium
 npm run test:browser
 # For a normal build, set the intended explicit origin first:
-$env:VITE_API_ORIGIN='https://STAGING_API.onrender.com'
+$env:VITE_API_ORIGIN='https://PRODUCTION_API.onrender.com'
 npm run build
 ```
 
@@ -187,7 +189,8 @@ Unit tests
 cover decimal precision, hostile chart intent, unknown values, series bounds,
 split SSE frames, large-frame rejection, stream cancellation and build policy.
 
-Before declaring the hosted Phase 6 gate passed, record staging evidence for:
+Before accepting the hosted workspace in the restricted production pilot,
+record evidence for:
 
 1. Reviewed migrations and restricted role startup, enabled Monday identity,
    provisioned pilot users and explicitly enabled workflow.
@@ -200,6 +203,8 @@ Before declaring the hosted Phase 6 gate passed, record staging evidence for:
 5. Chart/table/CSV scope consistency, project access, sign-out and pilot user
    accessibility checks.
 
-These require the dedicated hosted staging services and provider setup that
-were already open in Phases 3–5. Production activation and load qualification
-remain Phase 7 delivery work.
+Perform these controlled checks on the single deployment, with authorized pilot
+users and planned maintenance for disruptive checks. Database outages and other
+destructive failure injection stay in local/CI fixtures. This is not a claim that
+the original staging-based full-release validator passed; follow the revised
+[Phase 7 acceptance and rollback procedure](bi-analyst-phase7.md).

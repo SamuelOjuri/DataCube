@@ -4,6 +4,13 @@ Implemented 8 October 2026. This closes the authentication **code** gap in Phase
 It supersedes the earlier request to defer all authentication. It does not apply a
 hosted migration, register a Monday app, grant anyone access or deploy either service.
 
+**Deployment update, 9 October 2026:** follow the
+[single-production-deployment plan](bi-analyst-phase7.md). Following deletion of
+the staging instances, create one new production Render API and one new production
+Netlify project, with one Monday identity app. Do not reuse staging URLs or replace
+unrelated existing sites. Historical verification below is not a production
+readiness claim.
+
 ## Assessment of the supplied analysis
 
 The recommendation is appropriate for a pilot whose members already use Monday.
@@ -107,8 +114,10 @@ state version 3 with authentication disabled and version 5 with either setting.
 Monday authentication refuses readiness/startup without version 5. The Phase 2
 semantic migration 004 is independent and remains part of the reporting rollout.
 
-For the specifically selected staging database, run once as the existing platform
-administrator, after 003, in a single transaction:
+For the explicitly approved deployment database, first check which migrations are
+installed. Apply 005 only if missing, as the existing platform administrator,
+after 003, in a single transaction. A database already on schema 7 must not rerun
+this earlier migration:
 
 ```text
 psql --single-transaction --set ON_ERROR_STOP=1 --file src/database/migrations/20261008_005_analyst_auth.sql
@@ -172,31 +181,35 @@ deployment tasks. There is no startup worker or automatic maintenance job.
    configure the exact backend `/auth/callback` redirect, enable **New OAuth Flow**
    for the intended version, and arrange app installation/approval in the approved
    account. Test the draft using Monday's **Active for me**, then promote it to live.
-   Separate staging and production apps/credentials avoid cross-environment grants.
-2. Apply 005 in the chosen staging database and provision the explicitly approved
-   pilot. Retain the Phase 3 restricted runtime DSNs, TLS and NOLOGIN owner roles.
+   Use the final production URLs; this plan does not need a second identity app.
+2. Review the approved production database's migration inventory and provision the
+   explicitly approved pilot. Apply only missing migrations using the Phase 7
+   sequence. Retain restricted runtime DSNs, TLS and NOLOGIN owner roles; do not
+   substitute TEST credentials for production credentials.
 3. Configure the independent [backend environment](../services/bi_analyst/env.example):
    `BI_ANALYST_MONDAY_CLIENT_ID`, secret, approved account ID, fixed backend callback,
    fixed frontend callback and explicit CORS origin. Set `BI_ANALYST_AUTH_PROVIDER=monday`
-   only after these steps. The [Render blueprint](../services/bi_analyst/render.yaml)
-   defaults to `disabled` and continues to disable automatic deploys.
-4. Set `VITE_API_ORIGIN` for the separate `web/` build. It is the only frontend
+   only after these steps and the Phase 7 pilot/model configuration. The new Render
+   service is created directly through **New > Web Service**; manage its settings
+   in the dashboard, without importing or reconnecting the old Blueprints.
+4. Set `VITE_API_ORIGIN` for the `web/` build on the new Netlify production
+   project. It is the only public frontend
    configuration; no Supabase key, client secret, database credential or Monday
    token belongs there. Use Node 22.12+ or 24 and `npm ci`, then `npm run build`.
    The root [Netlify configuration](../netlify.toml) includes SPA callback routing,
-   no-store, no-referrer and a CSP. Narrow its `connect-src https:` to the exact API
-   origin when provisioning each hosted environment. No arbitrary preview origins
-   or production access for deploy previews: use dedicated staging configuration.
+   no-store and no-referrer; the build generates CSP with the exact API origin.
+   Disable deploy previews and branch deploys for this route. Do not point
+   `STAGING_API_ORIGIN` at production or allow preview origins through CORS.
 5. Verify approved sign-in, explicit denial cases, cancelled consent, refresh/reload,
    logout, session expiry and two-user conversation isolation through the actual
    Netlify/Render/Monday path. Confirm provider revocation succeeds for both token
    types, all eligibility fields are available with `me:read`, and the intended
    app version uses the new endpoint. Record evidence before pilot release.
 
-Only synthetic loopback tests have run here. Live app installation, credentials,
-hosted migration and hosted browser acceptance remain open. Authentication does
-not certify metric definitions or implement Phases 4–6. The frontend currently
-provides sign-in/session/sign-out only; the analytical workspace remains Phase 6.
+The verification recorded below used synthetic loopback tests, not live Monday
+acceptance. Record real sign-in evidence through the single-deployment pilot
+checklist. Authentication does not certify metric definitions; the analytical
+workspace is documented in [Phase 6](bi-analyst-phase6.md).
 
 Rollback uses `BI_ANALYST_AUTH_PROVIDER=disabled` on the new code, which denies all
 data endpoints. Do not roll back to the older binary after 005: its version-3 audit
