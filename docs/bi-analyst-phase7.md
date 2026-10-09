@@ -6,6 +6,87 @@ not assert that hosted Phase 6 acceptance, production promotion or the business
 pilot has happened. No hosted migrations, deployments, identity grants or
 Monday changes were performed.
 
+## Next step after the TEST migrations: deploy the API
+
+The first staging deployment needs **two connection strings and the TEST SSL
+certificate**. The staging Blueprint generates its own telemetry token and runs
+the read-only preflight automatically before starting the API. Frontend, Monday,
+Gemini and pilot-user settings are deferred until those features are enabled.
+
+1. Commit and push the updated `services/bi_analyst/render-staging.yaml` to the
+   deployment branch. Run the BI Analyst CI workflow on that commit. Local edits
+   do not change Render's setup form until that branch contains them.
+2. If still on the unsubmitted Blueprint form, go back and open **New > Blueprint**
+   again, select that branch, and set **Blueprint Path** to
+   `services/bi_analyst/render-staging.yaml`. It now asks only for
+   `BI_ANALYST_READ_DSN` and `BI_ANALYST_STATE_DSN`. If a service already exists,
+   sync its existing Blueprint instead of creating another service.
+3. Enter the two TEST connections using the role passwords already provisioned.
+   Replace `PROJECT_REF`, `POOLER_HOST` and the password placeholders below with
+   the TEST values. Copy the actual session-pooler host from Supabase's **Connect**
+   panel. Percent-encode reserved characters in passwords, such as `@` as `%40`.
+   Paste each entire URI into its Render Value field, without surrounding quotes.
+
+   `BI_ANALYST_READ_DSN`:
+
+   ```text
+   postgresql://bi_analyst_reader.PROJECT_REF:READER_PASSWORD_URL_ENCODED@POOLER_HOST:5432/postgres?sslmode=verify-full&sslrootcert=/etc/secrets/supabase-test.cer
+   ```
+
+   `BI_ANALYST_STATE_DSN`:
+
+   ```text
+   postgresql://bi_analyst_state.PROJECT_REF:STATE_PASSWORD_URL_ENCODED@POOLER_HOST:5432/postgres?sslmode=verify-full&sslrootcert=/etc/secrets/supabase-test.cer
+   ```
+
+4. Create the service, then open **Environment > Secret Files > Add Secret File**.
+   Name it `supabase-test.cer` and paste the full TEST certificate contents,
+   including the certificate markers. Render exposes it at
+   `/etc/secrets/supabase-test.cer`; a Windows Downloads path will not work there.
+   If an initial deployment starts before the certificate is present, let the
+   deployment triggered by saving the file complete, or manually redeploy.
+5. Check the deployment logs. Preflight should print `"passed": true` and
+   `"errors": []`, then Uvicorn starts. A failed preflight stops startup and
+   reports fixed error codes without exposing credentials. It does not run
+   migrations, grant permissions or contact Monday/Gemini.
+6. Open `https://YOUR-STAGING-API.onrender.com/health/ready`, using the actual URL
+   assigned by Render. Expect these fields (additional metadata is normal):
+
+   ```json
+   {
+     "status": "ready",
+     "environment": "staging",
+     "api_version": "0.7.0",
+     "schema_version": 7,
+     "identity": "deferred",
+     "metric_execution": "disabled",
+     "workflow": "disabled",
+     "pilot_only": true
+   }
+   ```
+
+This completes the initial API/database deployment check. No local package
+installation, Render shell, manual telemetry-token generation, new database
+roles or repeated migrations are needed for this step. Keep the existing one
+instance/eight-connection allocation within TEST's available database budget.
+
+Render generates `BI_ANALYST_TELEMETRY_TOKEN` only when it does not already exist;
+retrieve it from the service's Environment settings when configuring monitoring.
+Blueprint sync also preserves previously configured variables omitted from the
+file. On an existing service, remove any dummy deferred values (especially invalid
+pilot UUIDs or CORS URLs) before redeploying; preserve real configuration.
+
+Next, configure the staging frontend and Monday sign-in using the
+[authentication runbook](bi-analyst-auth.md), then Gemini and the nominated pilot.
+Add the deferred settings through Render's Environment page. Update the staging
+Blueprint's authentication/analyst/workflow flags when activating those features,
+so a later Blueprint sync does not restore their disabled defaults. Full pilot
+qualification and production promotion still follow the sequence below.
+
+Render documents the [Blueprint creation and sync flow](https://render.com/docs/infrastructure-as-code),
+[generated secrets](https://render.com/docs/blueprint-spec#generating-random-secrets)
+and [secret files](https://render.com/docs/configure-environment-variables#secret-files).
+
 ## Assessment of the plan
 
 The architecture and promotion order are appropriate. Existing restricted roles,
@@ -14,10 +95,9 @@ a useful foundation. Four delivery details needed explicit treatment:
 
 - Phase 6 code completion does not establish real Monday/Netlify/Render acceptance.
   The release gate requires that evidence separately from local synthetic tests.
-- Performance/cost targets are not an accepted, measured contract in the supplied
-  implementation. `deploy/release-policy.toml` contains **proposals**, with
-  `approved=false`. Qualification fails until an approval reference and actual
-  measurements are supplied; no new business acceptance is invented.
+- `deploy/release-policy.toml` records the performance/cost targets and their
+  approval reference. Qualification verifies that recorded approval alongside
+  actual measurements; accepted targets alone do not establish hosted performance.
 - A rolling replacement temporarily has old and new database pools. Deployment
   settings reserve eight connections for one instance with two read and two state
   connections per process. This allocation must be confirmed against the actual
@@ -86,17 +166,19 @@ does not advance schema 7 or change the v1 result/stream contract.
 3. Provision reader/state LOGIN credentials and verified TLS trust as documented
    in Phase 3. Provision the maintenance role separately only if enabling retention.
    No migrator/administrator/maintenance credential belongs in the API service.
-4. Import the **staging** Blueprint at its repository path. Supply a dedicated TEST
-   DSN pair, staging Monday OAuth application, exact frontend CORS/callback URLs,
-   Gemini key, and independent random telemetry token of at least 32 characters.
+4. Follow the initial API deployment steps above. Import the **staging** Blueprint,
+   supply only the dedicated TEST DSN pair, and upload the TEST SSL certificate.
+   Render generates the telemetry token and staging startup runs preflight.
    Confirm the reserved eight-connection budget and select the initial instance
    plan. Record its CPU/RAM and database region with subsequent load evidence.
-5. Run `bi-analyst-preflight` in that environment. It opens restricted connections,
-   checks actual privileges/schema/operations-role presence, and performs no grants
-   or writes. Configure reviewed model input/output USD per million token prices
-   together; unset prices mean unknown cost. Enable Monday authentication,
-   analyst/workflow flags and the nominated pilot list, then run
-   `bi-analyst-preflight --pilot`. Failed checks emit fixed codes, not DSNs.
+5. Confirm automatic `bi-analyst-preflight` succeeds and `/health/ready` reports
+   schema 7. It opens restricted connections, checks actual privileges/schema/
+   operations-role presence, and performs no grants or writes. Then configure the
+   staging Monday OAuth app, exact frontend CORS/callback URLs, Gemini key and
+   provisioned pilot subjects. Configure reviewed model input/output USD per
+   million token prices together; unset prices mean unknown cost. Enable Monday
+   authentication and analyst/workflow flags, then run `bi-analyst-preflight --pilot`.
+   Failed checks emit fixed codes, not DSNs.
 6. Deploy Netlify using the existing root `netlify.toml`: build `web/`, publish
    `dist`, exact API-origin CSP and SPA fallback. Set `VITE_API_ORIGIN` to staging;
    nonproduction contexts also require the same `STAGING_API_ORIGIN`. Rebuild on

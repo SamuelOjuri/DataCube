@@ -1,11 +1,13 @@
-# Dedicated TEST database and staging Monday app; never use production secrets.
+# First deployment: supply only the two TEST DSNs and upload supabase-test.cer.
+# DSNs use sslmode=verify-full and sslrootcert=/etc/secrets/supabase-test.cer.
+# Add frontend, Monday, Gemini and pilot settings later; see docs/bi-analyst-phase7.md.
 services:
   - type: web
     name: datacube-bi-analyst-staging
     runtime: python
     rootDir: services/bi_analyst
     buildCommand: pip install -r requirements.lock && pip install --no-deps --no-build-isolation .
-    startCommand: uvicorn bi_analyst.api:application --factory --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-proxy-headers --timeout-keep-alive 5 --timeout-graceful-shutdown 20 --limit-concurrency 32
+    startCommand: bi-analyst-preflight && exec uvicorn bi_analyst.api:application --factory --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-proxy-headers --timeout-keep-alive 5 --timeout-graceful-shutdown 20 --limit-concurrency 32
     healthCheckPath: /health/ready
     numInstances: 1
     autoDeployTrigger: "off"
@@ -16,17 +18,9 @@ services:
       - {key: BI_ANALYST_WORKFLOW_ENABLED, value: "false"}
       - {key: BI_ANALYST_AUTH_PROVIDER, value: disabled}
       - {key: BI_ANALYST_PILOT_ONLY, value: "true"}
-      - {key: BI_ANALYST_PILOT_SUBJECTS, sync: false}
       - {key: BI_ANALYST_READ_DSN, sync: false}
       - {key: BI_ANALYST_STATE_DSN, sync: false}
-      - {key: BI_ANALYST_CORS_ORIGINS, sync: false}
-      - {key: BI_ANALYST_MONDAY_CLIENT_ID, sync: false}
-      - {key: BI_ANALYST_MONDAY_CLIENT_SECRET, sync: false}
-      - {key: BI_ANALYST_MONDAY_ACCOUNT_ID, sync: false}
-      - {key: BI_ANALYST_MONDAY_REDIRECT_URI, sync: false}
-      - {key: BI_ANALYST_AUTH_FRONTEND_URL, sync: false}
-      - {key: BI_ANALYST_GEMINI_API_KEY, sync: false}
-      - {key: BI_ANALYST_TELEMETRY_TOKEN, sync: false}
+      - {key: BI_ANALYST_TELEMETRY_TOKEN, generateValue: true}
       - {key: BI_ANALYST_CONNECTION_BUDGET, value: 8}
       - {key: BI_ANALYST_DEPLOYMENT_OVERLAP, value: 2}
       - {key: BI_ANALYST_REPLICA_COUNT, value: 1}
