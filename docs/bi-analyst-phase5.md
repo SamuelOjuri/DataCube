@@ -50,8 +50,10 @@ Datasets remain in `analyst_state.results`; graph state stores result references
 
 The independent provider calls the documented
 [Gemini structured output API](https://ai.google.dev/gemini-api/docs/structured-output)
-using `gemini-3.8-flash`, temperature zero, low thinking effort, a bounded response
-and Pydantic validation. Prompt version is `bi-conversation-1.0.2`. The adapter
+using `gemini-3.8-flash`, temperature zero, high thinking effort, a bounded response
+and Pydantic validation. The current configuration omits `maxOutputTokens`, using
+the provider's default output-token limit rather than an application-selected cap.
+This does not imply unlimited output. Prompt version is `bi-conversation-1.0.2`. The adapter
 does not import predictive scoring, ETL configuration or Monday write clients.
 Inherited LangSmith tracing is disabled around execution. Neither provider
 bodies nor raw prompts are exposed in public progress events or error messages.
@@ -119,8 +121,10 @@ Defaults are two active workflows per instance, 90 seconds of cumulative active
 execution time across clarification segments, eight total model attempts,
 24 metric/entity calls and at most three clarification replies. A transient
 provider failure can retry once per node; all attempts consume the durable run
-budget. Each model response is limited to 128 KiB, input context to 64 KiB and
-generation to 4,096 tokens. Phase 4 row, byte, query, connection and concurrency
+budget. Each model response is limited to 128 KiB and input context to 64 KiB;
+there is no explicit output-token cap in the request. Provider-default token
+limits, timeout checks and rejection of incomplete model output still apply.
+Phase 4 row, byte, query, connection and concurrency
 limits also apply. Waiting for a user consumes no database lease or runtime
 budget. Public event count and stored payload sizes are database bounded.
 
@@ -156,6 +160,11 @@ against independently authored contracts. It supports `--cases` for diagnostics
 and explicit `--env-file` for a benchmark credential; the application itself never
 loads the repository `.env`. Reports retain failed attempts as well as revised
 prompt diagnostics. A benchmark pass is not automatic production enablement.
+
+The historical evaluations below used low thinking effort and an explicit
+4,096-token cap. Their saved reports are unchanged; they do not certify the
+current generation settings. Re-evaluate before claiming equivalent model
+quality, latency or cost.
 
 The final isolated run passed **361 tests**. The live
 [planning benchmark](bi-analyst-phase5-model-evaluation-1.0.2.json) passed **27/27**

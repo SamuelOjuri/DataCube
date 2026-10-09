@@ -39,6 +39,7 @@ def test_gemini_typed_adapter_separates_instructions_and_never_sends_key_in_url(
             assert request.headers['x-goog-api-key'] == 'test-key'
             body = json.loads(request.content)
             assert 'systemInstruction' in body and body['generationConfig']['responseMimeType'] == 'application/json'
+            assert 'maxOutputTokens' not in body['generationConfig']
             assert 'tools' not in body and 'cachedContent' not in body
             assert 'IGNORE' not in body['systemInstruction']['parts'][0]['text']
             return httpx.Response(200,json={'candidates':[{'finishReason':'STOP','content':{'parts':[

@@ -1,0 +1,372 @@
+I’ll update the runbook for fresh production Render and Netlify services, removing the instructions to reuse the deleted staging instances. I’ll separate the initial database/API checks from enabling sign-in and analytical access.
+
+
+Read , lines 1 to 140
+Completed with input: {
+  "path": "C:\\Users\\SamuelOjuri\\OneDrive - Tapered Plus\\Documents\\CodeProjects\\DataCube\\docs\\bi-analyst-phase7.md",
+  "view_range": [
+    1,
+    140
+  ]
+}
+
+Read , lines 141 to 294
+Completed with input: {
+  "path": "C:\\Users\\SamuelOjuri\\OneDrive - Tapered Plus\\Documents\\CodeProjects\\DataCube\\docs\\bi-analyst-phase7.md",
+  "view_range": [
+    141,
+    294
+  ]
+}
+
+Read 
+Completed with input: {
+  "path": "C:\\Users\\SamuelOjuri\\OneDrive - Tapered Plus\\Documents\\CodeProjects\\DataCube\\services\\bi_analyst\\render.yaml"
+}
+
+Read 
+Completed with input: {
+  "path": "C:\\Users\\SamuelOjuri\\OneDrive - Tapered Plus\\Documents\\CodeProjects\\DataCube\\netlify.toml"
+}
+
+Search for `existing|Blueprint|staging|Netlify|Render`
+
+Ran terminal command: git --no-pager status --short
+
+For this fresh setup, I recommend **Render → New Web Service**, rather than another Blueprint. That lets you configure the single API directly without the old templates restoring staging settings or asking for integrations before they are needed. The guide will include the full startup command, required initial variables, certificate setup, and new Netlify configuration.
+
+
+Edit , 
+
+Ran terminal command: git --no-pager diff --check; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git --no-pager status --short
+
+Ran terminal command: $files = @('docs\bi-analyst-phase7.md', 'docs\bi-analyst-auth.md'); $checked = 0; $missing = @(); foreach ($file in $files) { $absolute = (Resolve-Path -LiteralPath $file).Path; $text = Get-Content -LiteralPath $absolute -Raw; if ($text.Contains('https://datacube-bi-analyst-staging.onrender.com') -or $text.Contains('### 2. Repurpose the existing Render API') -or $text.Contains('### 3. Publish the existing Netlify production site')) { throw "Obsolete staging-reuse instructions in $file" }; foreach ($match in [regex]::Matches($text, '\[[^\]]+\]\(([^)]+)\)')) { $target = $match.Groups[1].Value; if ($target -match '^https?://' -or $target.StartsWith('#')) { continue }; $target = ($target -split '#', 2)[0]; $resolved = Join-Path (Split-Path -Parent $absolute) $target.Replace('/', '\'); $checked++; if (-not (Test-Path -LiteralPath $resolved)) { $missing += "$file -> $target" } } }; if ($missing.Count -gt 0) { $missing | Write-Output; throw 'Broken documentation links' }; Write-Output "Validated $checked local links; no obsolete staging URL or reuse headings in the updated guides."
+
+I’ve updated the `Phase 7 runbook` for **new production instances**, with no staging hostname or service reuse.
+
+Follow the steps below in order. **Do not enable analytical access until the database, frontend and user configuration are ready.**
+
+# 1. Prepare the production database
+
+In Supabase, open the **intended production project**, not TEST.
+
+### Check the existing setup
+
+Run in its SQL Editor:
+
+```sql
+SELECT to_regclass('analyst_state.schema_version') AS version_table;
+
+SELECT rolname, rolcanlogin
+FROM pg_roles
+WHERE rolname IN (
+    'bi_analyst_reader',
+    'bi_analyst_state',
+    'bi_analyst_maintenance'
+)
+ORDER BY rolname;
+```
+
+If the version table exists, run:
+
+```sql
+SELECT version FROM analyst_state.schema_version;
+```
+
+You need:
+
+- Schema version **7**
+- Reader and state roles with **LOGIN enabled**
+- Independently managed reader/state passwords
+- The maintenance role installed—this does **not** require deploying a maintenance service
+
+**If production is missing these, stop and review the missing migrations before creating the paid API service.** Do not rerun all migrations blindly. The `database setup guide` contains the provisioning details.
+
+Also:
+
+1. Confirm backup/restore arrangements.
+2. Test both restricted database logins.
+3. Download the CA certificate appropriate to the production connection.
+4. Ensure the certificate is multiline PEM text with `BEGIN CERTIFICATE` and `END CERTIFICATE` markers.
+
+# 2. Create a new production Render API
+
+For this simpler setup, use **New → Web Service**, **not Blueprint**. This avoids the old Blueprint restoring unwanted settings.
+
+Connect GitHub and select `SamuelOjuri/DataCube`.
+
+### Service settings
+
+| Setting | Value |
+|---|---|
+| Name | `datacube-bi-analyst`, if available |
+| Deployment branch | The branch containing your tested release |
+| Runtime | Python |
+| Root directory | `services/bi_analyst` |
+| Region | An available region close to the production database |
+| Instances | **1** |
+| Auto-deploy | **Off** |
+| Health-check path | `/health/ready` |
+
+Select an instance plan within your approved budget. Do not enable additional instances or autoscaling.
+
+### Build command
+
+```sh
+pip install -r requirements.lock && pip install --no-deps --no-build-isolation .
+```
+
+### Start command
+
+Paste this as **one line**:
+
+```sh
+bi-analyst-preflight && exec uvicorn bi_analyst.api:application --factory --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-proxy-headers --timeout-keep-alive 5 --timeout-graceful-shutdown 20 --limit-concurrency 32
+```
+
+# 3. Configure Render’s initial environment
+
+### A. Add these non-secret variables
+
+```dotenv
+PYTHON_VERSION=3.13.5
+BI_ANALYST_ENVIRONMENT=production
+BI_ANALYST_AUTH_PROVIDER=disabled
+BI_ANALYST_ANALYST_ENABLED=false
+BI_ANALYST_WORKFLOW_ENABLED=false
+BI_ANALYST_PILOT_ONLY=true
+BI_ANALYST_METRIC_EVALUATION_ENABLED=false
+BI_ANALYST_REPLICA_COUNT=1
+BI_ANALYST_DEPLOYMENT_OVERLAP=2
+BI_ANALYST_CONNECTION_BUDGET=8
+BI_ANALYST_READ_POOL_SIZE=2
+BI_ANALYST_STATE_POOL_SIZE=2
+BI_ANALYST_METRIC_CONCURRENCY=2
+BI_ANALYST_WORKFLOW_CONCURRENCY=2
+BI_ANALYST_BUSINESS_TIMEZONE=Europe/London
+```
+
+Confirm the eight-connection allowance fits the production database’s available capacity.
+
+### B. Add the two database connections
+
+Replace **every uppercase placeholder** with the correct production value.
+
+**`BI_ANALYST_READ_DSN`**
+
+```text
+postgresql://bi_analyst_reader.PROJECT_REF:ENCODED_READER_PASSWORD@POOLER_HOST:5432/postgres?sslmode=verify-full&sslrootcert=/etc/secrets/supabase-production.crt
+```
+
+**`BI_ANALYST_STATE_DSN`**
+
+```text
+postgresql://bi_analyst_state.PROJECT_REF:ENCODED_STATE_PASSWORD@POOLER_HOST:5432/postgres?sslmode=verify-full&sslrootcert=/etc/secrets/supabase-production.crt
+```
+
+Remember:
+
+- Copy the production session-pooler host from Supabase’s **Connect** panel.
+- Use each role’s password, not the administrator password.
+- Percent-encode passwords **once** for URI use.
+- Paste the completed connection strings without surrounding quotes.
+- Both connections must target the same production project.
+
+### C. Generate a telemetry token
+
+A manually created service does not generate this automatically.
+
+Run locally in PowerShell:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))" | Set-Clipboard
+```
+
+Paste the clipboard value into Render as:
+
+```text
+BI_ANALYST_TELEMETRY_TOKEN
+```
+
+Store it securely and clear the clipboard afterward. Do not share it in chat.
+
+### D. Add the certificate
+
+Under **Environment → Secret Files**, create:
+
+```text
+supabase-production.crt
+```
+
+Paste the **complete production CA certificate text** into it.
+
+If Render only exposes Secret Files after service creation, create the service, add the file immediately, then redeploy. A startup before the file exists will fail; do not disable certificate verification.
+
+### E. Deploy and check
+
+Record the **actual production URL Render assigns**. For example, if available:
+
+```text
+https://datacube-bi-analyst.onrender.com
+```
+
+Do not assume that URL until Render confirms it.
+
+Expect preflight:
+
+```json
+"passed": true,
+"errors": []
+```
+
+Open the assigned API URL followed by `/health/ready`.
+
+**Checkpoint:** HTTP 200, `environment=production`, schema 7, authentication and analytical features still disabled.
+
+# 4. Create the new production Netlify project
+
+In Netlify:
+
+1. Select **Add new project → Import an existing project → GitHub**.
+2. Select `SamuelOjuri/DataCube`.
+3. Select the tested deployment branch.
+4. Request the project name `datacube-bi-analyst`, if available.
+5. Leave unrelated existing Netlify projects untouched.
+
+### Build settings
+
+These match `netlify.toml`:
+
+| Setting | Value |
+|---|---|
+| Base directory | `web` |
+| Build command | `npm run build` |
+| Publish directory | `dist` |
+
+### Build environment variables
+
+```dotenv
+NODE_VERSION=22
+VITE_API_ORIGIN=https://YOUR_ACTUAL_NEW_RENDER_HOST
+```
+
+Replace the example API origin with Render’s actual URL, without a trailing slash.
+
+Also:
+
+- Disable **deploy previews** and **branch deploys**.
+- Leave `STAGING_API_ORIGIN` unset.
+- Do not add other `VITE_` variables.
+- Do not put database passwords, Monday secrets or Gemini keys in Netlify.
+
+Deploy, then record the new site’s **stable production URL**.
+
+**Checkpoint:** the frontend loads. Sign-in is still disabled at this stage.
+
+# 5. Configure Monday sign-in and pilot users
+
+### A. Create one Monday identity app
+
+In Monday’s developer settings:
+
+1. Create a dedicated DataCube sign-in app, separate from ETL.
+2. Request the `me:read` scope.
+3. Enable **New OAuth Flow** for the intended version.
+4. Set the redirect URI to:
+
+   ```text
+   YOUR_ACTUAL_API_ORIGIN/auth/callback
+   ```
+
+5. Arrange installation/approval for the intended Monday account.
+
+### B. Add these settings to Render
+
+| Variable | Value |
+|---|---|
+| `BI_ANALYST_MONDAY_CLIENT_ID` | Monday app client ID |
+| `BI_ANALYST_MONDAY_CLIENT_SECRET` | Monday app client secret |
+| `BI_ANALYST_MONDAY_ACCOUNT_ID` | Approved Monday account ID |
+| `BI_ANALYST_MONDAY_REDIRECT_URI` | Actual API origin + `/auth/callback` |
+| `BI_ANALYST_AUTH_FRONTEND_URL` | Actual Netlify origin + `/auth/callback` |
+| `BI_ANALYST_CORS_ORIGINS` | Actual Netlify origin only—no path or trailing slash |
+
+### C. Provision approved users
+
+Use the SQL in the `authentication provisioning guide` to connect each verified Monday account/user ID to an approved internal principal UUID.
+
+These grants permit company-wide reporting. Provision only explicitly approved people; reuse existing principal UUIDs where appropriate.
+
+Set Render’s pilot list:
+
+```dotenv
+BI_ANALYST_PILOT_SUBJECTS=FIRST_INTERNAL_UUID,SECOND_INTERNAL_UUID
+```
+
+These are **internal UUIDs**, not Monday user IDs.
+
+Keep authentication and analytical features disabled until Step 6.
+
+# 6. Configure Gemini and activate the pilot
+
+### A. Add the model settings to Render
+
+```dotenv
+BI_ANALYST_GEMINI_API_KEY=YOUR_BACKEND_KEY
+BI_ANALYST_MODEL_INPUT_USD_PER_MILLION=REVIEWED_INPUT_RATE
+BI_ANALYST_MODEL_OUTPUT_USD_PER_MILLION=REVIEWED_OUTPUT_RATE
+```
+
+Replace the placeholders with actual values. Use the applicable prices for the model configured in `the provider`, currently `gemini-3.8-flash`.
+
+Agree a small pilot budget and review provider usage. Cost estimates and billing alerts are not necessarily hard spending caps.
+
+### B. Enable the features
+
+```dotenv
+BI_ANALYST_AUTH_PROVIDER=monday
+BI_ANALYST_ANALYST_ENABLED=true
+BI_ANALYST_WORKFLOW_ENABLED=true
+BI_ANALYST_PILOT_ONLY=true
+BI_ANALYST_METRIC_EVALUATION_ENABLED=false
+```
+
+### C. Change only the startup preflight prefix
+
+Replace:
+
+```text
+bi-analyst-preflight &&
+```
+
+with:
+
+```text
+bi-analyst-preflight --pilot &&
+```
+
+Leave the complete `exec uvicorn ...` portion unchanged.
+
+Save and redeploy. No paid Render shell is needed.
+
+**Checkpoint:** pilot preflight passes and readiness reports production, Monday identity and an enabled workflow.
+
+# 7. Verify before expanding access
+
+Use approved accounts to confirm:
+
+- Sign-in, logout and session expiry work.
+- Unapproved users are denied.
+- Users cannot access each other’s conversations.
+- Representative answers are correct.
+- Charts, tables and CSV exports agree.
+- Disconnect/reconnect and cancellation behave clearly.
+- Model usage remains within the agreed budget.
+
+Also verify readiness consistently responds within Render’s five-second allowance. The deleted TEST service had slow checks; do not assume the new deployment has resolved that.
+
+Record the deployed commit, results, backup arrangements and rollback procedure. Assign someone to review errors, spending and cleanup during the pilot.
+
+**You are then running one production API and one production frontend. Expanding the pilot does not require creating another pair of services.**
+
+The updated documentation passed formatting and local-link checks. **I have not created or configured any hosted resources.**
