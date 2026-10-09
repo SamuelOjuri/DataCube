@@ -3,7 +3,7 @@
 max_evidence_age_days = 7
 [targets]
 approved = true
-approval_reference = ""
+approval_reference = "Lead Developer on 09102026"
 min_concurrency = 2
 min_samples = 50
 max_query_p95_seconds = 5.0
