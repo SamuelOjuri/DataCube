@@ -32,7 +32,7 @@ export async function fixture(page: Page, {clarify=false, hold=false, existing=f
     const reply=(body:unknown,status=200,extra={})=>route.fulfill({status,headers:{...headers,'Content-Type':'application/json',...extra},body:JSON.stringify(body)});
     if(request.method()==='OPTIONS') {await reply({});return;}
     if(path==='/auth/login'){await route.fulfill({status:302,headers:{location:'http://127.0.0.1:4173/auth/callback#code='+'C'.repeat(43)}});return;}
-    if(path==='/auth/exchange'){state.expired=false; await reply({access_token:'S'.repeat(43),subject:'synthetic-user',expires_at:new Date(Date.now()+890000).toISOString()});return;}
+    if(path==='/auth/exchange'){state.expired=false; await reply({access_token:'S'.repeat(43),subject:'synthetic-user',expires_at:new Date(Date.now()+900000).toISOString(),expires_in:900});return;}
     if(state.expired){await reply({detail:'session_expired'},401);return;}
     if(!request.headers().authorization?.startsWith('Bearer ')){await reply({detail:'unauthorized'},401);return;}
     if(path.startsWith('/auth/')){await reply({});return;}

@@ -8,20 +8,25 @@ function fixture() {
   const seen = [];
   const changes = [];
   let timer;
-  const session = {access_token:'S'.repeat(43),subject:'user-one',expires_at:new Date(Date.now()+890000).toISOString()};
+  let timerDelay;
+  let elapsed = 0;
+  const session = {access_token:'S'.repeat(43),subject:'user-one',
+    expires_at:new Date(Date.now()+900000).toISOString(),expires_in:900};
   const browser = {
     crypto: webcrypto,
+    performance: {now: () => elapsed},
     sessionStorage: {setItem: (k,v) => storage.set(k,v),getItem: k => storage.get(k),removeItem: k => storage.delete(k)},
     location: {hash:'',pathname:'/auth/callback',search:'',assign: url => seen.push(['navigate',url])},
     history: {replaceState: (...args) => seen.push(['history',...args])},
-    setTimeout: cb => {timer=cb; return 1;},clearTimeout: () => {},
+    setTimeout: (cb,delay) => {timer=cb; timerDelay=delay; return 1;},clearTimeout: () => {},
     fetch: async (url, options) => {
       seen.push([url,options]);
       return new Response(JSON.stringify(session), {status:200,headers:{'Content-Type':'application/json'}});
     },
   };
   const auth = createAuth({apiOrigin:'https://api.example.test',browser,onChange:s => changes.push(s)});
-  return {auth,browser,storage,seen,changes,session,expire:()=>timer()};
+  return {auth,browser,storage,seen,changes,session,expire:()=>timer(),
+    advance: ms => {elapsed+=ms;},timerDelay:()=>timerDelay};
 }
 
 async function login(f) {
@@ -43,6 +48,54 @@ test('PKCE verifier stays in this tab; session is memory-only; URL is immediatel
   assert.equal(f.changes.at(-1).access_token,undefined);
   await f.auth.request('/auth/session');
   assert.equal(f.seen.at(-1)[1].headers.get('Authorization'),'Bearer '+f.session.access_token);
+});
+
+test('valid server sessions are accepted with browser clocks ahead or behind',async () => {
+  for (const skew of [-3600000,3000,3600000]) {
+    const f = fixture();
+    f.session.expires_at = new Date(Date.now()+900000+skew).toISOString();
+    await login(f);
+    assert.equal(f.timerDelay(),900000);
+    await f.auth.request('/auth/session');
+    assert.equal(f.changes.at(-1).subject,'user-one');
+  }
+});
+
+test('exchange time is deducted and requests enforce the deadline even before the timer runs',async () => {
+  for (const duration of [60,900]) {
+    const f = fixture();
+    f.session.expires_in = duration;
+    const fetch = f.browser.fetch;
+    f.browser.fetch = async (...args) => {f.advance(3000); return fetch(...args);};
+    await login(f);
+    assert.equal(f.timerDelay(),duration*1000-3000);
+    f.advance(duration*1000-3000);
+    const count = f.seen.length;
+    await assert.rejects(f.auth.request('/auth/session'),/sign in/);
+    assert.equal(f.seen.length,count);
+    assert.equal(f.changes.at(-1),null);
+  }
+});
+
+test('invalid server session durations and malformed session fields fail closed',async () => {
+  const changes = [undefined,null,0,-1,901,900.5,'900'].map(expires_in => ({expires_in}));
+  changes.push({expires_at:'not-a-date'},{access_token:'invalid'});
+  for (const change of changes) {
+    const f = fixture();
+    Object.assign(f.session,change);
+    await assert.rejects(login(f),/could not be completed/);
+    assert.equal(f.timerDelay(),undefined);
+    await assert.rejects(f.auth.request('/auth/session'),/sign in/);
+  }
+});
+
+test('an exchange that outlives the server session cannot start a client session',async () => {
+  const f = fixture();
+  f.session.expires_in = 60;
+  const fetch = f.browser.fetch;
+  f.browser.fetch = async (...args) => {f.advance(60000); return fetch(...args);};
+  await assert.rejects(login(f),/could not be completed/);
+  assert.equal(f.timerDelay(),undefined);
 });
 
 test('unsolicited callback cannot sign a different browser into an attacker session',async () => {

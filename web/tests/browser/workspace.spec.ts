@@ -11,6 +11,17 @@ test('production assets exclude backend secrets and test fixtures',async()=>{
   }
 });
 
+for (const skew of [-3000,3600000]) {
+  test(`sign-in survives a browser clock offset of ${skew}ms`,async({page})=>{
+    await page.clock.setFixedTime(Date.now()+skew);
+    await fixture(page);
+    await signIn(page);
+    await expect(page.getByLabel('Your question',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Sign out'}).click();
+    await expect(page.getByRole('button',{name:'Continue with Monday'})).toBeVisible();
+  });
+}
+
 test('sign-in, streaming replay, saved results, charts, tables, CSV, detail, feedback and accessibility',async ({page})=>{
   const state=await fixture(page,{disconnect:true});
   const errors:string[]=[]; page.on('pageerror',e=>errors.push(e.message));

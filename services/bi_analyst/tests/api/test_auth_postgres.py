@@ -38,10 +38,11 @@ def auth_database(database):
 
 
 @pytest.fixture
-def auth_settings(auth_database, settings):
+def auth_settings(auth_database, settings, request):
     admin, _ = auth_database
     admin.execute('DELETE FROM analyst_state.auth_rate_limit')
     return Settings(**{**settings.model_dump(), 'auth_provider': 'monday',
+        'session_seconds': getattr(request, 'param', 900),
         'monday_client_id': 'client-id', 'monday_client_secret': 'client-secret-marker',
         'monday_account_id': '123', 'monday_redirect_uri': BASE+'/auth/callback',
         'auth_frontend_url': ORIGIN+'/auth/callback'})
@@ -153,6 +154,17 @@ def test_real_login_session_logout_and_reconnect(client, pilot, auth_database, a
     for secret in ['client-secret-marker','provider-code-marker','monday-access-marker',token]:
         assert secret not in caplog.text
     assert admin.execute("SELECT count(*) AS n FROM analyst_state.audit_events WHERE owner_id=%s AND route='/auth/logout'", (pilot[0],)).fetchone()['n'] == 1
+
+
+@pytest.mark.parametrize('auth_settings', [60, 900], indirect=True)
+def test_exchange_includes_configured_session_duration(client, auth_settings):
+    browser, _, _ = client
+    session, _ = sign_in(browser)
+    assert type(session['expires_in']) is int
+    assert session['expires_in'] == auth_settings.session_seconds
+    response = browser.get('/auth/session', headers={'Authorization': 'Bearer '+session['access_token']})
+    assert response.status_code == 200
+    assert response.json()['expires_at'] == session['expires_at']
 
 
 @pytest.mark.parametrize('change', [{'enabled':False},{'is_guest':True},{'is_pending':True},

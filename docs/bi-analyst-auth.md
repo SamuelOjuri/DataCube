@@ -57,7 +57,8 @@ the frontend and can no longer be used by this service. Use a separate app from 
    accepted. The completed handoff expires after 60 seconds.
 5. `/auth/exchange` atomically redeems the attempt and rechecks the current grant
    and permission version. It returns a random 256-bit opaque DataCube bearer in
-   the response body. Only its SHA-256 digest is stored in PostgreSQL. Browser
+   the response body, the absolute `expires_at`, and `expires_in` (the configured
+   lifetime at issuance, in seconds, at most 900). Only its SHA-256 digest is stored in PostgreSQL. Browser
    session tokens remain in memory; requests use Authorization headers and omit
    cross-origin cookies. Reloading the page requires another Monday sign-in.
 6. Each protected request checks session expiry/revocation, current DataCube
@@ -65,7 +66,12 @@ the frontend and can no longer be used by this service. Use a separate app from 
    Session state and pre-authentication rate budgets are shared across replicas.
 
 Sessions have an absolute lifetime of 15 minutes (configurable down to one minute,
-never above 15), with no sliding renewal. Monday eligibility is checked at every
+never above 15), with no sliding renewal. The browser uses `expires_in` and a
+monotonic timer, subtracting the entire exchange round-trip before accepting the
+session. It checks that same deadline before requests; `expires_at` is metadata,
+not a comparison against the computer's wall clock. PostgreSQL remains authoritative
+for expiry and revocation. Small clock differences cannot reject a valid session
+or extend its lifetime. Monday eligibility is checked at every
 sign-in. A Monday-only disable/removal may take the remaining session lifetime,
 plus at most the 60-second pending handoff, to take effect; it is not an immediate
 DataCube logout. Disable the DataCube principal and increment its permission
@@ -214,6 +220,26 @@ workspace is documented in [Phase 6](bi-analyst-phase6.md).
 Rollback uses `BI_ANALYST_AUTH_PROVIDER=disabled` on the new code, which denies all
 data endpoints. Do not roll back to the older binary after 005: its version-3 audit
 will reject the new auth tables. Keep the additive state and audit history intact.
+
+## Troubleshooting a successful exchange followed by a sign-in error
+
+In Render's sanitised `http_request` logs, check the route, status and
+`auth_outcome`. A callback's HTTP 303 alone does not prove success: failures also
+redirect. A callback with no failure outcome followed by `/auth/exchange` HTTP 200
+shows that the backend issued a DataCube session. Check frontend session handling
+before changing Monday scopes, grants or CSP.
+
+The earlier frontend compared `expires_at` against the computer's clock and
+rejected any apparent lifetime over 900 seconds. Even a computer a few seconds
+behind the server could therefore reject a valid 15-minute session. The current
+duration-based contract avoids this. Deploy the updated Render backend **before**
+the updated Netlify frontend: older clients ignore the added `expires_in` field,
+but the updated frontend requires it. Then reload the frontend and begin a fresh
+login; callback handoffs cannot be reused. No database migration is needed.
+
+Verify `/auth/exchange` HTTP 200, `/auth/session` HTTP 200, an approved user's
+workspace, and logout. Do not share response tokens, callback query strings,
+cookies or full network exports when collecting diagnostics.
 
 ## Verification
 

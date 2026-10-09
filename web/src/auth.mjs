@@ -11,12 +11,14 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
   }
   let session = null;
   let timer;
+  let deadline = 0;
   let generation = 0;
   const active = new Set();
 
   function clear() {
     generation += 1;
     session = null;
+    deadline = 0;
     browser.clearTimeout(timer);
     for (const request of active) request.abort();
     active.clear();
@@ -44,6 +46,7 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
       throw new Error('Sign-in could not be completed. Please try again.');
     }
     const current = generation;
+    const started = browser.performance.now();
     const response = await browser.fetch(`${apiOrigin}/auth/exchange`, {
       method: 'POST', credentials: 'omit', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({code: params.get('code'), verifier: pending.verifier}),
@@ -51,11 +54,15 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
     if (!response.ok) throw new Error('Sign-in could not be completed. Please try again.');
     const received = await response.json();
     if (current !== generation) return false;
-    const lifetime = Date.parse(received.expires_at) - Date.now();
-    if (!/^[A-Za-z0-9_-]{43}$/.test(received.access_token) || !Number.isFinite(lifetime) || lifetime <= 0 || lifetime > 900000) {
+    // Deduct the whole exchange so network/audit latency cannot extend the server's lifetime.
+    const expires = started + received.expires_in * 1000;
+    const lifetime = expires - browser.performance.now();
+    if (!/^[A-Za-z0-9_-]{43}$/.test(received.access_token) || !Number.isFinite(Date.parse(received.expires_at)) ||
+        !Number.isInteger(received.expires_in) || received.expires_in <= 0 || received.expires_in > 900 || lifetime <= 0) {
       throw new Error('Sign-in could not be completed. Please try again.');
     }
     session = received;
+    deadline = expires;
     browser.history.replaceState(null, '', /^\/conversations\/[0-9a-f-]{36}$/.test(pending.returnTo) ? pending.returnTo : '/');
     timer = browser.setTimeout(clear, lifetime);
     onChange({subject: session.subject, expires_at: session.expires_at});
@@ -66,7 +73,7 @@ export function createAuth({apiOrigin, browser = window, onChange = (_session) =
     // Restrict all destinations so an API caller cannot exfiltrate the bearer.
     if (!path.startsWith('/v1/') && path !== '/auth/session') throw new Error('Unsupported API path');
     if (/[?#\\]/.test(path) || path.includes('..')) throw new Error('Unsupported API path');
-    if (!session || Date.parse(session.expires_at) <= Date.now()) {
+    if (!session || deadline <= browser.performance.now()) {
       clear();
       throw new Error('Please sign in to continue.');
     }

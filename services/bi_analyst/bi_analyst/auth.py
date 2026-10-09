@@ -91,7 +91,8 @@ def routes(principal):
         token = secrets.token_urlsafe(32)
         subject, expires = await request.app.state.auth_store.exchange(body.code, challenge(body.verifier), token, config.session_seconds)
         request.state.subject = subject
-        return {"access_token": token, "token_type": "Bearer", "expires_at": expires, "subject": subject}
+        return {"access_token": token, "token_type": "Bearer", "expires_at": expires,
+                "expires_in": config.session_seconds, "subject": subject}
 
     @router.get("/session")
     async def session(request: Request, actor=Depends(principal)):
