@@ -1,0 +1,11 @@
+{
+  "status": "closed_by_owner",
+  "owner": "Sam",
+  "recorded_at": "2026-10-08T13:12:08Z",
+  "catalogue_version": "1.1.0",
+  "catalogue_sha256": "904dd8ea353e3af1a5d6cf2a22441fdf214d32e27e7c7fa71c83b1d7b5ca78ba",
+  "decision": "docs/bi-analyst-phase1-closure.md",
+  "runtime_authorization": "Owner requested read-only source checks for doubts including metric_not_certified; reuse the existing Phase 1 acceptance for the implemented catalogue.",
+  "power_bi_required": false,
+  "monday_cleanup_required": false
+}

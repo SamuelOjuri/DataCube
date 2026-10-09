@@ -87,6 +87,43 @@ Render documents the [Blueprint creation and sync flow](https://render.com/docs/
 [generated secrets](https://render.com/docs/blueprint-spec#generating-random-secrets)
 and [secret files](https://render.com/docs/configure-environment-variables#secret-files).
 
+### Troubleshooting the first Render startup
+
+A successful build followed by `Exited with status 1` can be a failed preflight,
+not a Python installation or Uvicorn port error. The 9 October staging log reports
+two independent blockers; both must be resolved:
+
+1. **`no certificate or crl found`**: PostgreSQL found the configured root-certificate
+   file but could not parse a certificate from it. In Render's **Environment >
+   Secret Files**, replace its contents with the complete PEM-encoded **TEST
+   project's Supabase CA certificate**, downloaded from that project's database
+   SSL settings. Paste the actual multiline text, including
+   `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----`, not a filename,
+   Windows path, quoted string, literal `\n` escapes or certificate-viewer summary.
+   If the download is binary DER, export it as **Base-64 encoded X.509** using the
+   Windows certificate viewer first. Renaming a binary file does not convert it.
+   The `.cer` and `.crt` extensions are both usable when the contents are PEM.
+   The log uses `/etc/secrets/supabase-test.crt`, whereas the example above uses
+   `/etc/secrets/supabase-test.cer`: make `sslrootcert` in **both** DSNs match the
+   actual Render secret filename exactly. Keep `sslmode=verify-full`; do not
+   bypass certificate verification to make deployment succeed.
+2. **`catalogue_acceptance_required`**: the existing owner record,
+   [acceptance.json](../services/bi_analyst/bi_analyst/semantic/acceptance.json),
+   was present locally but excluded from Git by the blanket `*.json` rule.
+   [.gitignore](../.gitignore) now explicitly allows this packaged runtime record.
+   Include **both files** in the deployment commit and push it to Render's selected
+   branch. The record already matches catalogue 1.1.0; no new owner approval,
+   hash replacement, metric changes or acceptance bypass is needed.
+
+After saving the corrected secret file and DSNs, deploy the corrected commit
+using **Manual Deploy > Deploy latest commit** (automatic deployment is disabled).
+Confirm preflight prints `"passed": true` and `"errors": []`, then check
+`/health/ready` against the initial-deployment response above. Fixing the certificate
+alone does not resolve the missing acceptance record. If
+`database_or_privilege_preflight_failed` remains after TLS succeeds, investigate
+the new database error rather than rerunning migrations or granting broader access.
+These repository changes do not update Render secrets or verify hosted readiness.
+
 ## Assessment of the plan
 
 The architecture and promotion order are appropriate. Existing restricted roles,
