@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datacube-bi-analyst"
-version = "0.6.0"
+version = "0.7.0"
 description = "Isolated DataCube analyst API and analytical contracts (no ETL startup)"
 requires-python = ">=3.11"
 dependencies = [
@@ -18,6 +18,10 @@ test = ["pytest==8.4.2", "python-dotenv==1.1.1", "httpx==0.28.1"]
 
 [project.scripts]
 bi-catalogue = "bi_analyst.semantic.check:main"
+bi-analyst-release = "bi_analyst.operations.release:main"
+bi-analyst-qualify = "bi_analyst.operations.qualify:main"
+bi-analyst-maintain = "bi_analyst.operations.maintenance:main"
+bi-analyst-preflight = "bi_analyst.operations.preflight:main"
 
 [tool.setuptools.packages.find]
 include = ["bi_analyst*"]

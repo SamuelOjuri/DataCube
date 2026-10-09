@@ -2,6 +2,7 @@
 import os
 from urllib.parse import urlsplit
 import re
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from psycopg.conninfo import conninfo_to_dict
@@ -14,10 +15,18 @@ class Settings(BaseModel):
     read_dsn: SecretStr
     state_dsn: SecretStr
     environment: str = "production"
+    analyst_enabled: bool = True
+    pilot_only: bool = False
+    pilot_subjects: list[UUID] = Field(default_factory=list, max_length=100)
+    disabled_metrics: list[str] = Field(default_factory=list, max_length=32)
+    telemetry_token: SecretStr | None = None
+    model_input_usd_per_million: float | None = Field(default=None, ge=0, le=1000, allow_inf_nan=False)
+    model_output_usd_per_million: float | None = Field(default=None, ge=0, le=1000, allow_inf_nan=False)
     cors_origins: list[str] = Field(default_factory=list)
     read_pool_size: int = Field(default=2, ge=1, le=20)
     state_pool_size: int = Field(default=2, ge=1, le=20)
     replica_count: int = Field(default=1, ge=1, le=20)
+    deployment_overlap: int = Field(default=1, ge=1, le=2)
     connection_budget: int = Field(default=4, ge=2, le=200)
     pool_timeout_seconds: float = Field(default=3, gt=0, le=30)
     statement_timeout_ms: int = Field(default=5000, ge=100, le=30000)
@@ -53,9 +62,16 @@ class Settings(BaseModel):
     def validate_boundary(self):
         if self.environment not in {"production", "staging", "test"}:
             raise ValueError("environment must be production, staging or test")
+        if self.telemetry_token and len(self.telemetry_token.get_secret_value()) < 32:
+            raise ValueError("Telemetry requires an independent token of at least 32 characters")
+        if (self.model_input_usd_per_million is None) != (self.model_output_usd_per_million is None):
+            raise ValueError("Configure both reviewed model prices or neither")
+        from .semantic import load_catalogue
+        if not set(self.disabled_metrics) <= {m.id for m in load_catalogue().metrics}:
+            raise ValueError("Unknown disabled metric")
         if self.workflow_enabled and (not self.gemini_api_key or not self.gemini_api_key.get_secret_value().strip()):
             raise ValueError("Workflow requires an independent Gemini API key")
-        if (self.read_pool_size + self.state_pool_size) * self.replica_count > self.connection_budget:
+        if (self.read_pool_size + self.state_pool_size) * self.replica_count * self.deployment_overlap > self.connection_budget:
             raise ValueError("Analyst pools across replicas exceed the reserved connection budget")
         targets = []
         for secret, role in ((self.read_dsn, "bi_analyst_reader"), (self.state_dsn, "bi_analyst_state")):
@@ -131,5 +147,5 @@ class Settings(BaseModel):
         for name in cls.model_fields:
             value = os.environ.get("BI_ANALYST_" + name.upper())
             if value is not None:
-                values[name] = [s.strip() for s in value.split(",") if s.strip()] if name == "cors_origins" else value
+                values[name] = [s.strip() for s in value.split(",") if s.strip()] if name in {"cors_origins", "pilot_subjects", "disabled_metrics"} else value
         return cls.model_validate(values)

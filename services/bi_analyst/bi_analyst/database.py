@@ -7,6 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from .settings import Settings
+from .operations.telemetry import Telemetry
 
 
 GATEWAYS = (
@@ -22,6 +23,7 @@ WORKFLOW_TABLES = ("workflow_jobs", "workflow_events", "checkpoints", "checkpoin
 class Database:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.telemetry = Telemetry()
         common = dict(min_size=1, open=False, timeout=settings.pool_timeout_seconds,
                       max_waiting=16, max_lifetime=1800, reconnect_timeout=10,
                       check=AsyncConnectionPool.check_connection)

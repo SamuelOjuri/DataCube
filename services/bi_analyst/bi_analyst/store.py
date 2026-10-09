@@ -19,7 +19,14 @@ class Store:
     def __init__(self, database: Database):
         self.db = database
 
+    def require_enabled(self, subject):
+        if not self.db.settings.analyst_enabled:
+            raise HTTPException(503, "analyst_disabled")
+        if self.db.settings.pilot_only and subject not in self.db.settings.pilot_subjects:
+            raise HTTPException(403, "pilot_access_required")
+
     async def authorize(self, subject: UUID) -> Principal:
+        self.require_enabled(subject)
         async with self.db.transaction(subject=subject) as conn:
             grant = await (await conn.execute("""SELECT enabled, company_wide, permissions_version
                 FROM analyst_state.principals WHERE subject=%s""", (subject,))).fetchone()
@@ -42,6 +49,7 @@ class Store:
 
     @asynccontextmanager
     async def scoped(self, principal: Principal):
+        self.require_enabled(principal.subject)
         async with self.db.transaction(subject=principal.subject) as conn:
             grant = await (await conn.execute("""SELECT enabled,company_wide,permissions_version
                 FROM analyst_state.principals WHERE subject=%s""", (principal.subject,))).fetchone()

@@ -327,6 +327,15 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    **Deliverables:** CI gates, operational dashboards, retention policy, deployment/runbook, rollback procedure, pilot feedback and release evidence.
 
+   **Implementation update (9 October 2026):** Phase 7 deployment code is implemented
+   in API package 0.7.0: isolated CI, staging/production Render configurations,
+   pilot and metric controls, protected telemetry/dashboard/alerts, additive
+   retention migration 008, read-only preflight, bounded staging load and a
+   fingerprint-bound release evidence gate. The v1 frontend and schema 7 remain
+   compatible. See the [Phase 7 assessment and deployment runbook](bi-analyst-phase7.md).
+   Hosted acceptance, measured/approved operating targets, production promotion and
+   business pilot sign-off remain open. No hosted deployment or activation was performed.
+
    **Exit gate:** every enabled core metric passes parity at defined precision; all permission tests pass; chart/narrative consistency and recovery checks pass; agreed latency/concurrency/cost targets are met. Phase 1 records the targets and test load rather than presenting unmeasured promises.
 
 8. **Phase 8: add controlled exploratory SQL and wider analytical domains.**

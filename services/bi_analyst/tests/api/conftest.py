@@ -20,6 +20,7 @@ if sys.platform == "win32":
 
 ROLES = ("bi_analyst_reader", "bi_analyst_state", "bi_analyst_view_owner", "bi_analyst_migrator")
 CONSUMERS = ("bi_fixture_etl", "bi_fixture_powerbi")
+OPTIONAL_ROLES = ("bi_analyst_maintenance",)
 
 
 @pytest.fixture(scope="module")
@@ -35,7 +36,7 @@ def database():
     installed = False
     consumers_created = False
     with psycopg.connect(dsn, autocommit=True) as admin:
-        if admin.execute("SELECT 1 FROM pg_roles WHERE rolname=ANY(%s)", (list(ROLES + CONSUMERS),)).fetchone():
+        if admin.execute("SELECT 1 FROM pg_roles WHERE rolname=ANY(%s)", (list(ROLES + CONSUMERS + OPTIONAL_ROLES),)).fetchone():
             pytest.fail("Analyst roles already exist: use a dedicated disposable test cluster")
         for role in CONSUMERS:
             admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role)))
@@ -92,6 +93,8 @@ def database():
         finally:
             admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
             if installed:
+                for role in OPTIONAL_ROLES:
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
                 for role in ROLES:
                     admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
             if consumers_created:

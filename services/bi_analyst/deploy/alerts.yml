@@ -1,0 +1,51 @@
+groups:
+  - name: bi-analyst
+    rules:
+      - alert: AnalystUnavailable
+        expr: up{job="bi-analyst"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Analyst API or authenticated telemetry unavailable"}
+      - alert: AnalystFailures
+        expr: sum by (stage) (rate(bi_analyst_operations_total{outcome=~"failed|timeout"}[10m])) / clamp_min(sum by (stage) (rate(bi_analyst_operations_total[10m])), 0.001) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Analyst operation failure rate exceeds 5%"}
+      - alert: AnalystPoolPressure
+        expr: bi_analyst_pool_requests_waiting > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "Analyst database pool has sustained waiting requests"}
+      - alert: AnalystSourceFreshnessUnknown
+        expr: bi_analyst_source_freshness_known == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Source freshness is unknown; obtain source-specific operational evidence"}
+      - alert: AnalystCoverageMissing
+        expr: time() - bi_analyst_coverage_observed_timestamp_seconds > 3600
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "No recent analyst coverage observation"}
+      - alert: AnalystCoverageLimitation
+        expr: bi_analyst_coverage{counter=~"incomplete_order_inputs|children_without_source|unresolved_source_links"} > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Analyst source coverage limitation requires review"}
+      - alert: AnalystInterruptedRuns
+        expr: increase(bi_analyst_operations_total{stage="workflow",outcome=~"interrupted|timeout"}[10m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "Workflow interrupted or exceeded its deadline"}
+      - alert: AnalystAnswerLatency
+        expr: histogram_quantile(0.95, sum by (le) (rate(bi_analyst_duration_seconds_bucket{stage="workflow"}[15m]))) > 45
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Workflow segment p95 exceeds the proposed 45-second budget"}
+      - alert: AnalystCostUnknown
+        expr: bi_analyst_model_cost_configured == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Reviewed model pricing is not configured"}
+      - alert: AnalystModelSpend
+        expr: increase(bi_analyst_model_estimated_usd_total[1h]) > 5
+        labels: {severity: warning}
+        annotations: {summary: "Estimated model spend exceeds proposed $5/hour pilot budget"}

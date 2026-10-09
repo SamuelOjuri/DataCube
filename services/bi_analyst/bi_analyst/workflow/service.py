@@ -1,5 +1,6 @@
 """Application-owned scheduling. Checkpoints are persistence, never a work queue."""
 import asyncio
+import time
 from contextlib import suppress
 from importlib.metadata import version
 
@@ -19,13 +20,14 @@ class WorkflowService:
         self.store, self.metrics, self.provider = store, metrics, provider
         self.settings, self.jobs = store.db.settings, WorkflowStore(store)
         self.tasks = {}
+        self.cancellations = set()
         self.admission = asyncio.Lock()
         self.versions = {'graph':'1.0.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
                          'catalogue':metrics.compiler.catalogue.version,'catalogue_sha256':metrics.compiler.catalogue_hash,
                          'langgraph':version('langgraph'),'checkpointer':version('langgraph-checkpoint-postgres')}
 
     def require_enabled(self):
-        if not self.settings.workflow_enabled:
+        if not self.settings.workflow_enabled or not self.settings.analyst_enabled:
             raise HTTPException(503,'workflow_disabled')
 
     async def submit(self, actor, conversation_id, body):
@@ -69,6 +71,7 @@ class WorkflowService:
         task.add_done_callback(done)
 
     async def _drive(self, actor, run_id, token, reply):
+        started, outcome = time.monotonic(), 'failed'
         work = None
         try:
             row = await self.jobs.guard(actor,run_id,token)
@@ -90,10 +93,15 @@ class WorkflowService:
                 pending = output['__interrupt__'][0].value
                 await self.jobs.finish(actor,run_id,token,'awaiting_clarification',
                                        clarification=pending,plan=output.get('plan'))
+                outcome = 'clarification'
+            else:
+                outcome = 'success'
         except asyncio.CancelledError:
+            outcome = 'cancelled' if run_id in self.cancellations else 'interrupted'
             await self._fail(actor,run_id,token,'interrupted','execution_interrupted')
             raise
         except TimeoutError:
+            outcome = 'timeout'
             await self._fail(actor,run_id,token,'failed','run_timeout')
         except ProviderFailure as error:
             await self._fail(actor,run_id,token,'failed',error.code)
@@ -112,6 +120,8 @@ class WorkflowService:
                 if not work.done():
                     work.cancel()
                 await asyncio.gather(work,return_exceptions=True)
+            self.store.db.telemetry.observe('workflow',outcome,time.monotonic()-started)
+            self.cancellations.discard(run_id)
 
     async def _fail(self, actor, run_id, token, status, code):
         # Revoked principals cannot write state; expiration handles any abandoned lease
@@ -122,6 +132,7 @@ class WorkflowService:
     async def cancel(self, actor, run_id):
         cancelled = await self.jobs.cancel(actor,run_id)
         if cancelled and run_id in self.tasks:
+            self.cancellations.add(run_id)
             self.tasks[run_id].cancel()
         return cancelled
 

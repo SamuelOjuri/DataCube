@@ -8,6 +8,7 @@ from fastapi import HTTPException, Request
 import psycopg
 
 from ..store import Principal, Store
+from ..operations.telemetry import measured
 from .calculations import compare, share
 from .compiler import COMPILER_VERSION, Compiler, InvalidMetricRequest
 from .contracts import (Aggregate, EntityRequest, EntityResolution, Freshness, MetricProvenance,
@@ -28,6 +29,10 @@ class MetricService:
         self.runs: set[UUID] = set()
 
     def require_access(self, metric_id: str, version: str, population: str):
+        if not self.settings.analyst_enabled:
+            raise HTTPException(503, "analyst_disabled")
+        if metric_id in self.settings.disabled_metrics:
+            raise HTTPException(503, "metric_disabled")
         metric = self.compiler.metric(metric_id, version, population)
         if not self.settings.metric_evaluation_enabled:
             # Reuse the owner's recorded closure, bound to this catalogue fingerprint.
@@ -94,7 +99,9 @@ class MetricService:
                     await asyncio.gather(work, return_exceptions=True)
                 self.runs.discard(run_id)
 
+    @measured("query")
     async def query(self, principal: Principal, run_id: UUID, body: MetricRequest) -> MetricResult:
+        self.require_access(body.metric_id, body.metric_version, body.population)
         timezone = self.settings.business_timezone
         async with self.db.transaction(analytical=True) as conn:
             await conn.execute("SELECT set_config('TimeZone',%s,true)", (timezone,))
@@ -114,6 +121,7 @@ class MetricService:
                     comparison_plan.total.sql, comparison_plan.total.params)).fetchone())
                 change = compare(total, baseline, unit=plan.metric.unit)
             coverage = await (await conn.execute("SELECT * FROM analyst_query.coverage_v1")).fetchone()
+            self.db.telemetry.coverage(coverage)
             rows, reasons, matched_groups = [], [], 0
             names = [column.name for column in plan.columns]
             row_bytes = 0

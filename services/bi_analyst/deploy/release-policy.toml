@@ -1,0 +1,12 @@
+# Proposed qualification targets, NOT an owner agreement or a measured result.
+# Set approved and approval_reference only after the platform/business review.
+max_evidence_age_days = 7
+[targets]
+approved = true
+approval_reference = ""
+min_concurrency = 2
+min_samples = 50
+max_query_p95_seconds = 5.0
+max_answer_p95_seconds = 45.0
+max_failure_rate = 0.02
+max_usd_per_answer = 0.05

@@ -5,7 +5,7 @@ services:
     runtime: python
     rootDir: services/bi_analyst
     buildCommand: pip install -r requirements.lock && pip install --no-deps --no-build-isolation .
-    startCommand: uvicorn bi_analyst.api:application --factory --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-proxy-headers --timeout-keep-alive 5 --limit-concurrency 32
+    startCommand: uvicorn bi_analyst.api:application --factory --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-proxy-headers --timeout-keep-alive 5 --timeout-graceful-shutdown 20 --limit-concurrency 32
     healthCheckPath: /health/ready
     numInstances: 1
     autoDeployTrigger: "off"
@@ -14,6 +14,16 @@ services:
         value: 3.13.5
       - key: BI_ANALYST_ENVIRONMENT
         value: production
+      - key: BI_ANALYST_ANALYST_ENABLED
+        value: "false"
+      - key: BI_ANALYST_PILOT_ONLY
+        value: "true"
+      - key: BI_ANALYST_PILOT_SUBJECTS
+        sync: false
+      - key: BI_ANALYST_DISABLED_METRICS
+        value: ""
+      - key: BI_ANALYST_TELEMETRY_TOKEN
+        sync: false
       - key: BI_ANALYST_READ_DSN
         sync: false
       - key: BI_ANALYST_STATE_DSN
@@ -35,7 +45,9 @@ services:
       - key: BI_ANALYST_SESSION_SECONDS
         value: 900
       - key: BI_ANALYST_CONNECTION_BUDGET
-        value: 4
+        value: 8
+      - key: BI_ANALYST_DEPLOYMENT_OVERLAP
+        value: 2
       - key: BI_ANALYST_REPLICA_COUNT
         value: 1
       - key: BI_ANALYST_READ_POOL_SIZE

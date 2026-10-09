@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import asyncio
+import hmac
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -34,6 +35,7 @@ from .workflow.provider import GeminiProvider
 from .workflow.service import WorkflowService
 from .workflow.store import TERMINAL
 from .presentation import Feedback, projects, save_feedback
+from . import __version__
 
 log = logging.getLogger("bi_analyst.audit")
 
@@ -88,7 +90,7 @@ def create_app(settings: Settings) -> FastAPI:
                 app.state.monday_source = MondaySourceReader(config, client)
                 app.state.source_checks = SourceCheckService(app.state.store, app.state.metrics.compiler,
                                                            app.state.monday_source)
-                app.state.workflow = WorkflowService(app.state.store, app.state.metrics, GeminiProvider(config,client))
+                app.state.workflow = WorkflowService(app.state.store, app.state.metrics, GeminiProvider(config,client,database.telemetry))
                 try:
                     yield
                 finally:
@@ -96,7 +98,7 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             await database.close()
 
-    app = FastAPI(title="DataCube BI Analyst", version="0.6.0", lifespan=lifespan,
+    app = FastAPI(title="DataCube BI Analyst", version=__version__, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -121,8 +123,9 @@ def create_app(settings: Settings) -> FastAPI:
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        request.app.state.database.telemetry.observe("http", "failed" if response.status_code >= 500 else
+            "rejected" if response.status_code >= 400 else "success", time.monotonic()-started)
         log.info(json.dumps({"event": "http_request", "request_id": str(request_id),
-                             "subject": str(subject) if subject else None,
                              "route": route, "method": request.method, "status": response.status_code,
                              "auth_outcome": getattr(request.state, "auth_outcome", None),
                              "duration_ms": round((time.monotonic()-started)*1000)}))
@@ -160,6 +163,15 @@ def create_app(settings: Settings) -> FastAPI:
     async def live():
         return {"status": "alive"}
 
+    @app.get("/ops/metrics", include_in_schema=False)
+    async def operational_metrics(request: Request):
+        token = settings.telemetry_token
+        supplied = request.headers.get("Authorization", "")
+        if not token or not hmac.compare_digest(supplied.encode(), ("Bearer " + token.get_secret_value()).encode()):
+            raise HTTPException(404, "not_found")
+        return Response(request.app.state.database.telemetry.render(request.app.state.database,
+            request.app.state.metrics, request.app.state.workflow), media_type="text/plain; version=0.0.4")
+
     @app.get("/health/ready")
     async def ready(request: Request):
         try:
@@ -171,9 +183,15 @@ def create_app(settings: Settings) -> FastAPI:
         execution = "evaluation_only" if settings.metric_evaluation_enabled else "owner_accepted" if accepted else "unavailable"
         if settings.business_timezone is None:
             execution = "unavailable"
+        if not settings.analyst_enabled:
+            execution = "disabled"
         return {"status": "ready", "identity": "monday" if settings.auth_provider == "monday" else "deferred",
                 "metric_execution": execution, "monday_source_reads": request.app.state.monday_source.configured,
-                "workflow": "enabled" if settings.workflow_enabled else "disabled"}
+                "workflow": "enabled" if settings.workflow_enabled and settings.analyst_enabled else "disabled",
+                "api_version": __version__, "contract_version": "v1", "schema_version": request.app.state.database.schema_version,
+                "catalogue_version": request.app.state.metrics.compiler.catalogue.version,
+                "catalogue_sha256": request.app.state.metrics.compiler.catalogue_hash,
+                "environment": settings.environment, "pilot_only": settings.pilot_only, "disabled_metrics": settings.disabled_metrics}
 
     @app.get("/v1/metrics")
     async def metric_catalogue(request: Request, actor: Principal = Depends(principal)):
@@ -182,7 +200,8 @@ def create_app(settings: Settings) -> FastAPI:
         return {"catalogue_version": compiler.catalogue.version, "catalogue_sha256": compiler.catalogue_hash,
                 "metrics": [{**m.model_dump(mode="json"), "recorded_certification": m.certification,
                              "limitations": compiler.catalogue.runtime_limitations(m),
-                             "certification": acceptance} for m in compiler.catalogue.metrics],
+                             "certification": acceptance, "enabled": m.id not in settings.disabled_metrics}
+                            for m in compiler.catalogue.metrics],
                 "source_checks": request.app.state.monday_source.capability(),
                 "notices": compiler.catalogue.runtime_notices}
 
@@ -345,4 +364,11 @@ def create_app(settings: Settings) -> FastAPI:
 def application():
     """Uvicorn factory, including configured CORS/body limits without import I/O."""
     settings = Settings.from_env()
+    logger = logging.getLogger("bi_analyst")
+    if not logger.handlers:
+        logger.addHandler(logging.StreamHandler())
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     return create_app(settings)

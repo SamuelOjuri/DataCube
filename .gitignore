@@ -44,6 +44,7 @@ outputs/analysis/
 !docs/bi-analyst-phase5-model-evaluation-1.0.2.json
 !docs/bi-analyst-phase5-presentation-evaluation.json
 !services/bi_analyst/bi_analyst/semantic/catalogue.json
+!services/bi_analyst/deploy/dashboard.json
 !scripts/monday_review_cleanup_31_targets.json
 !scripts/monday_review_cleanup_2_targets.json
 !scripts/order_value_missing_subitems_2.json

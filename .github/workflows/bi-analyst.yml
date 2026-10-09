@@ -1,0 +1,70 @@
+name: BI analyst release checks
+on:
+  pull_request:
+    paths: ['services/bi_analyst/**', 'web/**', 'src/database/migrations/**', 'src/database/schema/**', 'netlify.toml', '.github/workflows/bi-analyst.yml']
+  push:
+    branches: [main, master]
+    paths: ['services/bi_analyst/**', 'web/**', 'src/database/migrations/**', 'src/database/schema/**', 'netlify.toml', '.github/workflows/bi-analyst.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bi-analyst-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      BI_ANALYST_TEST_DSN: host=127.0.0.1 port=5432 dbname=postgres user=postgres password=synthetic-ci-only
+      PYTHONPATH: services/bi_analyst
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.5'
+          cache: pip
+          cache-dependency-path: services/bi_analyst/requirements.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install isolated analyst dependencies
+        run: |
+          python -m pip install -r services/bi_analyst/requirements.lock
+          python -m pip install --no-deps --no-build-isolation services/bi_analyst
+          python -m pip check
+      - name: Metric parity, permissions, failure injection and operations
+        run: python -m pytest services/bi_analyst/tests -q --junitxml=outputs/phase7/backend.xml
+      - name: Frontend and build policy
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npx playwright install --with-deps chromium
+          npm run test:browser
+      - name: Package and fingerprint this candidate
+        run: |
+          python -m pip wheel --no-deps --no-build-isolation services/bi_analyst --wheel-dir outputs/phase7/wheels
+          python -m bi_analyst.operations.release manifest --root . --output outputs/phase7/manifest.json
+          python -m bi_analyst.operations.release template --root . --output outputs/phase7/pending-hosted-evidence.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bi-analyst-${{ github.sha }}
+          path: |
+            outputs/phase7
+            outputs/phase6-browser
+          retention-days: 14
+          if-no-files-found: error
+# Deliberately no ETL tests, hosted credentials, migrations, deploy hook or Monday writes.

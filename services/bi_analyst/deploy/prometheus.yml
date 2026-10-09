@@ -1,0 +1,19 @@
+# Run on an independent monitoring host. Replace exact staging/production target.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+rule_files: [alerts.yml]
+scrape_configs:
+  - job_name: bi-analyst
+    scheme: https
+    metrics_path: /ops/metrics
+    scrape_timeout: 10s
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/bi_analyst_telemetry_token
+    static_configs:
+      - targets: [STAGING_API.onrender.com]
+        labels:
+          environment: staging
+# Configure your existing Alertmanager route on this monitoring host.
+# Do not put its receiver credentials in the API or this repository.

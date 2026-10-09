@@ -1,0 +1,21 @@
+{
+  "uid": "datacube-bi-analyst",
+  "title": "DataCube analyst pilot",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {"list": [{"name": "datasource", "type": "datasource", "query": "prometheus"}]},
+  "panels": [
+    {"id": 1, "title": "API scrape availability", "type": "stat", "datasource": "${datasource}", "gridPos": {"x": 0, "y": 0, "w": 6, "h": 5}, "targets": [{"refId": "A", "expr": "up{job=\"bi-analyst\"}"}]},
+    {"id": 2, "title": "Failures / timeouts per second", "type": "timeseries", "datasource": "${datasource}", "gridPos": {"x": 6, "y": 0, "w": 9, "h": 5}, "targets": [{"refId": "A", "expr": "sum by (stage,outcome) (rate(bi_analyst_operations_total{outcome=~\"failed|timeout|interrupted\"}[5m]))"}]},
+    {"id": 3, "title": "Stage p95 seconds (workflow segment, HTTP headers)", "type": "timeseries", "datasource": "${datasource}", "gridPos": {"x": 15, "y": 0, "w": 9, "h": 5}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (stage,le) (rate(bi_analyst_duration_seconds_bucket[5m])))"}]},
+    {"id": 4, "title": "Database pool utilisation", "type": "timeseries", "datasource": "${datasource}", "gridPos": {"x": 0, "y": 5, "w": 12, "h": 6}, "targets": [{"refId": "A", "expr": "1 - bi_analyst_pool_pool_available / clamp_min(bi_analyst_pool_pool_size,1)"}, {"refId": "B", "expr": "bi_analyst_pool_requests_waiting"}]},
+    {"id": 5, "title": "Known source freshness (0 = unknown)", "type": "stat", "datasource": "${datasource}", "gridPos": {"x": 12, "y": 5, "w": 12, "h": 6}, "targets": [{"refId": "A", "expr": "bi_analyst_source_freshness_known"}]},
+    {"id": 6, "title": "Last observed source coverage counts", "type": "timeseries", "datasource": "${datasource}", "gridPos": {"x": 0, "y": 11, "w": 12, "h": 6}, "targets": [{"refId": "A", "expr": "bi_analyst_coverage"}, {"refId": "B", "expr": "time() - bi_analyst_coverage_observed_timestamp_seconds"}]},
+    {"id": 7, "title": "Model tokens per hour (includes thinking)", "type": "timeseries", "datasource": "${datasource}", "gridPos": {"x": 12, "y": 11, "w": 12, "h": 6}, "targets": [{"refId": "A", "expr": "sum by (kind) (increase(bi_analyst_model_tokens_total[1h]))"}]},
+    {"id": 8, "title": "Estimated USD/hour (absent = unpriced)", "type": "timeseries", "datasource": "${datasource}", "gridPos": {"x": 0, "y": 17, "w": 12, "h": 6}, "targets": [{"refId": "A", "expr": "sum(increase(bi_analyst_model_estimated_usd_total[1h]))"}, {"refId": "B", "expr": "bi_analyst_model_cost_configured"}]},
+    {"id": 9, "title": "Concurrent queries and workflow segments", "type": "timeseries", "datasource": "${datasource}", "gridPos": {"x": 12, "y": 17, "w": 12, "h": 6}, "targets": [{"refId": "A", "expr": "bi_analyst_active_queries"}, {"refId": "B", "expr": "bi_analyst_active_workflows"}]}
+  ]
+}

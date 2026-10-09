@@ -1,0 +1,16 @@
+# Optional independent scheduler. Import explicitly after migration 008 and
+# policy review. Its credential must NEVER be copied to either API service.
+services:
+  - type: cron
+    name: datacube-bi-analyst-retention
+    runtime: python
+    rootDir: services/bi_analyst
+    schedule: "17 * * * *"
+    buildCommand: pip install -r requirements.lock && pip install --no-deps --no-build-isolation .
+    startCommand: bi-analyst-maintain --apply --conversation-days 30 --audit-days 90 --batch 100
+    autoDeployTrigger: "off"
+    envVars:
+      - {key: PYTHON_VERSION, value: 3.13.5}
+      - {key: BI_ANALYST_MAINTENANCE_DSN, sync: false}
+# Proposed retention policy. Preview and review before importing this scheduler.
+# External monitoring must alert on a failed/missing scheduled run.

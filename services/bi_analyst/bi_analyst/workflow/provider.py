@@ -5,6 +5,7 @@ from typing import Protocol, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
+from ..operations.telemetry import Telemetry, measured
 
 MODEL = "gemini-3.8-flash"
 PROMPT_VERSION = "bi-conversation-1.0.2"
@@ -46,9 +47,11 @@ class Provider(Protocol):
 
 
 class GeminiProvider:
-    def __init__(self, settings, client: httpx.AsyncClient):
+    def __init__(self, settings, client: httpx.AsyncClient, telemetry=None):
         self.settings, self.client = settings, client
+        self.telemetry = telemetry if telemetry is not None else Telemetry()
 
+    @measured("model")
     async def generate(self, stage, payload, schema):
         if not self.settings.gemini_api_key:
             raise ProviderFailure("model_not_configured")
@@ -76,6 +79,7 @@ class GeminiProvider:
                         if len(data) > 131072:
                             raise ProviderFailure("model_output_budget")
             raw = json.loads(data)
+            self.telemetry.usage(raw.get("usageMetadata", {}))
             candidates = raw["candidates"]
             if len(candidates) != 1 or candidates[0].get("finishReason") != "STOP":
                 raise ProviderFailure("model_invalid_output")
