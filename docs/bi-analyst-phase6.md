@@ -85,6 +85,26 @@ layouts and text/table alternatives for charts. Chart libraries load on demand.
 The Vega runtime remains a large separate bundle (approximately 517 KB before
 gzip); it is not needed for sign-in or table-only answers.
 
+### Tapered Plus visual theme
+
+The interface follows [the Tapered Plus website](https://taperedplus.co.uk/):
+deep red (`#931f1f`, the site's `hsl(0 65% 35%)` primary), darker red
+(`#691616`) for hover states, charcoal text (`#262626`), white and light-grey
+surfaces, rounded cards and restrained shadows. Shared CSS tokens in
+[`web/src/style.css`](../web/src/style.css) cover sign-in, workspace navigation,
+controls, tables, notices and keyboard focus. Warning and error styling retains
+its semantic distinction, and muted text uses a darker grey for contrast.
+
+Open Sans weights 400, 600 and 700 are bundled locally from
+`@fontsource/open-sans`; no external font requests or CSP changes are needed.
+The font's copyright notice and SIL Open Font License are shipped with the
+frontend in [`open-sans-license.txt`](../web/public/open-sans-license.txt).
+[`web/src/presentation.mjs`](../web/src/presentation.mjs) applies the same font,
+primary red, neutral axes and a red-led eight-series palette to bar/line charts.
+This is a presentation-only change: authentication, analytical results, source
+scope and responsive layout behavior are unchanged. Build and redeploy the
+frontend to publish the theme; no backend deployment or migration is required.
+
 ## Backend and migration
 
 | Endpoint | Contract |

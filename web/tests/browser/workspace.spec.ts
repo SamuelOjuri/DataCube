@@ -22,6 +22,49 @@ for (const skew of [-3000,3600000]) {
   });
 }
 
+test('Tapered Plus styling is consistent across sign-in, workspace, controls and charts',async({page})=>{
+  const fontLicense=await readFile('dist/open-sans-license.txt','utf8');
+  expect(fontLicense.replace(/\r\n/g,'\n')).toBe((await readFile('node_modules/@fontsource/open-sans/LICENSE','utf8')).replace(/\r\n/g,'\n'));
+  await fixture(page,{existing:true});
+  const fontRequests:string[]=[];
+  page.on('request',request=>{if(/\.(woff2?|ttf)(\?|$)/.test(request.url())) fontRequests.push(request.url());});
+  await page.goto(`/conversations/${thread}`);
+  const login=page.getByRole('button',{name:'Continue with Monday'});
+  await expect(login).toBeEnabled();
+  await page.evaluate(()=>document.fonts.ready);
+  await expect(page.locator('body')).toHaveCSS('color','rgb(38, 38, 38)');
+  await expect(page.locator('body')).toHaveCSS('font-family',/^"Open Sans"/);
+  await expect(page.locator('.brand')).toHaveCSS('color','rgb(147, 31, 31)');
+  await expect(login).toHaveCSS('background-color','rgb(147, 31, 31)');
+  await login.hover();
+  await expect(login).toHaveCSS('background-color','rgb(105, 22, 22)');
+  await login.focus();
+  await expect(login).toHaveCSS('outline-color','rgb(147, 31, 31)');
+  await expect(login).toHaveCSS('outline-style','solid');
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  expect(fontRequests.length).toBeGreaterThan(0);
+  expect(fontRequests.every(url=>new URL(url).origin==='http://127.0.0.1:4173')).toBe(true);
+  expect(await page.evaluate(()=>Array.from(document.fonts).some(font=>font.family==='Open Sans' && font.status==='loaded'))).toBe(true);
+  await login.click();
+  await expect(page.getByRole('heading',{name:'Order Value (parent mirror)'})).toBeVisible();
+  await expect(page.locator('aside')).toHaveCSS('background-color','rgb(247, 247, 247)');
+  await expect(page.locator('nav a[aria-current]')).toHaveCSS('color','rgb(147, 31, 31)');
+  await expect(page.locator('.total strong')).toHaveCSS('color','rgb(147, 31, 31)');
+  await expect(page.locator('.secondary').first()).toHaveCSS('border-top-color','rgb(147, 31, 31)');
+  await expect(page.getByRole('button',{name:'Ask analyst'})).toHaveCSS('background-color','rgb(147, 31, 31)');
+  await expect(page.locator('.chart svg')).toBeVisible();
+  const bars=page.locator('.chart svg .mark-rect.role-mark path');
+  await expect(bars).toHaveCount(12);
+  await expect(bars.first()).toHaveAttribute('fill','#931f1f');
+  await expect(page.locator('.chart svg text').first()).toHaveAttribute('font-family','Open Sans');
+  await page.getByRole('button',{name:'+ New conversation',exact:true}).click();
+  const suggestion=page.locator('.suggestion').first();
+  await expect(suggestion).toHaveCSS('background-color','rgb(255, 255, 255)');
+  await suggestion.hover();
+  await expect(suggestion).toHaveCSS('background-color','rgb(248, 237, 237)');
+  await expect(suggestion).toHaveCSS('border-top-color','rgb(147, 31, 31)');
+});
+
 test('sign-in, streaming replay, saved results, charts, tables, CSV, detail, feedback and accessibility',async ({page})=>{
   const state=await fixture(page,{disconnect:true});
   const errors:string[]=[]; page.on('pageerror',e=>errors.push(e.message));

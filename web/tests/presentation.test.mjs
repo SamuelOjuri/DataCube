@@ -24,6 +24,19 @@ test('chart axis sorts months and rejects repeated coordinates, mixed units and 
   s.provenance.columns[0].unit='source_currency'; s.columns.push('type'); s.rows=Array.from({length:9},(_,i)=>['A',1,String(i)]);
   assert.equal(chartSpec(s,{kind:'bar',x:'category',y:'value'},'owned').spec,null);
 });
+test('bar and line charts use the Tapered Plus font, primary color and categorical palette', () => {
+  const r = fixture();
+  const {spec} = chartSpec(r,{kind:'bar',x:'category',y:'value'},'owned');
+  assert.equal(spec.config.mark.color,'#931f1f');
+  assert.equal(spec.config.font,'Open Sans');
+  assert.equal(spec.config.axis.labelColor,'#666666');
+  assert.equal(spec.config.range.category[0],spec.config.mark.color);
+  assert.equal(new Set(spec.config.range.category).size,8);
+  r.columns=['month','type','value']; r.rows=[['2026-08-01','PIR','20'],['2026-08-01','EPS','10']];
+  const line = chartSpec(r,{kind:'line',x:'month',y:'value'},'owned').spec;
+  assert.deepEqual(line.config,spec.config);
+  assert.equal(line.encoding.color.field,'series');
+});
 test('financial formatting and sorting retain decimal precision and signed values', () => {
   assert.equal(formatCell('9007199254740993.01','source_currency'),'£9,007,199,254,740,993.01');
   assert.equal(compareDecimal('9007199254740993.01','9007199254740993.02'),-1);

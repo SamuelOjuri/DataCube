@@ -3,6 +3,9 @@ import {createRoot} from 'react-dom/client';
 import {createAuth} from './auth.mjs';
 import type {Auth, Session} from './types';
 import Workspace from './Workspace';
+import '@fontsource/open-sans/latin-400.css';
+import '@fontsource/open-sans/latin-600.css';
+import '@fontsource/open-sans/latin-700.css';
 import './style.css';
 
 function App() {

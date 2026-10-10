@@ -57,6 +57,11 @@ export function chartSpec(result, intent, ownedId) {
       ...(seriesIndex >= 0 ? {color: {field: 'series', type: 'nominal', title: seriesFields[0]},
         ...(intent.kind === 'bar' ? {xOffset: {field: 'series'}} : {})} : {}),
     },
-    config: {background: 'transparent', view: {stroke: null}, mark: {color: '#17665d'}, font: 'system-ui'},
+    config: {
+      background: 'transparent', view: {stroke: null}, mark: {color: '#931f1f'}, font: 'Open Sans',
+      range: {category: ['#931f1f', '#262626', '#737373', '#c14c4c', '#4b5563', '#691616', '#9b6a58', '#6b5c7b']},
+      axis: {labelColor: '#666666', titleColor: '#262626', domainColor: '#8a8a8a', tickColor: '#8a8a8a', gridColor: '#e6e6e6'},
+      legend: {labelColor: '#666666', titleColor: '#262626'},
+    },
   }};
 }
