@@ -130,8 +130,9 @@ and idempotency key. A fully persisted clarification can resume after restart.
 Permission changes invalidate prior runs/results/checkpoints; stale active
 workflow slots are retired when the newly authorised owner next accesses them.
 
-Defaults are two active workflows per instance, 90 seconds of cumulative active
-execution time across clarification segments, eight total model attempts,
+The owner-approved 10 October reasoning policy defaults to two active workflows
+per instance, 600 seconds of cumulative active execution time across clarification
+segments, 90 seconds per model call, eight total model attempts,
 24 metric/entity calls and at most three clarification replies. A transient
 provider failure can retry once per node; all attempts consume the durable run
 budget. Each model response is limited to 128 KiB and input context to 64 KiB;
@@ -140,6 +141,15 @@ limits, timeout checks and rejection of incomplete model output still apply.
 Phase 4 row, byte, query, connection and concurrency
 limits also apply. Waiting for a user consumes no database lease or runtime
 budget. Public event count and stored payload sizes are database bounded.
+
+Migration `20261010_009_analyst_reasoning_budget.sql` widens the database's
+remaining-time constraint from 300 to 600 seconds. Readiness and preflight reject
+an installed workflow schema without this migration when the configured budget
+exceeds 300 seconds. The migration preserves schema version 7, ownership, grants,
+saved answers and existing deadlines; new submissions receive the new allowance.
+Model/presentation evaluation tools use the same default model deadline. The
+staging answer-load harness allows the workflow budget plus 60 seconds for HTTP
+setup/final retrieval; its direct-query deadline remains unchanged.
 
 Apply `src/database/migrations/20261008_006_analyst_workflow.sql` after migrations
 003, 004 and 005, in one reviewed administrator transaction. It adds workflow

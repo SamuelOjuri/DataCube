@@ -15,6 +15,36 @@ def config(**kwargs):
                     state_dsn="host=db.example dbname=analyst user=bi_analyst_state sslmode=verify-full", **kwargs)
 
 
+def test_reasoning_budget_defaults_preserve_query_and_source_limits():
+    settings = config()
+    assert settings.model_timeout_seconds == 90
+    assert settings.workflow_timeout_seconds == 600
+    assert settings.metric_timeout_seconds == 15
+    assert settings.statement_timeout_ms == 5000
+    assert settings.monday_read_timeout_seconds == 10
+    assert settings.workflow_max_model_calls == 8
+
+
+@pytest.mark.parametrize('values', [
+    {'model_timeout_seconds': 0}, {'model_timeout_seconds': 91},
+    {'workflow_timeout_seconds': 0}, {'workflow_timeout_seconds': 601},
+])
+def test_reasoning_budgets_remain_bounded(values):
+    with pytest.raises(ValidationError):
+        config(**values)
+
+
+def test_reasoning_budget_environment_overrides(monkeypatch):
+    monkeypatch.setenv('BI_ANALYST_READ_DSN', config().read_dsn.get_secret_value())
+    monkeypatch.setenv('BI_ANALYST_STATE_DSN', config().state_dsn.get_secret_value())
+    monkeypatch.setenv('BI_ANALYST_MODEL_TIMEOUT_SECONDS', '90')
+    monkeypatch.setenv('BI_ANALYST_WORKFLOW_TIMEOUT_SECONDS', '600')
+    settings = Settings.from_env()
+    assert settings.model_timeout_seconds == 90
+    assert settings.workflow_timeout_seconds == 600
+    assert config(model_timeout_seconds=25, workflow_timeout_seconds=90).model_timeout_seconds == 25
+
+
 def test_pool_budget_and_explicit_origins():
     assert config().connection_budget == 4
     with pytest.raises(ValidationError):

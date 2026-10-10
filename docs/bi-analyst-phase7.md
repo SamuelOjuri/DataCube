@@ -295,8 +295,27 @@ a billing alert or application cost estimate is an enforced spending cap.
 Set `BI_ANALYST_AUTH_PROVIDER=monday`, `BI_ANALYST_ANALYST_ENABLED=true` and
 `BI_ANALYST_WORKFLOW_ENABLED=true`.
 Keep `BI_ANALYST_PILOT_ONLY=true`, the approved subject list and all existing
-rate, concurrency, timeout, row and byte limits. Leave
+rate, concurrency, SQL/GraphQL execution, row and byte limits. Leave
 `BI_ANALYST_METRIC_EVALUATION_ENABLED=false`.
+
+For the owner-approved 10 October reasoning allowance, apply
+`src/database/migrations/20261010_009_analyst_reasoning_budget.sql` once after 007
+and 008 in a reviewed administrator transaction, then deploy the backend. The
+additive migration retains schema version 7 and existing deadlines. Set these
+values explicitly on an existing dashboard-created Render service; changing code
+defaults or a Blueprint does not overwrite its saved environment variables:
+
+```text
+BI_ANALYST_MODEL_TIMEOUT_SECONDS=90
+BI_ANALYST_WORKFLOW_TIMEOUT_SECONDS=600
+```
+
+These are maximums, not minimum response times. High model thinking, one retry
+per node and cumulative attempt budgets remain unchanged. Preflight/readiness
+reject a workflow budget above 300 seconds if migration 009 is missing. After
+deployment, retry a failed question with a new run; old failed/expired runs are
+not extended. No frontend deployment is needed. Qualify real planner/presentation
+latency, concurrent load and failure rate before widening pilot access.
 
 For this pilot deployment, replace the existing startup preflight prefix with
 `bi-analyst-preflight --pilot`, retaining the rest of the working Uvicorn command

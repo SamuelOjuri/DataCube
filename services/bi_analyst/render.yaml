@@ -77,8 +77,8 @@ services:
       - key: BI_ANALYST_WORKFLOW_CONCURRENCY
         value: 2
       - key: BI_ANALYST_WORKFLOW_TIMEOUT_SECONDS
-        value: 90
+        value: 600
       - key: BI_ANALYST_WORKFLOW_MAX_MODEL_CALLS
         value: 8
       - key: BI_ANALYST_MODEL_TIMEOUT_SECONDS
-        value: 25
+        value: 90

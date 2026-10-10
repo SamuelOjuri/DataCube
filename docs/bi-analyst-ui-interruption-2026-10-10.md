@@ -19,7 +19,7 @@ Times below are the UTC timestamps in the attachment.
 
 [Render requires HTTP health checks to respond within five seconds](https://render.com/docs/health-checks).
 A logged HTTP 200 can therefore still fail the platform's deadline. The checked-in
-workflow limit is 90 seconds, and expired running jobs become `interrupted`.
+workflow limit at the time of these logs was 90 seconds, and expired running jobs become `interrupted`.
 The log is consistent with excessive database round trips consuming the workflow
 budget and making readiness fragile. It does **not** establish the exact restart
 trigger or distinguish an expired lease from a shutdown interruption for the
@@ -156,3 +156,45 @@ restarts during the check. A frontend deployment is not required by this patch.
 Record the deployed commit and observed latency. If delays remain high, compare
 the Render and database regions and inspect actual pool wait metrics before
 changing timeouts or connection budgets.
+
+## Follow-up: planning model timeout at 10:40 UTC
+
+The later supplied log identifies run `267cce10-f3a1-41db-b083-5315cfcf4fd8`.
+Interpretation succeeded in 4.252 seconds, but both planning attempts hit the
+25-second model deadline (25.006 and 25.005 seconds). The workflow ended with
+`model_timeout` after 77.255 seconds, before the overall 90-second limit.
+No query operation started. All 18 readiness checks during the run returned
+HTTP 200 in 1.766-3.005 seconds; these logs show no restart during this attempt.
+They establish the timeout stage, not whether provider, network or reasoning
+latency caused the slow response or whether most questions fail.
+
+The owner approved 90 seconds per model call and 600 seconds total active
+workflow time. Configuration defaults, local environment, both deployment
+templates and synthetic model evaluation deadlines now reflect that policy.
+Migration 009 widens the saved budget constraint to 600 seconds while retaining
+schema version 7, grants and existing deadlines. Readiness/preflight reject the
+larger allowance until the migration is installed. SQL/GraphQL execution limits,
+high thinking, retries, attempt budgets and source/owner protections are unchanged.
+The earlier latency evidence above remains historical evidence for its original
+explicit budgets; it is not reclassified as a qualification of the new policy.
+
+A regression with a planning response delayed for 26 seconds reproduced
+`model_timeout` under the old defaults. Hosted migration, explicit Render
+environment updates and real-provider qualification remain required; no
+production deployment was performed by this change.
+
+Local verification passed 85 configuration/model/operation contract tests and
+43 real PostgreSQL checks across the suite and focused rerun. The delayed-planner
+real-HTTP case completed in **26.46 seconds**, with maximum readiness latency
+**0.04 seconds**, a durable 600-second job allowance, the saved answer and its SSE
+replay intact, and the pre-migration answer still readable. Database checks accept
+600 seconds and reject negative/601-second values; readiness and pilot preflight
+reject a missing budget constraint and recover after it is restored.
+
+The new zero-database-delay fixture initially polled fast enough to hit the
+existing rate limit. Its polling is now paced at 250 ms; no production rate limit
+was increased. The other 42 PostgreSQL checks, including the existing database
+latency cases, cancellation, permission changes, clarification and retention,
+passed in the original run. The analyst wheel build and `git diff --check` also
+passed. This is synthetic local verification, not a live Gemini latency or
+production deployment qualification.

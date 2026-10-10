@@ -19,6 +19,7 @@ sys.path.insert(0,str(ROOT/'services/bi_analyst'))
 from bi_analyst.metrics.calculations import compare
 from bi_analyst.metrics.compiler import Compiler
 from bi_analyst.metrics.contracts import Aggregate, Freshness, MetricProvenance, MetricRequest, MetricResult
+from bi_analyst.settings import DEFAULT_MODEL_TIMEOUT_SECONDS
 from bi_analyst.workflow.contracts import Presentation
 from bi_analyst.workflow.evidence import candidates, ground
 from bi_analyst.workflow.provider import GeminiProvider, MODEL, PROMPT_VERSION, GENERATION, ProviderFailure
@@ -98,8 +99,9 @@ def main():
     if not key:
         raise SystemExit('No Gemini evaluation credential configured')
     async def run():
-        async with httpx.AsyncClient(timeout=30,follow_redirects=False,trust_env=False) as client:
-            return await evaluate(GeminiProvider(SimpleNamespace(gemini_api_key=SecretStr(key),model_timeout_seconds=30),client))
+        async with httpx.AsyncClient(timeout=DEFAULT_MODEL_TIMEOUT_SECONDS,follow_redirects=False,trust_env=False) as client:
+            return await evaluate(GeminiProvider(SimpleNamespace(gemini_api_key=SecretStr(key),
+                                  model_timeout_seconds=DEFAULT_MODEL_TIMEOUT_SECONDS),client))
     report = asyncio.run(run())
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')

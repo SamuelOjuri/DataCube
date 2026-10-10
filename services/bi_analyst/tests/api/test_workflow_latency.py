@@ -8,6 +8,7 @@ import threading
 import time
 from uuid import uuid4
 
+import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from pydantic import SecretStr
 import pytest
@@ -15,8 +16,9 @@ import httpx
 import uvicorn
 
 from bi_analyst.api import create_app
+from bi_analyst.database import Database
 from bi_analyst.identity import Identity, current_identity
-from test_workflow_postgres import workflow_database, setup, ScriptedProvider, conversation
+from test_workflow_postgres import ROOT, workflow_database, setup, ScriptedProvider, conversation, settle
 
 pytestmark = pytest.mark.postgres
 
@@ -110,9 +112,28 @@ def delayed_database(dsn, delay):
     pytest.param(.1, {}, 60, id='database-only'),
     pytest.param(.125, {'interpret': 5.272, 'plan': 11.138, 'presentation': 17.930}, 90,
                  id='production-model-timings'),
+    pytest.param(0, {'plan': 26}, 600, id='long-reasoning-budget'),
 ])
 def test_answer_survives_database_latency_and_health_checks(setup, database_delay, model_delays, budget):
-    _, dsn, owner, config, _ = setup
+    admin, dsn, owner, config, _ = setup
+    if budget > 300:
+        with pytest.raises(RuntimeError, match='require migration 009'):
+            asyncio.run(Database(config.model_copy(update={'workflow_timeout_seconds': budget})).open())
+        with running_api(config, owner, ScriptedProvider()) as legacy:
+            thread = conversation(legacy)
+            response = legacy.post(f'/v1/conversations/{thread}/messages', json={
+                'question': 'Show stored parent Order Value.', 'idempotency_key': str(uuid4())})
+            assert response.status_code == 202
+            legacy_id = response.json()['run_id']
+            legacy_answer = settle(legacy, legacy_id)['answer']
+            assert legacy_answer is not None
+        before = admin.execute('SELECT run_id,remaining_seconds,deadline FROM analyst_state.workflow_jobs ORDER BY run_id').fetchall()
+        with admin.transaction():
+            admin.execute((ROOT/'src/database/migrations/20261008_007_analyst_presentation.sql').read_text(encoding='utf-8'))
+            admin.execute((ROOT/'src/database/migrations/20261009_008_analyst_operations.sql').read_text(encoding='utf-8'))
+            admin.execute((ROOT/'src/database/migrations/20261010_009_analyst_reasoning_budget.sql').read_text(encoding='utf-8'))
+        assert admin.execute('SELECT run_id,remaining_seconds,deadline FROM analyst_state.workflow_jobs ORDER BY run_id').fetchall() == before
+        assert admin.execute('SELECT version FROM analyst_state.schema_version').fetchone() == {'version': 7}
 
     class TimedProvider(ScriptedProvider):
         async def generate(self, stage, payload, schema):
@@ -135,6 +156,9 @@ def test_answer_survives_database_latency_and_health_checks(setup, database_dela
             })
             assert response.status_code == 202, response.text
             run_id = response.json()['run_id']
+            if budget > 300:
+                assert admin.execute('SELECT remaining_seconds FROM analyst_state.workflow_jobs WHERE run_id=%s',
+                                     (run_id,)).fetchone() == {'remaining_seconds': 600}
 
             def collect_events():
                 lines = []
@@ -149,6 +173,8 @@ def test_answer_survives_database_latency_and_health_checks(setup, database_dela
             live_events = streams.submit(collect_events)
             health_times = []
             while time.monotonic()-started < budget+30:
+                if not database_delay:
+                    time.sleep(.25)
                 checked = time.monotonic()
                 health = client.get('/health/ready')
                 health_times.append(time.monotonic()-checked)
@@ -182,3 +208,21 @@ def test_answer_survives_database_latency_and_health_checks(setup, database_dela
             reopened = client.get(f'/v1/runs/{run_id}/workflow')
             assert reopened.json()['answer'] == saved['answer']
             assert max(health_times) < 5, 'Readiness exceeded the hosting health-check deadline'
+            if budget > 300:
+                assert client.get(f'/v1/runs/{legacy_id}/workflow').json()['answer'] == legacy_answer
+                admin.execute('ALTER TABLE analyst_state.workflow_jobs RENAME CONSTRAINT '
+                              'workflow_jobs_remaining_seconds_600_check TO workflow_jobs_remaining_seconds_check')
+                try:
+                    assert client.get('/health/ready').status_code == 503
+                finally:
+                    admin.execute('ALTER TABLE analyst_state.workflow_jobs RENAME CONSTRAINT '
+                                  'workflow_jobs_remaining_seconds_check TO workflow_jobs_remaining_seconds_600_check')
+                assert client.get('/health/ready').status_code == 200
+                with admin.transaction(force_rollback=True):
+                    admin.execute('UPDATE analyst_state.workflow_jobs SET remaining_seconds=600 WHERE run_id=%s',
+                                  (run_id,))
+                for invalid in (-1, 601):
+                    with pytest.raises(psycopg.errors.CheckViolation):
+                        with admin.transaction():
+                            admin.execute('UPDATE analyst_state.workflow_jobs SET remaining_seconds=%s WHERE run_id=%s',
+                                          (invalid, run_id))

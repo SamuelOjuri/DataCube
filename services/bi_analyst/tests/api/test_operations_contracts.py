@@ -110,8 +110,15 @@ def test_load_refuses_production_before_sending_a_session():
         with pytest.raises(ValueError): origin(value)
 
 
-def test_staging_load_is_bounded_and_output_excludes_results_and_sessions():
+@pytest.mark.parametrize('mode,deadline', [('query', 120), ('answer', 660)])
+def test_staging_load_is_bounded_and_output_excludes_results_and_sessions(monkeypatch, mode, deadline):
     active, peak = 0, 0
+    deadlines = []
+    timeout = asyncio.timeout
+    def record_timeout(seconds):
+        deadlines.append(seconds)
+        return timeout(seconds)
+    monkeypatch.setattr(asyncio, 'timeout', record_timeout)
     async def handler(request):
         nonlocal active,peak
         if request.url.path == '/health/ready':
@@ -119,19 +126,22 @@ def test_staging_load_is_bounded_and_output_excludes_results_and_sessions():
                 'identity':'monday','pilot_only':True,'schema_version':7,'workflow':'enabled',
                 'api_version':'0.7.0','catalogue_sha256':'synthetic'})
         assert request.headers['Authorization'] == 'Bearer secret-load-token'
-        if request.url.path.endswith('/metric'):
+        if request.url.path.endswith(('/metric', '/messages')):
             active += 1
             peak = max(peak,active)
             await asyncio.sleep(0.01)
             active -= 1
             body = json.loads(request.content)
+            if request.url.path.endswith('/messages'):
+                return httpx.Response(202,json={'run_id':'synthetic','status':'completed'})
             return httpx.Response(201,json={'rows':[['private-result']], 'provenance':{'metric_id':body['metric_id']}})
         return httpx.Response(201,json={'id':'synthetic'})
     async def run():
         async with httpx.AsyncClient(base_url='https://example.test',transport=httpx.MockTransport(handler)) as client:
-            return await load(client,['secret-load-token'],samples=4,concurrency=2,mode='query')
+            return await load(client,['secret-load-token'],samples=4,concurrency=2,mode=mode)
     result = asyncio.run(run())
     assert result['successful'] == 4 and result['failure_rate'] == 0 and peak == 2
+    assert deadlines == [deadline] * 4
     assert 'secret-load-token' not in json.dumps(result) and 'private-result' not in json.dumps(result)
 
 
@@ -146,6 +156,8 @@ def test_release_blueprints_and_ci_are_isolated():
         assert values['BI_ANALYST_ENVIRONMENT'] == environment
         assert values['BI_ANALYST_ANALYST_ENABLED'] == 'false'
         assert values['BI_ANALYST_PILOT_ONLY'] == 'true'
+        assert values['BI_ANALYST_MODEL_TIMEOUT_SECONDS'] == 90
+        assert values['BI_ANALYST_WORKFLOW_TIMEOUT_SECONDS'] == 600
         assert '--workers 1' in service['startCommand']
         assert 'BI_ANALYST_MAINTENANCE_DSN' not in values
     dashboard = json.loads((root/'services/bi_analyst/deploy/dashboard.json').read_text())

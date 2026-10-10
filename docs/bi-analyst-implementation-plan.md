@@ -2,6 +2,22 @@
 
 Prepared: 7 October 2026. Repository baseline reviewed: `9a62b35`.
 
+## Reasoning-budget decision: 10 October 2026
+
+The owner approved a maximum of **90 seconds per model call** and **600 seconds
+of cumulative active workflow time**, replacing the 25/90-second defaults.
+High reasoning and bounded retries remain enabled; SQL/GraphQL execution,
+permissions, row/byte and concurrency limits are unchanged. These are safety
+ceilings, not target or minimum response times, and do not establish a measured
+success rate for complex questions.
+
+Migration 009 expands the saved workflow budget constraint from 300 to 600
+seconds without changing schema version 7 or existing run deadlines. Apply it
+before enabling the new backend budget, explicitly update the two Render
+environment values, and qualify representative live questions. See the
+[deployment instructions](bi-analyst-phase7.md) and
+[current workflow contract](bi-analyst-phase5.md).
+
 ## Phase 1 closed by owner: 8 October 2026
 
 **`phase1_gate` is `closed_by_owner`, with zero blockers.** The owner has assessed

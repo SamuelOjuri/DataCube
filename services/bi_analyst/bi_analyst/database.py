@@ -89,6 +89,13 @@ class Database:
                 versions = await (await conn.execute("SELECT v FROM analyst_state.checkpoint_migrations ORDER BY v")).fetchall()
                 if versions != [{'v': i} for i in range(10)]:
                     raise RuntimeError("Unexpected checkpointer schema version")
+                if self.settings.workflow_timeout_seconds > 300:
+                    budget = await (await conn.execute("""SELECT 1 FROM pg_constraint
+                        WHERE conrelid='analyst_state.workflow_jobs'::regclass
+                          AND conname='workflow_jobs_remaining_seconds_600_check'
+                          AND contype='c' AND convalidated""")).fetchone()
+                    if not budget:
+                        raise RuntimeError("Workflow budgets above 300 seconds require migration 009")
 
     async def verify_permissions(self):
         async with self.transaction() as conn:

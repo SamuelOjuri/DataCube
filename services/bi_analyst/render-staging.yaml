@@ -28,5 +28,7 @@ services:
       - {key: BI_ANALYST_STATE_POOL_SIZE, value: 2}
       - {key: BI_ANALYST_METRIC_CONCURRENCY, value: 2}
       - {key: BI_ANALYST_WORKFLOW_CONCURRENCY, value: 2}
+      - {key: BI_ANALYST_WORKFLOW_TIMEOUT_SECONDS, value: 600}
+      - {key: BI_ANALYST_MODEL_TIMEOUT_SECONDS, value: 90}
       - {key: BI_ANALYST_METRIC_EVALUATION_ENABLED, value: "false"}
       - {key: BI_ANALYST_BUSINESS_TIMEZONE, value: Europe/London}

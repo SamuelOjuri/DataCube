@@ -17,6 +17,7 @@ from uuid import uuid4
 import httpx
 
 from ..metrics.compiler import Compiler
+from ..settings import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 
 
 def origin(value, *, local=False):
@@ -57,7 +58,7 @@ async def load(client, tokens, *, samples, concurrency, mode):
                     response.raise_for_status()
                     return response.json()
                 metric = metrics[index % len(metrics)]
-                async with asyncio.timeout(120):
+                async with asyncio.timeout(DEFAULT_WORKFLOW_TIMEOUT_SECONDS + 60 if mode == 'answer' else 120):
                     conversation = await post('/v1/conversations',{'title':'Release qualification'})
                     if mode == 'query':
                         run = await post(f"/v1/conversations/{conversation['id']}/runs",{'question':'Release qualification'})

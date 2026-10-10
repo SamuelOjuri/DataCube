@@ -9,6 +9,10 @@ from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 
+DEFAULT_MODEL_TIMEOUT_SECONDS = 90
+DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 600
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -54,9 +58,9 @@ class Settings(BaseModel):
     workflow_enabled: bool = False
     gemini_api_key: SecretStr | None = None
     workflow_concurrency: int = Field(default=2, ge=1, le=8)
-    workflow_timeout_seconds: float = Field(default=90, ge=1, le=300)
+    workflow_timeout_seconds: float = Field(default=DEFAULT_WORKFLOW_TIMEOUT_SECONDS, ge=1, le=600)
     workflow_max_model_calls: int = Field(default=8, ge=3, le=12)
-    model_timeout_seconds: float = Field(default=25, ge=1, le=60)
+    model_timeout_seconds: float = Field(default=DEFAULT_MODEL_TIMEOUT_SECONDS, ge=1, le=90)
 
     @model_validator(mode="after")
     def validate_boundary(self):

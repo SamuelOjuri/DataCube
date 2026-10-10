@@ -25,6 +25,7 @@ def operations_database(presentation_database):
     before = admin.execute("SELECT oid,relacl,relowner FROM pg_class WHERE relnamespace='public'::regnamespace ORDER BY oid").fetchall()
     with admin.transaction():
         admin.execute((ROOT/'src/database/migrations/20261009_008_analyst_operations.sql').read_text())
+        admin.execute((ROOT/'src/database/migrations/20261010_009_analyst_reasoning_budget.sql').read_text())
     admin.execute('ALTER ROLE bi_analyst_maintenance LOGIN')
     assert admin.execute("SELECT oid,relacl,relowner FROM pg_class WHERE relnamespace='public'::regnamespace ORDER BY oid").fetchall() == before
     assert admin.execute('SELECT version FROM analyst_state.schema_version').fetchone() == {'version':7}
@@ -54,8 +55,16 @@ def test_preflight_checks_real_roles_and_pilot_without_writes(setup):
     deployed = config.model_copy(update={'environment':'staging','deployment_overlap':2,'connection_budget':8,
         'metric_evaluation_enabled':False,'pilot_only':True,'pilot_subjects':[owner],
         'telemetry_token':SecretStr('x'*32),'model_input_usd_per_million':1,'model_output_usd_per_million':2,
-        'auth_provider':'monday'})
+        'auth_provider':'monday','workflow_timeout_seconds':600})
     before = admin.execute('SELECT count(*) AS n FROM analyst_state.audit_events').fetchone()
+    assert asyncio.run(preflight(deployed,pilot=True))['passed']
+    admin.execute('ALTER TABLE analyst_state.workflow_jobs RENAME CONSTRAINT '
+                  'workflow_jobs_remaining_seconds_600_check TO workflow_jobs_remaining_seconds_check')
+    try:
+        assert 'database_or_privilege_preflight_failed' in asyncio.run(preflight(deployed,pilot=True))['errors']
+    finally:
+        admin.execute('ALTER TABLE analyst_state.workflow_jobs RENAME CONSTRAINT '
+                      'workflow_jobs_remaining_seconds_check TO workflow_jobs_remaining_seconds_600_check')
     assert asyncio.run(preflight(deployed,pilot=True))['passed']
     admin.execute('UPDATE analyst_state.principals SET enabled=false WHERE subject=%s',(owner,))
     assert 'pilot_principal_not_provisioned' in asyncio.run(preflight(deployed,pilot=True))['errors']
