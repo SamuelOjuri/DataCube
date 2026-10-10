@@ -1,5 +1,7 @@
 """Real LangGraph/Postgres/RLS and API scheduling, with deterministic provider fixtures."""
 import asyncio
+import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +17,7 @@ import pytest
 from bi_analyst.api import create_app
 from bi_analyst.identity import Identity, current_identity
 from bi_analyst.metrics.compiler import Compiler
+from bi_analyst.operations.telemetry import measured
 from bi_analyst.workflow.provider import ProviderFailure
 
 pytestmark = pytest.mark.postgres
@@ -338,3 +341,56 @@ def test_readiness_batches_fail_closed_and_connections_recover(setup,schema,rela
                 *map(psycopg.sql.Identifier,(schema,relation,role))))
         assert client.get('/health/ready').status_code == 200
         assert settle(client,submit(client))['status'] == 'completed'
+
+
+def test_submission_and_background_logs_share_run_and_request_ids(setup,caplog,monkeypatch):
+    _,_,owner,_,start = setup
+    caplog.set_level(logging.INFO,logger='bi_analyst')
+    monkeypatch.setattr(logging.getLogger('bi_analyst'),'propagate',True)
+
+    class LoggedProvider(ScriptedProvider):
+        @measured('model',operation_parameter='stage')
+        async def generate(self,stage,payload,schema):
+            return await super().generate(stage,payload,schema)
+
+    provider = LoggedProvider(retry=True)
+    with start(provider) as client:
+        provider.telemetry = client.app_instance.state.database.telemetry
+        cid = conversation(client)
+        caplog.clear()
+        forged_request_id = str(uuid4())
+        response = client.post(f'/v1/conversations/{cid}/messages',
+            json={'question':'private-log-test-question','idempotency_key':str(uuid4())},
+            headers={'X-Request-ID':forged_request_id})
+        assert response.status_code == 202,response.text
+        run_id, request_id = response.json()['run_id'], response.headers['X-Request-ID']
+        assert request_id != forged_request_id
+        assert settle(client,run_id)['status'] == 'completed'
+        # A different HTTP request to the saved run must carry its own request ID.
+        saved = client.get(f'/v1/runs/{run_id}/workflow')
+        saved_request_id = saved.headers['X-Request-ID']
+        assert saved_request_id != request_id
+        # Invalid paths are never copied into the correlation field.
+        assert client.get('/v1/runs/private-path-value/workflow').status_code == 422
+
+    rows = [json.loads(record.message) for record in caplog.records
+            if record.name in {'bi_analyst.operations','bi_analyst.audit'}]
+    submission = next(row for row in rows if row['event']=='http_request' and row['method']=='POST')
+    assert submission['run_id']==run_id and submission['request_id']==request_id
+    assert any(row['event']=='http_request' and row['request_id']==saved_request_id
+               and row['run_id']==run_id for row in rows)
+    operations = [row for row in rows if row['event']=='analyst_operation' and row['stage']!='http']
+    assert len(operations)==12  # one workflow, one query, four model attempts
+    assert all(row['run_id']==run_id and row['request_id']==request_id for row in operations)
+    pairs = {}
+    for row in operations:
+        pairs.setdefault(row['operation_id'],[]).append(row)
+    assert len(pairs)==6
+    assert all([row['phase'] for row in pair]==['start','end'] for pair in pairs.values())
+    model_ends = [row for row in operations if row['stage']=='model' and row['phase']=='end']
+    assert [(row['operation'],row['attempt'],row['outcome']) for row in model_ends]==[
+        ('interpret',1,'failed'),('interpret',2,'success'),('plan',1,'success'),('presentation',1,'success')]
+    assert model_ends[0]['error_code']=='model_unavailable'
+    assert next(row for row in operations if row['stage']=='workflow' and row['phase']=='end')['outcome']=='success'
+    for secret in ('private-log-test-question','private-path-value',str(owner),forged_request_id,'password='):
+        assert secret not in caplog.text

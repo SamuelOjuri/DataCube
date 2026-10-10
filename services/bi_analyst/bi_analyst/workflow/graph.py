@@ -11,6 +11,7 @@ from pydantic import Field, ValidationError
 from ..contracts import Contract
 from ..metrics.compiler import InvalidMetricRequest
 from ..metrics.contracts import EntityRequest, MetricRequest, MetricResult
+from ..operations.telemetry import operation_context
 from .contracts import Clarification, Interpretation, PlanDraft, Presentation, ResultReference
 from .evidence import candidates, ground
 from .provider import ProviderFailure
@@ -64,7 +65,8 @@ class ConversationGraph:
         for attempt in range(2):
             await self.jobs.budget(self.actor,self.run_id,self.token,'model')
             try:
-                result, usage = await self.service.provider.generate(stage,payload,schema)
+                with operation_context(attempt=attempt + 1):
+                    result, usage = await self.service.provider.generate(stage,payload,schema)
                 result = schema.model_validate(result)
                 await self.jobs.usage(self.actor,self.run_id,self.token,usage)
                 return result

@@ -1,6 +1,5 @@
 """Application-owned scheduling. Checkpoints are persistence, never a work queue."""
 import asyncio
-import time
 from contextlib import suppress
 from importlib.metadata import version
 
@@ -71,7 +70,11 @@ class WorkflowService:
         task.add_done_callback(done)
 
     async def _drive(self, actor, run_id, token, reply):
-        started, outcome = time.monotonic(), 'failed'
+        with self.store.db.telemetry.operation('workflow','run_workflow',run_id=run_id,attempt=1) as operation:
+            await self._execute(actor,run_id,token,reply,operation)
+
+    async def _execute(self, actor, run_id, token, reply, operation):
+        outcome, error_code = 'failed', None
         work = None
         try:
             row = await self.jobs.guard(actor,run_id,token)
@@ -98,29 +101,36 @@ class WorkflowService:
                 outcome = 'success'
         except asyncio.CancelledError:
             outcome = 'cancelled' if run_id in self.cancellations else 'interrupted'
+            error_code = 'execution_cancelled' if outcome == 'cancelled' else 'execution_interrupted'
             await self._fail(actor,run_id,token,'interrupted','execution_interrupted')
             raise
         except TimeoutError:
             outcome = 'timeout'
+            error_code = 'run_timeout'
             await self._fail(actor,run_id,token,'failed','run_timeout')
         except ProviderFailure as error:
+            outcome = 'timeout' if error.code == 'model_timeout' else 'failed'
+            error_code = error.code
             await self._fail(actor,run_id,token,'failed',error.code)
         except EvidenceError:
+            error_code = 'invalid_evidence'
             await self._fail(actor,run_id,token,'failed','invalid_evidence')
         except HTTPException as error:
             # Only fixed internal codes; never serialize arbitrary exception details.
-            code = error.detail if error.detail in {'unsupported_question','model_invalid_plan','clarification_limit',
+            code = error.detail if type(error.detail) is str and error.detail in {'unsupported_question','model_invalid_plan','clarification_limit',
                 'run_budget_exceeded','permissions_changed','access_denied','metric_not_certified','result_expired',
                 'result_evidence_changed','workflow_version_changed'} else 'run_unavailable'
+            error_code = code
             await self._fail(actor,run_id,token,'failed',code)
         except Exception:
+            error_code = 'workflow_failed'
             await self._fail(actor,run_id,token,'failed','workflow_failed')
         finally:
             if work is not None:
                 if not work.done():
                     work.cancel()
                 await asyncio.gather(work,return_exceptions=True)
-            self.store.db.telemetry.observe('workflow',outcome,time.monotonic()-started)
+            operation.set_outcome(outcome,error_code)
             self.cancellations.discard(run_id)
 
     async def _fail(self, actor, run_id, token, status, code):

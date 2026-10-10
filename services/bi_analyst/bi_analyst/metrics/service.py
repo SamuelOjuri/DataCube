@@ -99,7 +99,7 @@ class MetricService:
                     await asyncio.gather(work, return_exceptions=True)
                 self.runs.discard(run_id)
 
-    @measured("query")
+    @measured("query", operation="metric_query", run_parameter="run_id")
     async def query(self, principal: Principal, run_id: UUID, body: MetricRequest) -> MetricResult:
         self.require_access(body.metric_id, body.metric_version, body.population)
         timezone = self.settings.business_timezone

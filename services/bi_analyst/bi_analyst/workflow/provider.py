@@ -51,7 +51,7 @@ class GeminiProvider:
         self.settings, self.client = settings, client
         self.telemetry = telemetry if telemetry is not None else Telemetry()
 
-    @measured("model")
+    @measured("model", operation_parameter="stage")
     async def generate(self, stage, payload, schema):
         if not self.settings.gemini_api_key:
             raise ProviderFailure("model_not_configured")
@@ -89,7 +89,9 @@ class GeminiProvider:
             usage = raw.get("usageMetadata", {})
             return result, {key: max(0, int(usage.get(key, 0))) for key in
                             ("promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount")}
-        except (TimeoutError, httpx.HTTPError):
+        except (TimeoutError, httpx.TimeoutException):
+            raise ProviderFailure("model_timeout", retryable=True) from None
+        except httpx.HTTPError:
             raise ProviderFailure(retryable=True) from None
         except (ValidationError, ValueError, KeyError, TypeError):
             raise ProviderFailure("model_invalid_output") from None

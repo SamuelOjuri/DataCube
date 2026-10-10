@@ -34,6 +34,7 @@ from .workflow.contracts import Reply, Submission, WorkflowRun
 from .workflow.provider import GeminiProvider
 from .workflow.service import WorkflowService
 from .workflow.store import TERMINAL
+from .operations.telemetry import correlation_id, operation_context
 from .presentation import Feedback, projects, save_feedback
 from . import __version__
 
@@ -105,6 +106,10 @@ def create_app(settings: Settings) -> FastAPI:
     async def request_context(request: Request, call_next):
         request_id = uuid4()  # Never trust an externally supplied ID for the audit key.
         request.state.request_id = request_id
+        with operation_context(request_id=request_id):
+            return await record_request(request,call_next,request_id)
+
+    async def record_request(request: Request, call_next, request_id):
         started = time.monotonic()
         try:
             response = await call_next(request)
@@ -123,9 +128,12 @@ def create_app(settings: Settings) -> FastAPI:
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        request.app.state.database.telemetry.observe("http", "failed" if response.status_code >= 500 else
-            "rejected" if response.status_code >= 400 else "success", time.monotonic()-started)
+        run_id = correlation_id(getattr(request.state, "run_id", request.path_params.get("run_id")))
+        with operation_context(run_id=run_id):
+            request.app.state.database.telemetry.observe("http", "failed" if response.status_code >= 500 else
+                "rejected" if response.status_code >= 400 else "success", time.monotonic()-started)
         log.info(json.dumps({"event": "http_request", "request_id": str(request_id),
+                             "run_id": run_id,
                              "route": route, "method": request.method, "status": response.status_code,
                              "auth_outcome": getattr(request.state, "auth_outcome", None),
                              "duration_ms": round((time.monotonic()-started)*1000)}))
@@ -278,11 +286,15 @@ def create_app(settings: Settings) -> FastAPI:
         request.app.state.workflow.require_enabled()
         if body is None:
             raise HTTPException(422,'clarification_reply_required')
-        return await request.app.state.workflow.resume(actor,run_id,body)
+        result = await request.app.state.workflow.resume(actor,run_id,body)
+        request.state.run_id = result.run_id
+        return result
 
     @app.post("/v1/conversations/{conversation_id}/messages", response_model=WorkflowRun, status_code=202)
     async def message(conversation_id: UUID, body: Submission, request: Request, actor: Principal = Depends(principal)):
-        return await request.app.state.workflow.submit(actor,conversation_id,body)
+        result = await request.app.state.workflow.submit(actor,conversation_id,body)
+        request.state.run_id = result.run_id
+        return result
 
     @app.get("/v1/runs/{run_id}/workflow", response_model=WorkflowRun)
     async def workflow_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
