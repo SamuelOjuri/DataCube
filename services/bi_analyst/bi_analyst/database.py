@@ -56,33 +56,38 @@ class Database:
                     await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 await conn.execute("SELECT set_config('statement_timeout', %s, true), "
                                    "set_config('lock_timeout', '1000', true), "
-                                   "set_config('search_path', 'pg_catalog', true)",
-                                   (str(self.settings.statement_timeout_ms),))
-                if subject is not None:
-                    await conn.execute("SELECT set_config('bi_analyst.subject', %s, true)", (str(subject),))
+                                   "set_config('search_path', 'pg_catalog', true), "
+                                   "set_config('bi_analyst.subject', %s, true)",
+                                   (str(self.settings.statement_timeout_ms),
+                                    str(subject) if subject is not None else ''))
                 yield conn
 
     async def ready(self):
         async with self.transaction(analytical=True) as conn:
-            for relation in GATEWAYS:
-                await conn.execute(sql.SQL("SELECT * FROM analyst_query.{} LIMIT 0").format(sql.Identifier(relation)))
+            # Check every gateway, but send the independent probes in one batch.
+            # Avoid a network round trip per relation on every health check.
+            async with conn.pipeline():
+                for relation in GATEWAYS:
+                    await conn.execute(sql.SQL("SELECT * FROM analyst_query.{} LIMIT 0").format(sql.Identifier(relation)))
         async with self.transaction() as conn:
             row = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
             if row not in ({"version": 3}, {"version": 5}, {"version": 6}, {"version": 7}) or (self.settings.auth_provider == "monday" and row == {"version": 3}):
                 raise RuntimeError("Unexpected analyst schema version")
             if self.settings.workflow_enabled and row not in ({"version": 6}, {"version": 7}):
                 raise RuntimeError("Workflow requires migration 006")
-            if row in ({"version": 5}, {"version": 6}, {"version": 7}):
-                for relation in AUTH_TABLES:
-                    await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
+            async with conn.pipeline():
+                if row in ({"version": 5}, {"version": 6}, {"version": 7}):
+                    for relation in AUTH_TABLES:
+                        await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
+                if row in ({"version": 6}, {"version": 7}):
+                    for relation in WORKFLOW_TABLES:
+                        await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
+                if row == {"version": 7}:
+                    await conn.execute("SELECT * FROM analyst_state.result_feedback LIMIT 0")
             if row in ({"version": 6}, {"version": 7}):
-                for relation in WORKFLOW_TABLES:
-                    await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
                 versions = await (await conn.execute("SELECT v FROM analyst_state.checkpoint_migrations ORDER BY v")).fetchall()
                 if versions != [{'v': i} for i in range(10)]:
                     raise RuntimeError("Unexpected checkpointer schema version")
-            if row == {"version": 7}:
-                await conn.execute("SELECT * FROM analyst_state.result_feedback LIMIT 0")
 
     async def verify_permissions(self):
         async with self.transaction() as conn:

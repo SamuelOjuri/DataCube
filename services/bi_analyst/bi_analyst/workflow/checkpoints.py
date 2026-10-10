@@ -1,5 +1,5 @@
 """Pinned PostgreSQL saver with short owner-scoped transactions on the state pool."""
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
@@ -20,5 +20,7 @@ class ScopedPostgresSaver(AsyncPostgresSaver):
         async with self.lock, self.store.scoped(self.actor) as conn:
             await conn.execute("SELECT set_config('search_path','pg_catalog,analyst_state',true), "
                                "set_config('bi_analyst.workflow_run_id',%s,true)", (str(self.run_id),))
-            async with conn.cursor(binary=True, row_factory=dict_row) as cursor:
+            # The upstream saver requests batching for checkpoint/blob writes.
+            # Keep the pipeline inside the scoped transaction so errors roll back.
+            async with (conn.pipeline() if pipeline else nullcontext()), conn.cursor(binary=True, row_factory=dict_row) as cursor:
                 yield cursor

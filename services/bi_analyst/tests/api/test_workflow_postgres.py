@@ -319,3 +319,22 @@ def test_wrong_clarification_and_version_change_are_rejected(setup):
         reply['clarification_id'] = row['clarification']['id']
         client.app_instance.state.workflow.versions = {**client.app_instance.state.workflow.versions,'prompt':'changed'}
         assert client.post(f'/v1/runs/{run_id}/resume',json=reply).json()['detail'] == 'workflow_version_changed'
+
+
+@pytest.mark.parametrize('schema,relation,role',[
+    ('analyst_query','projects_v1','bi_analyst_reader'),
+    ('analyst_state','sessions','bi_analyst_state'),
+    ('analyst_state','checkpoint_blobs','bi_analyst_state'),
+])
+def test_readiness_batches_fail_closed_and_connections_recover(setup,schema,relation,role):
+    admin,_,_,_,start = setup
+    with start() as client:
+        try:
+            admin.execute(psycopg.sql.SQL('REVOKE SELECT ON {}.{} FROM {}').format(
+                *map(psycopg.sql.Identifier,(schema,relation,role))))
+            assert client.get('/health/ready').status_code == 503
+        finally:
+            admin.execute(psycopg.sql.SQL('GRANT SELECT ON {}.{} TO {}').format(
+                *map(psycopg.sql.Identifier,(schema,relation,role))))
+        assert client.get('/health/ready').status_code == 200
+        assert settle(client,submit(client))['status'] == 'completed'

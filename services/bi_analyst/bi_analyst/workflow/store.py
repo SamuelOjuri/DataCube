@@ -44,12 +44,18 @@ class WorkflowStore:
                 await self._event(conn, actor, row['run_id'], "terminal", {"status": "interrupted", "error_code": "execution_interrupted"})
 
     async def get(self, actor, run_id):
-        await self.store.run(actor, run_id)
         async with self.store.scoped(actor) as conn:
-            row = await (await conn.execute("SELECT * FROM analyst_state.workflow_jobs WHERE run_id=%s AND owner_id=%s",
-                                           (run_id, actor.subject))).fetchone()
+            return await self._get(conn, actor, run_id)
+
+    async def _get(self, conn, actor, run_id):
+        row = await (await conn.execute("""SELECT job.*, run.permissions_version AS run_permissions_version
+            FROM analyst_state.workflow_jobs job JOIN analyst_state.runs run
+              ON run.id=job.run_id AND run.owner_id=job.owner_id
+            WHERE job.run_id=%s AND job.owner_id=%s""", (run_id, actor.subject))).fetchone()
         if not row:
             raise HTTPException(404, "not_found")
+        if row.pop('run_permissions_version') != actor.permissions_version or row['permissions_version'] != actor.permissions_version:
+            raise HTTPException(403, 'permissions_changed')
         return row
 
     @staticmethod
@@ -205,8 +211,14 @@ class WorkflowStore:
             return True
 
     async def events(self, actor, run_id, after):
-        await self.get(actor,run_id)
+        _, rows = await self.snapshot(actor,run_id,after)
+        return rows
+
+    async def snapshot(self, actor, run_id, after):
+        # Stream status and events share a short, freshly authorised transaction.
         async with self.store.scoped(actor) as conn:
-            return await (await conn.execute("""SELECT sequence,kind,payload FROM analyst_state.workflow_events
+            state = await self._get(conn,actor,run_id)
+            rows = await (await conn.execute("""SELECT sequence,kind,payload FROM analyst_state.workflow_events
                 WHERE run_id=%s AND owner_id=%s AND sequence>%s ORDER BY sequence LIMIT 128""",
                 (run_id,actor.subject,after))).fetchall()
+            return state, rows

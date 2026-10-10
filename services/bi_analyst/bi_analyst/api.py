@@ -308,8 +308,7 @@ def create_app(settings: Settings) -> FastAPI:
                         if live_identity.subject != actor.subject or live_identity.permissions_version != actor.permissions_version:
                             raise HTTPException(403,'permissions_changed')
                     await workflow.jobs.expire(actor)
-                    state = await workflow.jobs.get(actor,run_id)
-                    rows = await workflow.jobs.events(actor,run_id,cursor)
+                    state, rows = await workflow.jobs.snapshot(actor,run_id,cursor)
                 except HTTPException:
                     yield 'event: terminal\ndata: {"status":"access_changed"}\n\n'
                     return

@@ -72,6 +72,25 @@ test('cancellation and retry create a new run while history links recover persis
   expect(state.submissions).toHaveLength(2);expect(state.submissions[1].idempotency_key).not.toBe(state.submissions[0].idempotency_key);
 });
 
+test('an interrupted saved run can be retried and displays the completed answer',async({page})=>{
+  const state=await fixture(page,{existing:true});
+  state.runs[0].status='interrupted';
+  state.workflow[runId].status='interrupted';
+  state.workflow[runId].answer=null;
+  await signIn(page,`/conversations/${thread}`);
+  await expect(page.getByText('Execution was interrupted. Retry to start a new run with current access and data.')).toBeVisible();
+  await page.getByRole('button',{name:'Retry question'}).click();
+  await expect(page.getByRole('heading',{name:'Order Value (parent mirror)'})).toBeVisible();
+  await expect(page.locator('.chart svg')).toBeVisible();
+  expect(state.submissions).toHaveLength(1);
+  expect(state.submissions[0].question).toBe('Show stored Order Value by category.');
+  expect(state.submissions[0].follow_up_to).toBeUndefined();
+  expect(state.runs[0].id).not.toBe(runId);
+  expect(state.workflow[runId].status).toBe('interrupted');
+  await expect(page.getByText('Scope changed from the previous answer')).toHaveCount(0);
+  await page.screenshot({path:'../outputs/analyst-interrupted-retry.png',fullPage:true});
+});
+
 test('deep links survive reauthentication, expired sessions clear results, sign-out clears the workspace',async({page})=>{
   const state=await fixture(page,{existing:true});await signIn(page,`/conversations/${thread}`);
   await expect(page).toHaveURL(`/conversations/${thread}`);

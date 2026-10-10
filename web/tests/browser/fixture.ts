@@ -17,7 +17,7 @@ export async function fixture(page: Page, {clarify=false, hold=false, existing=f
   const state = {runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false};
   const answer = (id: string) => ({text:'Order Value is GBP 10,350.00. This is a complete filtered total.',
     result:{result_id:resultId},chart:limited?{kind:'table',x:null,y:'value'}:{kind:'bar',x:'category',y:'value'},notices:['Measured contributions do not establish cause.'],
-    scope_changes:id === runId ? {} : {filters:{before:[],after:['category: A']}}});
+    scope_changes:id !== runId && state.submissions.at(-1)?.follow_up_to ? {filters:{before:[],after:['category: A']}} : {}});
   function create(question: string) {
     const id = state.runs.length ? `30000000-0000-4000-8000-${String(state.runs.length+1).padStart(12,'0')}` : runId;
     state.runs.unshift({id,conversation_id:thread,question,status:'running',created_at:'2026-10-08T12:00:00Z'});

@@ -55,7 +55,7 @@ class ConversationGraph:
         self.graph = builder.compile(checkpointer=checkpointer)
 
     async def stage(self, name):
-        await self.jobs.guard(self.actor,self.run_id,self.token)
+        # progress/budget validate the principal and execution token under lock.
         await self.jobs.progress(self.actor,self.run_id,self.token,name)
 
     def permitted(self):
@@ -70,7 +70,6 @@ class ConversationGraph:
 
     async def model(self, stage, payload, schema):
         for attempt in range(2):
-            await self.jobs.guard(self.actor,self.run_id,self.token)
             await self.jobs.budget(self.actor,self.run_id,self.token,'model')
             try:
                 result, usage = await self.service.provider.generate(stage,payload,schema)
