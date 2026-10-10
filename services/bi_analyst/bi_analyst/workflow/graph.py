@@ -21,7 +21,6 @@ class GraphState(Contract):
     previous_plan: dict | None = None
     plan: dict | None = None
     interpretation: dict | None = None
-    catalogue_ids: list[str] = Field(default_factory=list)
     replies: list[str] = Field(default_factory=list)
     clarification: dict | None = None
     result: dict | None = None
@@ -38,20 +37,13 @@ class ConversationGraph:
         self.service, self.actor, self.run_id, self.token = service, actor, run_id, token
         self.jobs, self.metrics = service.jobs, service.metrics
         builder = StateGraph(GraphState)
-        for name in ('load_context','interpret','retrieve_catalogue','make_plan','clarify','resolve_entities',
-                     'query_metric','validate_result','select_presentation','persist_answer'):
+        for name in ('interpret','make_plan','clarify','execute_plan'):
             builder.add_node(name, getattr(self,name))
-        builder.add_edge(START,'load_context')
-        builder.add_edge('load_context','interpret')
-        builder.add_edge('interpret','retrieve_catalogue')
-        builder.add_edge('retrieve_catalogue','make_plan')
-        builder.add_conditional_edges('make_plan', lambda s: 'clarify' if s.clarification else 'resolve_entities')
-        builder.add_conditional_edges('clarify', lambda s: 'resolve_entities' if s.plan and not s.clarification else 'make_plan')
-        builder.add_conditional_edges('resolve_entities', lambda s: 'clarify' if s.clarification else 'query_metric')
-        builder.add_edge('query_metric','validate_result')
-        builder.add_edge('validate_result','select_presentation')
-        builder.add_edge('select_presentation','persist_answer')
-        builder.add_edge('persist_answer',END)
+        builder.add_edge(START,'interpret')
+        builder.add_edge('interpret','make_plan')
+        builder.add_conditional_edges('make_plan', lambda s: 'clarify' if s.clarification else 'execute_plan')
+        builder.add_conditional_edges('clarify', lambda s: 'execute_plan' if s.plan and not s.clarification else 'make_plan')
+        builder.add_conditional_edges('execute_plan', lambda s: 'clarify' if s.clarification else END)
         self.graph = builder.compile(checkpointer=checkpointer)
 
     async def stage(self, name):
@@ -81,29 +73,24 @@ class ConversationGraph:
                     raise
                 await asyncio.sleep(0.1)
 
-    async def load_context(self, state):
-        await self.stage('authorizing')
-        if not self.permitted():
-            raise HTTPException(503,'metric_not_certified')
-        return {}
-
     async def interpret(self, state):
+        await self.stage('authorizing')
+        permitted = self.permitted()
+        if not permitted:
+            raise HTTPException(503,'metric_not_certified')
         await self.stage('interpreting')
         output = await self.model('interpret', {'question':state.question,'previous_plan':state.previous_plan,
-            'catalogue':[metric_summary(m) for m in self.permitted()],
+            'catalogue':[metric_summary(m) for m in permitted],
             'instructions':'Classify metric families only. Include a family even for an ambiguous or unsupported period; the next planning step checks details.'}, Interpretation)
         if not output.families:
             raise HTTPException(422,'unsupported_question')
         return {'interpretation':output.model_dump(mode='json')}
 
-    async def retrieve_catalogue(self, state):
+    async def make_plan(self, state):
         await self.stage('retrieving_definitions')
         families = state.interpretation['families']
-        return {'catalogue_ids':[m.id for m in self.permitted() if m.family in families]}
-
-    async def make_plan(self, state):
+        permitted = {m.id:m for m in self.permitted() if m.family in families}
         await self.stage('planning')
-        permitted = {m.id:m for m in self.permitted() if m.id in state.catalogue_ids}
         entries = [{**metric_summary(m), 'date_basis':m.date_basis, 'status_filters':m.status_filters,
                     'limitations':self.metrics.compiler.catalogue.runtime_limitations(m)} for m in permitted.values()]
         draft = await self.model('plan', {'question':state.question,'replies':state.replies,
@@ -183,6 +170,19 @@ class ConversationGraph:
                     item.values[i] = resolution.candidates[0]
         return {'plan':plan.model_dump(mode='json'),'clarification':None}
 
+    async def execute_plan(self, state):
+        # Only clarification can resume after a restart. Results and answers have
+        # their own durable writes; these fenced steps need no intervening checkpoint.
+        resolved = await self.resolve_entities(state)
+        if resolved['clarification']:
+            return resolved
+        planned = state.model_copy(update=resolved)
+        queried = await self.query_metric(planned)
+        evidence = planned.model_copy(update=queried)
+        presentation = await self.select_presentation(evidence)
+        await self.persist_answer(evidence.model_copy(update=presentation))
+        return {**resolved, **queried, **presentation}
+
     async def query_metric(self, state):
         await self.stage('querying')
         plan = MetricRequest.model_validate(state.plan)
@@ -207,18 +207,15 @@ class ConversationGraph:
             raise HTTPException(409,'result_expired')
         return result
 
-    async def validate_result(self, state):
+    async def select_presentation(self, state):
         await self.stage('validating_evidence')
         result = await self.result(state)
-        if not candidates(result):
+        evidence = candidates(result)
+        if not evidence:
             raise HTTPException(422,'no_evidence')
-        return {}
-
-    async def select_presentation(self, state):
         await self.stage('selecting_presentation')
-        result = await self.result(state)
         selection = await self.model('presentation', {
-            'evidence':[claim.model_dump(mode='json') for claim in candidates(result)],
+            'evidence':[claim.model_dump(mode='json') for claim in evidence],
             'columns':[c.model_dump(mode='json') for c in result.provenance.columns],
             'row_count':len(result.rows),'truncated':result.provenance.truncated,
             'instructions':'Use table for nulls, multiple dimensions, limited data, or over 100 rows. Only month supports line. Select total and relevant comparison/contributor IDs.'},Presentation)

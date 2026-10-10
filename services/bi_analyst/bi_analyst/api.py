@@ -288,16 +288,14 @@ def create_app(settings: Settings) -> FastAPI:
     async def workflow_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
         workflow = request.app.state.workflow
         workflow.require_enabled()
-        await workflow.jobs.expire(actor)
-        return workflow.jobs.public(await workflow.jobs.get(actor,run_id))
+        return workflow.jobs.public(await workflow.jobs.get(actor,run_id,expire=True))
 
     @app.get("/v1/runs/{run_id}/events")
     async def events(run_id: UUID, request: Request, after: int = Query(0,ge=0,le=128),
                      actor: Principal = Depends(principal), identity: Identity = Depends(current_identity)):
         workflow = request.app.state.workflow
         workflow.require_enabled()
-        await workflow.jobs.expire(actor)
-        await workflow.jobs.get(actor,run_id)
+        await workflow.jobs.get(actor,run_id,expire=True)
         async def stream():
             cursor, heartbeat = after, time.monotonic()
             while not await request.is_disconnected():
@@ -307,7 +305,6 @@ def create_app(settings: Settings) -> FastAPI:
                         live_identity = await current_identity(request)
                         if live_identity.subject != actor.subject or live_identity.permissions_version != actor.permissions_version:
                             raise HTTPException(403,'permissions_changed')
-                    await workflow.jobs.expire(actor)
                     state, rows = await workflow.jobs.snapshot(actor,run_id,cursor)
                 except HTTPException:
                     yield 'event: terminal\ndata: {"status":"access_changed"}\n\n'

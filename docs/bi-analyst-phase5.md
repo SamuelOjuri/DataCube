@@ -26,11 +26,20 @@ clarify or reject these requests, not invent another measure.
 
 The implementation uses one LangGraph with explicit context, interpretation,
 catalogue retrieval, planning, clarification, entity resolution, query, evidence
-validation, presentation and outcome nodes. Model-selected identifiers and
+validation, presentation and outcome stages. Graph version **1.1.0** groups these
+into interpretation, planning, clarification and execution nodes to avoid
+checkpoint round trips between steps that cannot independently resume. Execution
+still persists query results and grounded answers in their existing transactions.
+All progress events, permission checks and the three model calls remain.
+Model-selected identifiers and
 filters pass through the Phase 4 contracts and compiler. Versions, population,
 permission scope and complete-total requirements are assigned by the server.
 Follow-ups apply a typed patch to an explicitly identified completed run in the
 same conversation and return material scope changes.
+
+The existing version fence rejects resuming or following up a run from an older
+graph version. Saved answers remain readable; start a new question rather than
+resuming a pre-upgrade clarification. No database migration is required.
 
 The current [LangGraph persistence guidance](https://docs.langchain.com/oss/python/langgraph/checkpointers)
 and [interrupt guidance](https://docs.langchain.com/oss/python/langgraph/interrupts)
@@ -43,7 +52,11 @@ bounded. Runtime uses `langgraph==1.2.14` and
 
 `ScopedPostgresSaver` uses the pinned driver's cursor acquisition hook to borrow
 a connection for each short owner-scoped transaction. It sets the run scope and
-restricted search path locally. It holds no connection while waiting on Gemini
+restricted search path locally. State operations share a pipeline that flushes
+inside the transaction before commit; reads synchronize before authorization
+decisions and errors roll back before pool reuse. Analytical transactions retain
+their read-only streaming cursors, outside pipeline mode.
+It holds no connection while waiting on Gemini
 or a user. The application never calls `setup()` or uses a migration credential.
 Checkpoint rows require an owned run with the current permissions version.
 Datasets remain in `analyst_state.results`; graph state stores result references.

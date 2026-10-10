@@ -9,6 +9,7 @@ import pytest
 from bi_analyst.api import create_app
 from bi_analyst.identity import Identity, current_identity
 from bi_analyst.database import Database
+from bi_analyst.store import Principal, Store
 from importlib.resources import files
 import asyncio
 
@@ -363,4 +364,46 @@ def test_analytical_transactions_enforce_read_only(settings):
                     await conn.execute("SELECT pg_catalog.lo_create(0)")
         finally:
             await db.close()
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize('failure,exception', [
+    ('statement', psycopg.errors.DivisionByZero),
+    ('application', RuntimeError),
+    ('cancel', asyncio.CancelledError),
+])
+def test_state_pipeline_rolls_back_and_pool_scope_is_reset(settings, database, users, failure, exception):
+    admin, _ = database
+    owner, other = users[:2]
+    conversation_id = uuid4()
+
+    async def check():
+        db = Database(settings.model_copy(update={'state_pool_size': 1}))
+        await db.open()
+        store = Store(db)
+        actor = Principal(owner, 1)
+        try:
+            with pytest.raises(exception):
+                async with store.scoped(actor) as conn:
+                    await conn.execute("""INSERT INTO analyst_state.conversations(id,owner_id,title)
+                        VALUES (%s,%s,'Must roll back')""", (conversation_id, owner))
+                    if failure == 'statement':
+                        await conn.execute('SELECT 1/0')
+                    else:
+                        raise exception()
+            assert admin.execute('SELECT 1 FROM analyst_state.conversations WHERE id=%s',
+                                 (conversation_id,)).fetchone() is None
+            async with db.state.connection() as conn:
+                assert conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+                assert conn.info.pipeline_status == psycopg.pq.PipelineStatus.OFF
+                scope = await (await conn.execute(
+                    "SELECT current_setting('bi_analyst.subject',true) AS subject")).fetchone()
+                assert not scope['subject']
+            saved = await store.conversations(actor, title='Committed after rollback')
+            assert admin.execute('SELECT owner_id FROM analyst_state.conversations WHERE id=%s',
+                                 (saved['id'],)).fetchone()['owner_id'] == owner
+            assert await store.conversations(Principal(other, 1)) == []
+        finally:
+            await db.close()
+
     asyncio.run(check())

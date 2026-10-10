@@ -34,17 +34,22 @@ class WorkflowStore:
 
     async def expire(self, actor):
         async with self.store.scoped(actor) as conn:
-            rows = await (await conn.execute("""SELECT run_id FROM analyst_state.workflow_jobs
-                WHERE owner_id=%s AND (status IN ('registered','running') AND deadline<clock_timestamp()
-                  OR status IN ('registered','running','awaiting_clarification') AND permissions_version<>%s)
-                ORDER BY run_id FOR UPDATE""", (actor.subject,actor.permissions_version))).fetchall()
-            for row in rows:
-                await self._status(conn, actor, row['run_id'], "interrupted")
-                await conn.execute("UPDATE analyst_state.workflow_jobs SET error_code='execution_interrupted' WHERE run_id=%s", (row['run_id'],))
-                await self._event(conn, actor, row['run_id'], "terminal", {"status": "interrupted", "error_code": "execution_interrupted"})
+            await self._expire(conn, actor)
 
-    async def get(self, actor, run_id):
+    async def _expire(self, conn, actor):
+        rows = await (await conn.execute("""SELECT run_id FROM analyst_state.workflow_jobs
+            WHERE owner_id=%s AND (status IN ('registered','running') AND deadline<clock_timestamp()
+              OR status IN ('registered','running','awaiting_clarification') AND permissions_version<>%s)
+            ORDER BY run_id FOR UPDATE""", (actor.subject,actor.permissions_version))).fetchall()
+        for row in rows:
+            await self._status(conn, actor, row['run_id'], "interrupted")
+            await conn.execute("UPDATE analyst_state.workflow_jobs SET error_code='execution_interrupted' WHERE run_id=%s", (row['run_id'],))
+            await self._event(conn, actor, row['run_id'], "terminal", {"status": "interrupted", "error_code": "execution_interrupted"})
+
+    async def get(self, actor, run_id, *, expire=False):
         async with self.store.scoped(actor) as conn:
+            if expire:
+                await self._expire(conn, actor)
             return await self._get(conn, actor, run_id)
 
     async def _get(self, conn, actor, run_id):
@@ -217,6 +222,7 @@ class WorkflowStore:
     async def snapshot(self, actor, run_id, after):
         # Stream status and events share a short, freshly authorised transaction.
         async with self.store.scoped(actor) as conn:
+            await self._expire(conn,actor)
             state = await self._get(conn,actor,run_id)
             rows = await (await conn.execute("""SELECT sequence,kind,payload FROM analyst_state.workflow_events
                 WHERE run_id=%s AND owner_id=%s AND sequence>%s ORDER BY sequence LIMIT 128""",

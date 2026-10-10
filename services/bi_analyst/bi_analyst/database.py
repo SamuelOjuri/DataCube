@@ -1,5 +1,5 @@
 """Bounded independent pools and fail-closed privilege checks."""
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from importlib.resources import files
 
 from psycopg import sql
@@ -51,7 +51,9 @@ class Database:
     async def transaction(self, *, subject=None, analytical=False):
         pool = self.read if analytical else self.state
         async with pool.connection() as conn:
-            async with conn.transaction():
+            # Flush state batches inside the transaction so errors roll back before
+            # pool reuse. Analytical server cursors cannot run in pipeline mode.
+            async with conn.transaction(), (nullcontext() if analytical else conn.pipeline()):
                 if analytical:
                     await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 await conn.execute("SELECT set_config('statement_timeout', %s, true), "
@@ -75,15 +77,14 @@ class Database:
                 raise RuntimeError("Unexpected analyst schema version")
             if self.settings.workflow_enabled and row not in ({"version": 6}, {"version": 7}):
                 raise RuntimeError("Workflow requires migration 006")
-            async with conn.pipeline():
-                if row in ({"version": 5}, {"version": 6}, {"version": 7}):
-                    for relation in AUTH_TABLES:
-                        await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
-                if row in ({"version": 6}, {"version": 7}):
-                    for relation in WORKFLOW_TABLES:
-                        await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
-                if row == {"version": 7}:
-                    await conn.execute("SELECT * FROM analyst_state.result_feedback LIMIT 0")
+            if row in ({"version": 5}, {"version": 6}, {"version": 7}):
+                for relation in AUTH_TABLES:
+                    await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
+            if row in ({"version": 6}, {"version": 7}):
+                for relation in WORKFLOW_TABLES:
+                    await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
+            if row == {"version": 7}:
+                await conn.execute("SELECT * FROM analyst_state.result_feedback LIMIT 0")
             if row in ({"version": 6}, {"version": 7}):
                 versions = await (await conn.execute("SELECT v FROM analyst_state.checkpoint_migrations ORDER BY v")).fetchall()
                 if versions != [{'v': i} for i in range(10)]:

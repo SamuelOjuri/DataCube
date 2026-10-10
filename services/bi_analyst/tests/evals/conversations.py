@@ -111,7 +111,6 @@ async def evaluate(provider, selected=None):
         try:
             state = GraphState(question=question,previous_plan=previous_plans.get(case_id))
             state = GraphState(**{**state.model_dump(),**await workflow.interpret(state)})
-            state = GraphState(**{**state.model_dump(),**await workflow.retrieve_catalogue(state)})
             state = GraphState(**{**state.model_dump(),**await workflow.make_plan(state)})
             actual = state.plan
             correct = (actual is None and state.clarification is not None and case_id.startswith('ambiguous_')
