@@ -114,8 +114,15 @@ export default function Workspace({auth}: {auth: Auth}) {
     </aside>
     <main id="workspace" className="conversation"><div className={`conversation-heading${conversationId ? ' saved-conversation-heading' : ''}`}>
       <h1>{conversationId ? 'Conversation' : 'What would you like to understand?'}</h1>
-      {!conversationId && <p>Ask a question about your business data.</p>}</div>
-      {!runs.length && !busy && <div className="suggestions">{['Show revenue for the last completed month.', 'Show stored Order Value by category.', 'What is the five-year conversion rate?'].map(text => <button className="suggestion" key={text} onClick={() => setQuestion(text)}>{text}<span aria-hidden="true">↗</span></button>)}</div>}
+      {!conversationId && <p>Explore revenue, order value and conversion. Start with a question below.</p>}</div>
+      {!runs.length && !busy && <div className="suggestions">{[
+        {title:'Monthly revenue',question:'Show revenue for the last completed month.'},
+        {title:'Order value by category',question:'Show stored order value by category.'},
+        {title:'Five-year conversion',question:'What is the five-year conversion rate?'},
+      ].map(({title,question: suggestedQuestion}) => <button className="suggestion" key={title} onClick={() => setQuestion(suggestedQuestion)}>
+        <span className="suggestion-copy"><strong className="suggestion-title">{title}</strong><span className="suggestion-question">{suggestedQuestion}</span></span>
+        <span className="suggestion-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span>
+      </button>)}</div>}
       {runMore && <button className="secondary" disabled={busy} onClick={olderRuns}>Load older answers</button>}
       <div className="messages">{turns.map(({run, previousAttempts}) => {
         const state = workflows[run.id];
@@ -143,7 +150,9 @@ export default function Workspace({auth}: {auth: Auth}) {
       <form className="composer" onSubmit={e => {e.preventDefault(); send();}}><label htmlFor="question">{latestAnswer ? 'Ask a follow-up or a new question' : 'Your question'}</label>
         <textarea id="question" placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => setQuestion(e.target.value)} required disabled={!!current} />
         <div className="composer-footer">{latestAnswer && <label className="checkbox"><input type="checkbox" checked={followUp} onChange={e => setFollowUp(e.target.checked)} />Use the latest answer as context</label>}
-          <button disabled={busy || !!current || !!pending || !question.trim()}>Ask analyst <span aria-hidden="true">↑</span></button></div>
+          <button className="ask-analyst" disabled={busy || !!current || !!pending || !question.trim()}>Ask analyst
+            <span className="ask-analyst-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></span>
+          </button></div>
       </form>
     </main></div>;
 }

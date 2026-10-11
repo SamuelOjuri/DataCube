@@ -66,3 +66,45 @@ conversation was not inspected. This review establishes the rendering causes,
 not the causes of the earlier execution failures. These changes are local and
 require a frontend build/deployment to appear on Netlify. No backend deployment
 or database migration was performed or is required for this UI change.
+
+## Homepage refinement
+
+The signed-in homepage retains the white, light-grey and burgundy palette and
+locally hosted Open Sans font. Its supporting copy now names the business topics
+instead of repeating a generic instruction. The heading is better balanced with
+16px supporting text; sidebar titles use 14px text with 12px timestamps.
+
+Suggestion cards now have short, semibold topic titles, readable questions and
+right-arrow icons rather than external-link arrows. Desktop cards are more
+compact, and the gap before the question composer is 24px. The order-value
+suggestion keeps its stored-value qualification. Selecting any card still only
+fills the editable question; it never submits automatically.
+
+The composer shares the cards' 12px corner radius, removes the internal divider
+and uses its outer border and ring to indicate input focus. The "Ask analyst"
+button has a minimum 44px target, a circular send-icon treatment, a restrained
+shadow and distinct enabled, hover, keyboard-focus and neutral disabled states.
+Empty or whitespace-only questions, active runs and unconfirmed submissions
+retain their existing submission guards. Follow-up context and all conversation
+actions are unchanged. New transitions respect reduced-motion preferences.
+
+### Homepage verification
+
+- 19 frontend unit tests passed with `npm test`.
+- All 15 existing browser regressions passed. The two new homepage tests passed
+  in the final focused run with `npm run test:browser -- --grep "home page"`.
+- The browser runner's production build and TypeScript check passed; the existing
+  large chart-library chunk warning remains.
+- The new checks cover all three exact suggested questions, no automatic
+  submission, mouse and keyboard submission, visible keyboard focus, neutral
+  disabled styling, readable text sizes, compact desktop cards, the 24px gap and
+  the minimum button target.
+- Homepage accessibility checks found no violations at desktop, tablet and
+  mobile sizes. Widths of 768px, 390px and 320px have no horizontal page overflow.
+- Desktop and mobile screenshots were visually reviewed using synthetic local
+  fixtures, not production data:
+  [desktop preview](../outputs/analyst-home-desktop.png) and
+  [mobile preview](../outputs/analyst-home-mobile.png).
+
+These refinements are local and require a frontend build with the deployed API
+origin and a Netlify deployment. No backend change or migration is required.

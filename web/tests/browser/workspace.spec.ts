@@ -51,7 +51,12 @@ test('Tapered Plus styling is consistent across sign-in, workspace, controls and
   await expect(page.locator('nav a[aria-current]')).toHaveCSS('color','rgb(147, 31, 31)');
   await expect(page.locator('.total strong')).toHaveCSS('color','rgb(147, 31, 31)');
   await expect(page.locator('.secondary').first()).toHaveCSS('border-top-color','rgb(147, 31, 31)');
-  await expect(page.getByRole('button',{name:'Ask analyst'})).toHaveCSS('background-color','rgb(147, 31, 31)');
+  const ask=page.getByRole('button',{name:'Ask analyst',exact:true});
+  await expect(ask).toBeDisabled();
+  await expect(ask).toHaveCSS('background-color','rgb(247, 247, 247)');
+  await page.getByLabel('Ask a follow-up or a new question').fill('Only category A');
+  await expect(ask).toBeEnabled();
+  await expect(ask).toHaveCSS('background-color','rgb(147, 31, 31)');
   await expect(page.locator('.chart svg')).toBeVisible();
   const bars=page.locator('.chart svg .mark-rect.role-mark path');
   await expect(bars).toHaveCount(12);
@@ -63,6 +68,97 @@ test('Tapered Plus styling is consistent across sign-in, workspace, controls and
   await suggestion.hover();
   await expect(suggestion).toHaveCSS('background-color','rgb(248, 237, 237)');
   await expect(suggestion).toHaveCSS('border-top-color','rgb(147, 31, 31)');
+});
+
+test('home page cards are readable and compact, and selection only prepares an editable question',async({page})=>{
+  await page.setViewportSize({width:1280,height:900});
+  const state=await fixture(page,{existing:true});
+  await signIn(page);
+  const question=page.getByLabel('Your question',{exact:true});
+  const ask=page.getByRole('button',{name:'Ask analyst',exact:true});
+  await expect(ask).toBeDisabled();
+  await expect(ask).toHaveCSS('box-shadow','none');
+  await expect(page.locator('nav a').first()).toHaveCSS('font-size','14px');
+  await expect(page.locator('nav a time').first()).toHaveCSS('font-size','12px');
+  await expect(page.locator('.conversation-heading p')).toHaveCSS('font-size','16px');
+  await expect(page.locator('.suggestion-question').first()).toHaveCSS('font-size','14px');
+  const examples=[
+    ['Monthly revenue','Show revenue for the last completed month.'],
+    ['Order value by category','Show stored order value by category.'],
+    ['Five-year conversion','What is the five-year conversion rate?'],
+  ];
+  await expect(page.locator('.suggestion')).toHaveCount(examples.length);
+  for(const [title,text] of examples) {
+    const card=page.getByRole('button',{name:`${title} ${text}`,exact:true});
+    expect((await card.boundingBox())!.height).toBeLessThanOrEqual(120);
+    await card.click();
+    await expect(question).toHaveValue(text);
+    await expect(ask).toBeEnabled();
+    expect(state.submissions).toHaveLength(0);
+  }
+  await expect(page.locator('.composer')).toHaveCSS('border-radius','12px');
+  await expect(page.locator('.composer-footer')).toHaveCSS('border-top-width','0px');
+  const cards=(await page.locator('.suggestions').boundingBox())!;
+  const composer=(await page.locator('.composer').boundingBox())!;
+  expect(composer.x).toBe(cards.x);
+  expect(composer.width).toBe(cards.width);
+  expect(composer.y-cards.y-cards.height).toBe(24);
+  expect((await ask.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await ask.hover();
+  await expect(ask).toHaveCSS('background-color','rgb(105, 22, 22)');
+  await question.focus();
+  await page.keyboard.press('Tab');
+  await expect(ask).toBeFocused();
+  await expect(ask).toHaveCSS('outline-style','solid');
+  await expect(ask).toHaveCSS('outline-width','3px');
+  await page.getByRole('heading',{name:'What would you like to understand?'}).click();
+  await page.mouse.move(0,0);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  await page.screenshot({path:'../outputs/analyst-home-desktop.png',fullPage:true});
+  await ask.click();
+  const answer=page.getByRole('article').filter({has:page.getByRole('heading',{name:examples[2][1],exact:true})});
+  await expect(answer.getByRole('heading',{name:'Order Value (parent mirror)'})).toBeVisible();
+  expect(state.submissions).toHaveLength(1);
+  expect(state.submissions[0].question).toBe(examples[2][1]);
+});
+
+test('home page stays usable on tablet and small mobile screens with keyboard and reduced motion',async({page})=>{
+  const state=await fixture(page,{existing:true});
+  await signIn(page);
+  const question=page.getByLabel('Your question',{exact:true});
+  const ask=page.getByRole('button',{name:'Ask analyst',exact:true});
+  for(const width of [768,390,320]) {
+    await page.setViewportSize({width,height:844});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    const cards=await page.locator('.suggestion').all();
+    for(let i=1;i<cards.length;i++) {
+      const previous=(await cards[i-1].boundingBox())!;
+      expect((await cards[i].boundingBox())!.y).toBeGreaterThanOrEqual(previous.y+previous.height);
+    }
+    expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  }
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  const card=page.getByRole('button',{name:/^Monthly revenue /});
+  await expect(card).toHaveCSS('transition-duration','0s');
+  await expect(ask).toHaveCSS('transition-duration','0s');
+  await card.focus();
+  await expect(card).toHaveCSS('outline-width','3px');
+  await page.keyboard.press('Enter');
+  await expect(question).toHaveValue('Show revenue for the last completed month.');
+  expect(state.submissions).toHaveLength(0);
+  await question.fill('   ');
+  await expect(ask).toBeDisabled();
+  await question.fill('Show revenue for the last completed month.');
+  await expect(page.locator('.composer')).toHaveCSS('border-top-color','rgb(147, 31, 31)');
+  await page.screenshot({path:'../outputs/analyst-home-mobile.png',fullPage:true});
+  await page.keyboard.press('Tab');
+  await expect(ask).toBeFocused();
+  await page.keyboard.press('Enter');
+  const answer=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Show revenue for the last completed month.',exact:true})});
+  await expect(answer.getByRole('heading',{name:'Order Value (parent mirror)'})).toBeVisible();
+  expect(state.submissions).toHaveLength(1);
+  expect(state.submissions[0].question).toBe('Show revenue for the last completed month.');
 });
 
 test('sign-in, streaming replay, saved results, charts, tables, CSV, detail, feedback and accessibility',async ({page})=>{
