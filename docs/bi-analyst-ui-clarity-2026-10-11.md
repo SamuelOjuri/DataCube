@@ -109,3 +109,43 @@ actions are unchanged. New transitions respect reduced-motion preferences.
 
 These refinements are local and require a frontend build with the deployed API
 origin and a Netlify deployment. No backend change or migration is required.
+
+## Submission acknowledgement states
+
+The pending request previously triggered "Submission was not confirmed" as soon
+as a question or clarification was sent, even while its response was still in
+flight. Pending requests now explicitly distinguish `submitting` from
+`unconfirmed` delivery.
+
+While awaiting a response, the UI announces "Submitting your question..." or
+"Submitting your clarification..." through a polite status message and does not
+offer a retry. A successful acknowledgement clears that status and hands off to
+the existing saved-run progress UI. Only an uncertain request failure shows the
+unconfirmed-delivery warning. Retrying returns to normal submitting status and
+uses the original request body and idempotency key.
+
+Known rejections (400, 404, 409 and 422) still clear the pending request, surface
+the existing error and allow the question to be revised. Other request failures
+remain visible and retain the safe-retry request. Submission and navigation
+guards, suggestion selection, follow-up context and run cancellation are
+unchanged. This frontend correction does not resolve an actual lost response or
+infer acceptance from the presence of a background run.
+
+### Submission-state verification
+
+- 19 frontend unit tests passed.
+- 13 targeted browser tests passed in two runs. Four new tests cover delayed
+  acknowledgements for suggested and typed questions, a lost acknowledgement
+  followed by a safe retry, and all four definite-rejection status codes.
+- The existing clarification retry test now also checks delayed acknowledgement
+  and the transition from normal progress to uncertain delivery.
+- Synthetic response gates verify the in-flight UI while a backend fixture has
+  already registered a running task. Retrying after a lost acknowledgement sends
+  the identical request and leaves exactly one saved run.
+- Existing homepage, keyboard, accessibility, streaming replay, follow-up,
+  cancellation, interrupted-run retry, saved history and session tests passed.
+- The production build and TypeScript check passed. The existing large
+  chart-library chunk warning remains.
+
+The fix is local and requires frontend deployment; no backend change or database
+migration is required.

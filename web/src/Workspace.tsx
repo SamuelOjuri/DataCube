@@ -5,7 +5,8 @@ import ResultCard from './ResultCard';
 import {historyTime, questionTurns} from './conversation';
 
 const route = () => /^\/conversations\/([0-9a-f-]{36})$/.exec(window.location.pathname)?.[1] || null;
-type Pending = {path: string; body: Record<string, unknown>; question: string};
+type SubmissionRequest = {path: string; body: Record<string, unknown>; question: string};
+type Pending = {request: SubmissionRequest; status: 'submitting' | 'unconfirmed'};
 export default function Workspace({auth}: {auth: Auth}) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState(route);
@@ -65,13 +66,13 @@ export default function Workspace({auth}: {auth: Auth}) {
   }, [auth, watching, reconnect]);
   const latestAnswer = runs.find(r => workflows[r.id]?.status === 'completed' && workflows[r.id]?.answer);
   const turns = questionTurns(runs, workflows);
-  const sendPending = async (request: Pending) => {
-    setPending(request);
+  const sendPending = async (request: SubmissionRequest) => {
+    setPending({request, status:'submitting'});
     let state: Workflow;
     try {state = await json<Workflow>(auth, request.path, {...post(request.body), signal: lifetime.current.signal});}
     catch (e) {
       // A definite rejection can be revised; uncertain delivery retains its key.
-      if (e instanceof ApiError && [400, 404, 409, 422].includes(e.status)) setPending(null);
+      if (mounted.current) setPending(e instanceof ApiError && [400, 404, 409, 422].includes(e.status) ? null : {request, status:'unconfirmed'});
       throw e;
     }
     if (!mounted.current) return;
@@ -146,7 +147,8 @@ export default function Workspace({auth}: {auth: Auth}) {
           <textarea id="reply" maxLength={2000} value={reply} onChange={e => setReply(e.target.value)} required /><button disabled={busy || !!pending || !reply.trim()}>Send clarification</button></form>}
       </section>}
       {error && <div role="alert" className="error"><p>{error}</p><button className="text-button" onClick={() => {setReload(n => n + 1); setReconnect(n => n + 1);}}>Reload saved conversation</button></div>}
-      {pending && <div className="notice"><p>Submission was not confirmed. Retry safely with the same request.</p><button disabled={busy} onClick={() => act(() => sendPending(pending))}>Retry submission</button></div>}
+      {pending?.status === 'submitting' && <div className="notice"><p role="status" aria-live="polite">{pending.request.path.endsWith('/resume') ? 'Submitting your clarification…' : 'Submitting your query…'}</p></div>}
+      {pending?.status === 'unconfirmed' && <div className="notice"><p>Submission was not confirmed. Retry safely with the same request.</p><button disabled={busy} onClick={() => act(() => sendPending(pending.request))}>Retry submission</button></div>}
       <form className="composer" onSubmit={e => {e.preventDefault(); send();}}><label htmlFor="question">{latestAnswer ? 'Ask a follow-up or a new question' : 'Your question'}</label>
         <textarea id="question" placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => setQuestion(e.target.value)} required disabled={!!current} />
         <div className="composer-footer">{latestAnswer && <label className="checkbox"><input type="checkbox" checked={followUp} onChange={e => setFollowUp(e.target.checked)} />Use the latest answer as context</label>}

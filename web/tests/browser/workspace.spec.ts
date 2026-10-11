@@ -3,6 +3,12 @@ import AxeBuilder from '@axe-core/playwright';
 import {fixture,signIn,thread,runId} from './fixture';
 import {readFile,readdir} from 'node:fs/promises';
 
+function acknowledgementGate() {
+  let release!:()=>void;
+  const wait=new Promise<void>(resolve=>{release=resolve;});
+  return {wait,release};
+}
+
 test('production assets exclude backend secrets and test fixtures',async()=>{
   for(const name of await readdir('dist/assets')) {
     const contents=await readFile('dist/assets/'+name,'utf8');
@@ -199,13 +205,103 @@ test('sign-in, streaming replay, saved results, charts, tables, CSV, detail, fee
   expect(errors).toEqual([]);
 });
 
+for(const suggested of [true,false]) {
+  test(`${suggested?'suggested':'typed'} questions show normal progress while awaiting message acknowledgement`,async({page})=>{
+    const acknowledgement=acknowledgementGate();
+    const state=await fixture(page,{hold:true,beforeMessageReply:()=>acknowledgement.wait});
+    await signIn(page);
+    if(suggested) await page.getByRole('button',{name:/^Monthly revenue /}).click();
+    else await page.getByLabel('Your question',{exact:true}).fill('Show revenue for the last completed month.');
+    await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
+    await expect(page.getByRole('status')).toHaveText('Submitting your question…');
+    await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Ask analyst',exact:true})).toBeDisabled();
+    await expect(page.getByRole('button',{name:'+ New conversation',exact:true})).toBeDisabled();
+    await expect.poll(()=>state.submissions.length).toBe(1);
+    expect(state.runs).toHaveLength(1);
+    expect(state.workflow[runId].status).toBe('running');
+    expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+    acknowledgement.release();
+    await expect(page.getByRole('region',{name:'Current run'})).toBeVisible();
+    await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Cancel run',exact:true})).toBeEnabled();
+    expect(state.submissions).toHaveLength(1);
+  });
+}
+
+test('lost message acknowledgement offers a safe retry only after failure and reuses the same run',async({page})=>{
+  const first=acknowledgementGate(), retry=acknowledgementGate();
+  let replies=0;
+  const state=await fixture(page,{hold:true,beforeMessageReply:()=>++replies===1?first.wait:retry.wait});
+  state.failSubmission=true;
+  await signIn(page);
+  await page.getByRole('button',{name:/^Order value by category /}).click();
+  await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Submitting your question…');
+  await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+  first.release();
+  await expect(page.getByText('Submission was not confirmed.',{exact:false})).toBeVisible();
+  await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
+  await expect(page.getByRole('region',{name:'Current run'})).toBeVisible();
+  expect(state.runs).toHaveLength(1);
+  await page.getByRole('button',{name:'Retry submission',exact:true}).click();
+  await expect(page.getByText('Submitting your question…',{exact:true})).toBeVisible();
+  await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+  await expect.poll(()=>state.submissions.length).toBe(2);
+  expect(state.submissions[1]).toEqual(state.submissions[0]);
+  expect(state.submissions[1].idempotency_key).toBeTruthy();
+  expect(state.runs).toHaveLength(1);
+  retry.release();
+  await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
+  await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Cancel run',exact:true})).toBeEnabled();
+  expect(state.runs).toHaveLength(1);
+});
+
+test('definite submission rejections surface errors without an uncertain-delivery warning',async({page})=>{
+  const state=await fixture(page,{existing:true});
+  let rejection=400;
+  await page.route('http://127.0.0.1:4174/v1/conversations/*/messages',async route=>{
+    if(route.request().method()!=='POST') {await route.fallback();return;}
+    await route.fulfill({status:rejection,headers:{'Access-Control-Allow-Origin':'http://127.0.0.1:4173','Content-Type':'application/json'},body:JSON.stringify({detail:'synthetic_rejection'})});
+  });
+  await signIn(page,`/conversations/${thread}`);
+  const question=page.getByLabel('Ask a follow-up or a new question');
+  for(const status of [400,404,409,422]) {
+    rejection=status;
+    await question.fill('Only category A');
+    await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Ask analyst',exact:true})).toBeEnabled();
+    await expect(question).toHaveValue('Only category A');
+  }
+  expect(state.submissions).toHaveLength(0);
+  expect(state.runs).toHaveLength(1);
+});
+
 test('clarification retry retains the same idempotency key and follow-ups name the previous run',async({page})=>{
-  const state=await fixture(page,{clarify:true});state.failReply=true;
+  const acknowledgement=acknowledgementGate();
+  const state=await fixture(page,{clarify:true,beforeResumeReply:()=>acknowledgement.wait});state.failReply=true;
   await signIn(page);
   await page.getByLabel('Your question',{exact:true}).fill('Show order value');await page.getByRole('button',{name:'Ask analyst'}).click();
   await page.getByRole('button',{name:'All stored history',exact:true}).click();await page.getByRole('button',{name:'Send clarification'}).click();
+  await expect(page.getByText('Submitting your clarification…',{exact:true})).toBeVisible();
+  await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+  acknowledgement.release();
+  await expect(page.getByText('Submission was not confirmed.',{exact:false})).toBeVisible();
   await page.getByRole('button',{name:'Retry submission'}).click();
   await expect(page.getByRole('heading',{name:'Order Value (parent mirror)'})).toBeVisible();
+  await expect(page.getByText('Submitting your clarification…',{exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
   expect(state.replies).toHaveLength(2);expect(state.replies[0]).toEqual(state.replies[1]);
   await page.getByLabel('Ask a follow-up or a new question').fill('Only category A');await page.getByRole('button',{name:'Ask analyst'}).click();
   expect(state.submissions[1].follow_up_to).toBe(runId);

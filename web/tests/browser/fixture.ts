@@ -13,8 +13,10 @@ export const result = {id:resultId,run_id:runId,columns:['category','value','sou
     coverage:{incomplete_order_inputs:1},coverage_scope:'gateway_population_unfiltered',limitations:['One source value is unknown.'],
     truncated:false,returned_rows:12,matched_groups:12,dataset_scope:'complete',evaluation_only:true}};
 
-export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false}={}) {
-  const state = {result:structuredClone(result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false};
+export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false,
+  beforeMessageReply=async()=>{}, beforeResumeReply=async()=>{}}={}) {
+  const state = {result:structuredClone(result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false};
+  const messageRuns = new Map<string,string>();
   const answer = (id: string) => ({text:'Order Value is GBP 10,350.00. This is a complete filtered total.',
     result:{result_id:resultId},chart:limited?{kind:'table',x:null,y:'value'}:{kind:'bar',x:'category',y:'value'},notices:['Measured contributions do not establish cause.'],
     scope_changes:id !== runId && state.submissions.at(-1)?.follow_up_to ? {filters:{before:[],after:['category: A']}} : {}});
@@ -42,12 +44,18 @@ export async function fixture(page: Page, {clarify=false, hold=false, existing=f
     if(path.endsWith('/runs')) {await reply(state.runs);return;}
     if(path.endsWith('/messages')) {
       const body=request.postDataJSON();state.submissions.push(body);
-      await reply(create(body.question),202);return;
+      const previous=messageRuns.get(body.idempotency_key);
+      const workflow=previous ? state.workflow[previous] : create(body.question);
+      messageRuns.set(body.idempotency_key,workflow.run_id);
+      await beforeMessageReply();
+      if(state.failSubmission){state.failSubmission=false;await route.abort();return;}
+      await reply(workflow,202);return;
     }
     const id=path.split('/')[3], w=state.workflow[id];
     if(path.endsWith('/workflow')) {await reply(w || {},w?200:404);return;}
     if(path.endsWith('/resume')) {
       state.replies.push(request.postDataJSON()); w.status='completed';w.clarification=null;w.answer=answer(id);
+      await beforeResumeReply();
       if(state.failReply){state.failReply=false;await route.abort();return;}
       await reply(w);return;
     }
