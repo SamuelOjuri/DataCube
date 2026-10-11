@@ -24,9 +24,9 @@ from ..tasks.postgres_maintenance import (
 )
 
 app = FastAPI()
+app.include_router(analysis_router)
+app.include_router(forecast_router)
 app.include_router(health_router)
-app.include_router(analysis_router)  # exposes /analysis/{monday_id}/run
-app.include_router(forecast_router)  # exposes /forecast/pipeline and /forecast/snapshot
 
 _scheduler = AsyncIOScheduler(timezone='UTC')
 _scheduled_workers = ScheduledWorkers(_scheduler)
@@ -358,6 +358,10 @@ async def _startup() -> None:
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     try:
-        await asyncio.gather(_scheduled_workers.stop(), get_task_queue().stop(), lifecycle_worker.stop())
+        await asyncio.gather(
+            _scheduled_workers.stop(),
+            get_task_queue().stop(),
+            lifecycle_worker.stop(),
+        )
     finally:
         await monitor.stop()

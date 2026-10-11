@@ -64,9 +64,14 @@ watchdog. See [Render background workers](https://render.com/docs/background-wor
    web service. For the current Render layout, this is the Main API service only;
    use database heartbeats and the watchdog for the background-worker service.
    The HTTP check detects dead worker tasks, stale polling and work exceeding its
-   execution budget. Use `/health/ready` for traffic readiness and dependency
-   monitoring; a database outage returns 503 there without turning a responsive
-   process into a liveness failure. `/health` is an alias for readiness.
+   execution budget. Use `/health/ready` for traffic readiness based on cached
+   worker and database status; a database outage returns 503 there without
+   turning a responsive process into a liveness failure. `/health` is an alias
+   for readiness. For explicit downstream checks, use `/health/dependencies`
+   (Supabase, HTTP 503 on failure) or `/health/` with the trailing slash (detailed
+   Supabase and Monday diagnostics). Those SDK calls run in the thread pool and
+   must not be configured as the platform restart probe. See
+   [Health probe integration](health-probe-integration.md).
 5. Set a private `WORKER_MONITOR_TOKEN` to enable `GET /health/workers` with
    `Authorization: Bearer <token>`. Without a configured, matching token the
    endpoint returns 403. It returns worker states, instance identity, current job
