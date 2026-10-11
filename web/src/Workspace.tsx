@@ -3,6 +3,8 @@ import type {Auth, Conversation, Run, Workflow} from './types';
 import {activeRun, ApiError, errorMessage, json, post, watchRun} from './api';
 import ResultCard from './ResultCard';
 import {historyTime, questionTurns} from './conversation';
+import AgentStatus from './AgentStatus';
+import type {AgentActivity} from './agentActivity';
 
 const route = () => /^\/conversations\/([0-9a-f-]{36})$/.exec(window.location.pathname)?.[1] || null;
 type SubmissionRequest = {path: string; body: Record<string, unknown>; question: string};
@@ -16,7 +18,7 @@ export default function Workspace({auth}: {auth: Auth}) {
   const [workflows, setWorkflows] = useState<Record<string, Workflow>>({});
   const [question, setQuestion] = useState('');
   const [reply, setReply] = useState('');
-  const [progress, setProgress] = useState('');
+  const [progress, setProgress] = useState<AgentActivity | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
@@ -66,10 +68,10 @@ export default function Workspace({auth}: {auth: Auth}) {
   const current = runs.map(r => workflows[r.id]).find(w => w && (activeRun(w.status) || w.status === 'awaiting_clarification'));
   const watching = current && activeRun(current.status) ? current.run_id : null;
   useEffect(() => {
-    if (!watching) {setProgress(''); return;}
-    const controller = new AbortController(); setProgress('Connecting to your run…');
-    watchRun(auth, watching, controller.signal, text => {if (!controller.signal.aborted) setProgress(text);}, state => {if (!controller.signal.aborted) update(state);})
-      .catch(e => {if (!controller.signal.aborted) {fail(e); setProgress('Connection paused. Reconnect to retrieve the saved outcome.');}});
+    if (!watching) {setProgress(null); return;}
+    const controller = new AbortController(); setProgress({phase: 'connecting', message: 'Connecting to your run…'});
+    watchRun(auth, watching, controller.signal, activity => {if (!controller.signal.aborted) setProgress(activity);}, state => {if (!controller.signal.aborted) update(state);})
+      .catch(e => {if (!controller.signal.aborted) {fail(e); setProgress({phase: 'waiting', message: 'Connection paused. Reconnect to retrieve the saved outcome.'});}});
     return () => controller.abort();
   }, [auth, watching, reconnect]);
   const latestAnswer = runs.find(r => workflows[r.id]?.status === 'completed' && workflows[r.id]?.answer);
@@ -146,7 +148,7 @@ export default function Workspace({auth}: {auth: Auth}) {
         const state = workflows[run.id];
         return <article className="message" key={run.id}><div className="question"><span className="eyebrow">YOU ASKED</span><h2>{run.question}</h2></div>
           {state?.answer ? <ResultCard auth={auth} answer={state.answer} /> : !state || !['failed', 'cancelled', 'interrupted'].includes(state.status) ? <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p> : null}
-          {state && ['failed', 'cancelled', 'interrupted'].includes(state.status) && <div className="notice"><p>{state.status === 'interrupted' ? 'Execution was interrupted. Retry to start a new run with current access and data.' : state.status === 'cancelled' ? 'This run was cancelled.' : 'The analyst could not complete this request. You can retry or revise the question.'}</p>
+          {state && ['failed', 'cancelled', 'interrupted'].includes(state.status) && <div className="notice"><AgentStatus announce={false} phase={state.status === 'failed' ? 'failed' : 'waiting'} message={state.status === 'interrupted' ? 'Execution was interrupted. Retry to start a new run with current access and data.' : state.status === 'cancelled' ? 'This run was cancelled.' : 'The analyst could not complete this request. You can retry or revise the question.'} />
             <button className="secondary" disabled={busy || !!current || !!pending} onClick={() => send(run)}>Retry question</button></div>}
           {!state && run.status === 'completed' && <p className="note">This earlier run has no conversational answer.</p>}
           {!!previousAttempts.length && <details className="attempt-history"><summary>{previousAttempts.length} earlier unsuccessful {previousAttempts.length === 1 ? 'attempt' : 'attempts'}</summary>
@@ -154,7 +156,9 @@ export default function Workspace({auth}: {auth: Auth}) {
           </details>}
         </article>;
       })}</div>
-      {current && <section className="run-control" aria-label="Current run"><p role="status" aria-live="polite">{progress || (watching ? 'Connecting to your run…' : 'A clarification is needed.')}</p>
+      {current && <section className="run-control" aria-label="Current run"><AgentStatus {...(watching
+        ? progress ?? {phase: 'connecting', message: 'Connecting to your run…'}
+        : {phase: 'waiting', message: 'A clarification is needed.'})} />
         <div className="actions"><button className="secondary" disabled={busy} onClick={() => act(async () => {
           await json(auth, `/v1/runs/${current.run_id}/cancel`, {...post({}), signal: lifetime.current.signal});
           update(await json<Workflow>(auth, `/v1/runs/${current.run_id}/workflow`, {signal: lifetime.current.signal}));
@@ -164,8 +168,8 @@ export default function Workspace({auth}: {auth: Auth}) {
           <textarea id="reply" maxLength={2000} value={reply} onChange={e => setReply(e.target.value)} required /><button disabled={busy || !!pending || !reply.trim()}>Send clarification</button></form>}
       </section>}
       {error && <div role="alert" className="error"><p>{error}</p><button className="text-button" onClick={() => {setError(''); setReload(n => n + 1); setReconnect(n => n + 1);}}>Reload saved conversation</button></div>}
-      {(creatingConversation || pending?.status === 'submitting') && <div className="notice"><p role="status" aria-live="polite">{pending?.request.path.endsWith('/resume') ? 'Submitting your clarification…' : 'Submitting your query…'}</p></div>}
-      {pending?.status === 'unconfirmed' && <div className="notice"><p>Submission was not confirmed. Retry safely with the same request.</p><button disabled={busy} onClick={() => act(() => sendPending(pending.request))}>Retry submission</button></div>}
+      {(creatingConversation || pending?.status === 'submitting') && <div className="notice"><AgentStatus phase="submitting" message={pending?.request.path.endsWith('/resume') ? 'Submitting your clarification…' : 'Submitting your query…'} /></div>}
+      {pending?.status === 'unconfirmed' && <div className="notice"><AgentStatus announce={false} phase="waiting" message="Submission was not confirmed. Retry safely with the same request." /><button disabled={busy} onClick={() => act(() => sendPending(pending.request))}>Retry submission</button></div>}
       <form className="composer" onSubmit={e => {e.preventDefault(); send();}}><label htmlFor="question">{latestAnswer ? 'Ask a follow-up or a new question' : 'Your question'}</label>
         <textarea id="question" placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => setQuestion(e.target.value)} required disabled={creatingConversation || pending?.status === 'submitting' || !!current} />
         <div className="composer-footer">{latestAnswer && <label className="checkbox"><input type="checkbox" checked={followUp} onChange={e => setFollowUp(e.target.checked)} />Use the latest answer as context</label>}

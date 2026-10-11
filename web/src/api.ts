@@ -1,5 +1,6 @@
 import type {Auth, Workflow} from './types';
 import {readEvents} from './sse.mjs';
+import {activityForStage, type AgentActivity} from './agentActivity';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string) {super(code);}
@@ -34,7 +35,7 @@ function pause(ms: number, signal: AbortSignal) {
 }
 // A stream is a notification channel. Always recover the authoritative saved outcome.
 export async function watchRun(auth: Auth, id: string, signal: AbortSignal,
-  progress: (message: string) => void, update: (run: Workflow) => void) {
+  progress: (activity: AgentActivity) => void, update: (run: Workflow) => void) {
   let after = 0;
   for (let attempt = 0; attempt < 6 && !signal.aborted; attempt++) {
     const state = await json<Workflow>(auth, `/v1/runs/${id}/workflow`, {signal});
@@ -52,17 +53,14 @@ export async function watchRun(auth: Auth, id: string, signal: AbortSignal,
       await readEvents(response, (event: {id: number; kind: string; payload: Record<string, unknown>}) => {
         if (event.id > after) after = event.id;
         if (event.kind === 'progress') {
-          const stages: Record<string, string> = {authorizing: 'Checking your access', interpreting: 'Understanding your question', retrieving_definitions: 'Checking definitions',
-            planning: 'Preparing the query', resolving_entities: 'Checking filters', querying: 'Reading your data', validating_evidence: 'Checking the evidence',
-            selecting_presentation: 'Preparing your answer', grounding_answer: 'Linking the answer to its evidence'};
-          progress(stages[String(event.payload.stage)] || 'Analysing your question');
+          progress(activityForStage(event.payload.stage));
         }
         // Access changes must be rechecked through the authenticated status request.
       }, heartbeat);
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof ApiError && [401, 403].includes(error.status)) throw error;
-      progress('Reconnecting to the saved run…');
+      progress({phase: 'connecting', message: 'Reconnecting to the saved run…'});
     } finally {clearTimeout(watchdog!); signal.removeEventListener('abort', abort); segment.abort();}
     const saved = await json<Workflow>(auth, `/v1/runs/${id}/workflow`, {signal});
     update(saved);
