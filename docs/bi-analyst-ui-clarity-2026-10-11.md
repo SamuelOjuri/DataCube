@@ -82,8 +82,9 @@ fills the editable question; it never submits automatically.
 
 The composer shares the cards' 12px corner radius, removes the internal divider
 and uses its outer border and ring to indicate input focus. The "Ask analyst"
-button has a minimum 44px target, a circular send-icon treatment, a restrained
-shadow and distinct enabled, hover, keyboard-focus and neutral disabled states.
+button has a compact 44px height, a circular send-icon treatment, a restrained
+shadow and distinct hover and keyboard-focus states. Its burgundy background
+and white text are retained when disabled, with no shadow or hover response.
 Empty or whitespace-only questions, active runs and unconfirmed submissions
 retain their existing submission guards. Follow-up context and all conversation
 actions are unchanged. New transitions respect reduced-motion preferences.
@@ -96,9 +97,9 @@ actions are unchanged. New transitions respect reduced-motion preferences.
 - The browser runner's production build and TypeScript check passed; the existing
   large chart-library chunk warning remains.
 - The new checks cover all three exact suggested questions, no automatic
-  submission, mouse and keyboard submission, visible keyboard focus, neutral
-  disabled styling, readable text sizes, compact desktop cards, the 24px gap and
-  the minimum button target.
+  submission, mouse and keyboard submission, visible keyboard focus, burgundy
+  and white disabled styling, readable text sizes, compact desktop cards, the
+  24px gap and the exact 44px button height.
 - Homepage accessibility checks found no violations at desktop, tablet and
   mobile sizes. Widths of 768px, 390px and 320px have no horizontal page overflow.
 - Desktop and mobile screenshots were visually reviewed using synthetic local

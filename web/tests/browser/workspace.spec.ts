@@ -53,7 +53,8 @@ test('Tapered Plus styling is consistent across sign-in, workspace, controls and
   await expect(page.locator('.secondary').first()).toHaveCSS('border-top-color','rgb(147, 31, 31)');
   const ask=page.getByRole('button',{name:'Ask analyst',exact:true});
   await expect(ask).toBeDisabled();
-  await expect(ask).toHaveCSS('background-color','rgb(247, 247, 247)');
+  await expect(ask).toHaveCSS('background-color','rgb(147, 31, 31)');
+  await expect(ask).toHaveCSS('color','rgb(255, 255, 255)');
   await page.getByLabel('Ask a follow-up or a new question').fill('Only category A');
   await expect(ask).toBeEnabled();
   await expect(ask).toHaveCSS('background-color','rgb(147, 31, 31)');
@@ -78,6 +79,10 @@ test('home page cards are readable and compact, and selection only prepares an e
   const ask=page.getByRole('button',{name:'Ask analyst',exact:true});
   await expect(ask).toBeDisabled();
   await expect(ask).toHaveCSS('box-shadow','none');
+  await expect(ask).toHaveCSS('height','44px');
+  await ask.hover();
+  await expect(ask).toHaveCSS('background-color','rgb(147, 31, 31)');
+  await expect(ask).toHaveCSS('color','rgb(255, 255, 255)');
   await expect(page.locator('nav a').first()).toHaveCSS('font-size','14px');
   await expect(page.locator('nav a time').first()).toHaveCSS('font-size','12px');
   await expect(page.locator('.conversation-heading p')).toHaveCSS('font-size','16px');
@@ -103,7 +108,8 @@ test('home page cards are readable and compact, and selection only prepares an e
   expect(composer.x).toBe(cards.x);
   expect(composer.width).toBe(cards.width);
   expect(composer.y-cards.y-cards.height).toBe(24);
-  expect((await ask.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect((await ask.boundingBox())!.height).toBe(44);
+  await expect(ask).toHaveCSS('color','rgb(255, 255, 255)');
   await ask.hover();
   await expect(ask).toHaveCSS('background-color','rgb(105, 22, 22)');
   await question.focus();
@@ -129,6 +135,7 @@ test('home page stays usable on tablet and small mobile screens with keyboard an
   const ask=page.getByRole('button',{name:'Ask analyst',exact:true});
   for(const width of [768,390,320]) {
     await page.setViewportSize({width,height:844});
+    await expect(ask).toHaveCSS('height','44px');
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
     const cards=await page.locator('.suggestion').all();
     for(let i=1;i<cards.length;i++) {

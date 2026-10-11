@@ -321,7 +321,7 @@ nav a time {
   justify-content:center;
   gap:12px;
   min-height:44px;
-  padding:10px 12px 10px 18px;
+  padding:7px 12px 7px 18px;
   border-radius:10px;
   font-size:.9375rem;
   box-shadow:0 2px 4px #6916161a,0 4px 12px #931f1f14;
@@ -345,13 +345,10 @@ nav a time {
 }
 .ask-analyst:disabled {
   opacity:1;
-  background:var(--color-surface);
-  border-color:var(--color-border);
-  color:var(--color-muted);
+  background:var(--color-primary);
+  border-color:var(--color-primary);
+  color:var(--color-background);
   box-shadow:none;
-}
-.ask-analyst:disabled .ask-analyst-icon {
-  background:transparent;
 }
 .composer-footer>span,.checkbox {
   font-size:.73rem;
