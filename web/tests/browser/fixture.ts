@@ -14,7 +14,7 @@ export const result = {id:resultId,run_id:runId,columns:['category','value','sou
     truncated:false,returned_rows:12,matched_groups:12,dataset_scope:'complete',evaluation_only:true}};
 
 export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false,
-  beforeMessageReply=async()=>{}, beforeResumeReply=async()=>{}}={}) {
+  beforeConversationReply=async()=>{}, beforeMessageReply=async()=>{}, beforeResumeReply=async()=>{}}={}) {
   const state = {result:structuredClone(result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false};
   const messageRuns = new Map<string,string>();
   const answer = (id: string) => ({text:'Order Value is GBP 10,350.00. This is a complete filtered total.',
@@ -39,7 +39,7 @@ export async function fixture(page: Page, {clarify=false, hold=false, existing=f
     if(!request.headers().authorization?.startsWith('Bearer ')){await reply({detail:'unauthorized'},401);return;}
     if(path.startsWith('/auth/')){await reply({});return;}
     if(path==='/v1/metrics'){await reply({catalogue_sha256:'synthetic-catalogue',metrics:[{id:'order_parent_value',version:'1.0.0',source:{priority:['Verified parent mirror.']},calculation:{aggregation:'sum',nulls:'Unknown values stay unknown.',zeroes:'Zero is zero.',negatives:'Signed values retained.',empty:'No known values means unknown.'}}]});return;}
-    if(path==='/v1/conversations') {const conversation={id:thread,title:'Synthetic analysis',created_at:'2026-10-08T12:00:00Z'};await reply(request.method()==='POST'?conversation:state.runs.length?[conversation]:[]);return;}
+    if(path==='/v1/conversations') {const conversation={id:thread,title:'Synthetic analysis',created_at:'2026-10-08T12:00:00Z'};if(request.method()==='POST') await beforeConversationReply();await reply(request.method()==='POST'?conversation:state.runs.length?[conversation]:[]);return;}
     if(path===`/v1/conversations/${thread}`){await reply({id:thread,title:'Synthetic analysis'});return;}
     if(path.endsWith('/runs')) {await reply(state.runs);return;}
     if(path.endsWith('/messages')) {

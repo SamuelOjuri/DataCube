@@ -117,7 +117,7 @@ as a question or clarification was sent, even while its response was still in
 flight. Pending requests now explicitly distinguish `submitting` from
 `unconfirmed` delivery.
 
-While awaiting a response, the UI announces "Submitting your question..." or
+While awaiting a response, the UI announces "Submitting your query..." or
 "Submitting your clarification..." through a polite status message and does not
 offer a retry. A successful acknowledgement clears that status and hands off to
 the existing saved-run progress UI. Only an uncertain request failure shows the
@@ -149,3 +149,37 @@ infer acceptance from the presence of a background run.
 
 The fix is local and requires frontend deployment; no backend change or database
 migration is required.
+
+## Continuous feedback when submitting a new conversation
+
+A new question previously had two gaps in visible feedback. Creating the
+conversation only set the busy flag, so no status appeared until the message
+request began. After message acknowledgement, opening the saved conversation
+URL cleared the acknowledged run and workflow and fetched them again. The
+question box was already empty, leaving a blank conversation while those reads
+completed.
+
+Submission feedback now starts before conversation creation and continues
+through message acknowledgement. The question remains visible and cannot be
+edited while submission is in flight. Adopting the new conversation URL retains
+the acknowledged run and workflow instead of clearing and refetching them;
+the sidebar still refreshes, and the normal workflow status and event stream
+retrieve subsequent progress and the saved outcome. Before those reads return,
+the active run displays "Connecting to your run...".
+
+Failed or unconfirmed message submissions still load the saved conversation
+to recover any registered run. Loading no longer clears submission errors, so
+known rejections leave both the question and the error available for correction.
+Uncertain delivery keeps the original request and idempotency key for safe retry.
+
+Verification: all 19 frontend unit tests and all 24 browser tests passed; the
+browser run also completed the production build and TypeScript check. Regression
+coverage includes delayed conversation creation for suggested and typed
+questions, delayed workflow reads after acknowledgement, creation and message
+rejections followed by correction, and the existing lost-acknowledgement,
+clarification, cancellation, history, session and accessibility scenarios.
+The retained run during connection is shown in the
+[submission preview](../outputs/analyst-continuous-submission.png).
+
+This change is local and requires a frontend deployment to Netlify. No backend
+change or database migration is required.

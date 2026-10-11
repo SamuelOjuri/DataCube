@@ -23,7 +23,9 @@ export default function Workspace({auth}: {auth: Auth}) {
   const [reconnect, setReconnect] = useState(0);
   const [followUp, setFollowUp] = useState(true);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [creatingConversation, setCreatingConversation] = useState(false);
   const mounted = useRef(true), loading = useRef(false);
+  const acknowledgedConversation = useRef<string | null>(null);
   const lifetime = useRef(new AbortController());
   useEffect(() => () => {mounted.current = false; lifetime.current.abort();}, []);
   const fail = (e: unknown) => {if (mounted.current) setError(errorMessage(e));};
@@ -39,8 +41,14 @@ export default function Workspace({auth}: {auth: Auth}) {
   };
   useEffect(() => {loadHistory().catch(fail);}, [auth, reload]);
   useEffect(() => {
+    // The first message acknowledgement already supplied the new conversation's run.
+    // Keep it visible when adopting the saved URL instead of clearing and refetching it.
+    if (conversationId && acknowledgedConversation.current === conversationId) {
+      acknowledgedConversation.current = null;
+      return;
+    }
     const controller = new AbortController();
-    setRuns([]); setWorkflows({}); setError(''); setRunMore(false);
+    setRuns([]); setWorkflows({}); setRunMore(false);
     if (conversationId) {
       setBusy(true);
       (async () => {
@@ -88,12 +96,21 @@ export default function Workspace({auth}: {auth: Auth}) {
     const text = (retryRun?.question || question).trim(); if (!text) return;
     let id = conversationId;
     if (!id) {
-      const created = await json<Conversation>(auth, '/v1/conversations', {...post({title: text.slice(0, 160)}), signal: lifetime.current.signal});
-      id = created.id;
-      const request = {path: `/v1/conversations/${id}/messages`, body: {question: text, idempotency_key: crypto.randomUUID()}, question: text};
-      try {await sendPending(request);} finally {
-        window.history.pushState(null, '', `/conversations/${id}`); setConversationId(id); setReload(n => n + 1);
-      }
+      setCreatingConversation(true);
+      try {
+        const created = await json<Conversation>(auth, '/v1/conversations', {...post({title: text.slice(0, 160)}), signal: lifetime.current.signal});
+        if (!mounted.current) return;
+        id = created.id;
+        const request = {path: `/v1/conversations/${id}/messages`, body: {question: text, idempotency_key: crypto.randomUUID()}, question: text};
+        try {
+          await sendPending(request);
+          if (mounted.current) acknowledgedConversation.current = id;
+        } finally {
+          if (mounted.current) {
+            window.history.pushState(null, '', `/conversations/${id}`); setConversationId(id); setReload(n => n + 1);
+          }
+        }
+      } finally {if (mounted.current) setCreatingConversation(false);}
       return;
     }
     await sendPending({path: `/v1/conversations/${id}/messages`, body: {question: text, idempotency_key: crypto.randomUUID(),
@@ -137,7 +154,7 @@ export default function Workspace({auth}: {auth: Auth}) {
           </details>}
         </article>;
       })}</div>
-      {current && <section className="run-control" aria-label="Current run"><p role="status" aria-live="polite">{progress || 'A clarification is needed.'}</p>
+      {current && <section className="run-control" aria-label="Current run"><p role="status" aria-live="polite">{progress || (watching ? 'Connecting to your run…' : 'A clarification is needed.')}</p>
         <div className="actions"><button className="secondary" disabled={busy} onClick={() => act(async () => {
           await json(auth, `/v1/runs/${current.run_id}/cancel`, {...post({}), signal: lifetime.current.signal});
           update(await json<Workflow>(auth, `/v1/runs/${current.run_id}/workflow`, {signal: lifetime.current.signal}));
@@ -146,11 +163,11 @@ export default function Workspace({auth}: {auth: Auth}) {
           <div className="options">{current.clarification.options.map(option => <button key={option} type="button" className="secondary" onClick={() => setReply(option)}>{option}</button>)}</div>
           <textarea id="reply" maxLength={2000} value={reply} onChange={e => setReply(e.target.value)} required /><button disabled={busy || !!pending || !reply.trim()}>Send clarification</button></form>}
       </section>}
-      {error && <div role="alert" className="error"><p>{error}</p><button className="text-button" onClick={() => {setReload(n => n + 1); setReconnect(n => n + 1);}}>Reload saved conversation</button></div>}
-      {pending?.status === 'submitting' && <div className="notice"><p role="status" aria-live="polite">{pending.request.path.endsWith('/resume') ? 'Submitting your clarification…' : 'Submitting your query…'}</p></div>}
+      {error && <div role="alert" className="error"><p>{error}</p><button className="text-button" onClick={() => {setError(''); setReload(n => n + 1); setReconnect(n => n + 1);}}>Reload saved conversation</button></div>}
+      {(creatingConversation || pending?.status === 'submitting') && <div className="notice"><p role="status" aria-live="polite">{pending?.request.path.endsWith('/resume') ? 'Submitting your clarification…' : 'Submitting your query…'}</p></div>}
       {pending?.status === 'unconfirmed' && <div className="notice"><p>Submission was not confirmed. Retry safely with the same request.</p><button disabled={busy} onClick={() => act(() => sendPending(pending.request))}>Retry submission</button></div>}
       <form className="composer" onSubmit={e => {e.preventDefault(); send();}}><label htmlFor="question">{latestAnswer ? 'Ask a follow-up or a new question' : 'Your question'}</label>
-        <textarea id="question" placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => setQuestion(e.target.value)} required disabled={!!current} />
+        <textarea id="question" placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => setQuestion(e.target.value)} required disabled={creatingConversation || pending?.status === 'submitting' || !!current} />
         <div className="composer-footer">{latestAnswer && <label className="checkbox"><input type="checkbox" checked={followUp} onChange={e => setFollowUp(e.target.checked)} />Use the latest answer as context</label>}
           <button className="ask-analyst" disabled={busy || !!current || !!pending || !question.trim()}>Ask analyst
             <span className="ask-analyst-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></span>

@@ -206,29 +206,101 @@ test('sign-in, streaming replay, saved results, charts, tables, CSV, detail, fee
 });
 
 for(const suggested of [true,false]) {
-  test(`${suggested?'suggested':'typed'} questions show normal progress while awaiting message acknowledgement`,async({page})=>{
-    const acknowledgement=acknowledgementGate();
-    const state=await fixture(page,{hold:true,beforeMessageReply:()=>acknowledgement.wait});
+  test(`${suggested?'suggested':'typed'} questions show progress throughout conversation creation and message acknowledgement`,async({page})=>{
+    const creation=acknowledgementGate(), acknowledgement=acknowledgementGate();
+    let creating=false;
+    const state=await fixture(page,{hold:true,beforeConversationReply:()=>{creating=true;return creation.wait;},beforeMessageReply:()=>acknowledgement.wait});
     await signIn(page);
     if(suggested) await page.getByRole('button',{name:/^Monthly revenue /}).click();
     else await page.getByLabel('Your question',{exact:true}).fill('Show revenue for the last completed month.');
+    try {
+      await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
+      await expect.poll(()=>creating).toBe(true);
+      await expect(page.getByRole('status')).toHaveText('Submitting your query…');
+      await expect(page.getByLabel('Your question',{exact:true})).toHaveValue('Show revenue for the last completed month.');
+      await expect(page.getByLabel('Your question',{exact:true})).toBeDisabled();
+      expect(state.submissions).toHaveLength(0);
+      await expect(page.getByRole('button',{name:'Ask analyst',exact:true})).toBeDisabled();
+      await expect(page.getByRole('button',{name:'+ New conversation',exact:true})).toBeDisabled();
+      creation.release();
+      await expect.poll(()=>state.submissions.length).toBe(1);
+      await expect(page.getByRole('status')).toHaveText('Submitting your query…');
+      await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+      await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+      expect(state.runs).toHaveLength(1);
+      expect(state.workflow[runId].status).toBe('running');
+      expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+      acknowledgement.release();
+      await expect(page.getByRole('region',{name:'Current run'})).toBeVisible();
+      await expect(page.getByRole('heading',{name:'Show revenue for the last completed month.',exact:true})).toBeVisible();
+      await expect(page.getByText('Submitting your query…',{exact:true})).toHaveCount(0);
+      await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+      await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+      await expect(page.getByRole('button',{name:'Cancel run',exact:true})).toBeEnabled();
+      expect(state.submissions).toHaveLength(1);
+    } finally {creation.release();acknowledgement.release();}
+  });
+}
+
+test('the acknowledged question and progress stay visible when opening a new conversation with slow API reads',async({page})=>{
+  const acknowledgement=acknowledgementGate(), conversationRead=acknowledgementGate(), workflowRead=acknowledgementGate();
+  const state=await fixture(page,{beforeMessageReply:()=>acknowledgement.wait});
+  let readingWorkflow=false;
+  await page.route(`http://127.0.0.1:4174/v1/conversations/${thread}`,async route=>{
+    await conversationRead.wait;await route.fallback();
+  });
+  await page.route(`http://127.0.0.1:4174/v1/runs/${runId}/workflow`,async route=>{
+    readingWorkflow=true;await workflowRead.wait;await route.fallback();
+  });
+  await signIn(page);
+  const question='What was the revenue for January 2026?';
+  await page.getByLabel('Your question',{exact:true}).fill(question);
+  try {
     await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
-    await expect(page.getByRole('status')).toHaveText('Submitting your question…');
-    await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
-    await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
-    await expect(page.getByRole('button',{name:'Ask analyst',exact:true})).toBeDisabled();
-    await expect(page.getByRole('button',{name:'+ New conversation',exact:true})).toBeDisabled();
+    await expect(page.getByRole('status')).toHaveText('Submitting your query…');
     await expect.poll(()=>state.submissions.length).toBe(1);
-    expect(state.runs).toHaveLength(1);
-    expect(state.workflow[runId].status).toBe('running');
-    expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
     acknowledgement.release();
-    await expect(page.getByRole('region',{name:'Current run'})).toBeVisible();
-    await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
-    await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
-    await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
+    await expect(page).toHaveURL(`/conversations/${thread}`);
+    await expect.poll(()=>readingWorkflow).toBe(true);
+    await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
+    await expect(page.getByRole('status')).toHaveText('Connecting to your run…');
     await expect(page.getByRole('button',{name:'Cancel run',exact:true})).toBeEnabled();
+    await expect(page.locator('nav a[aria-current="page"]')).toBeVisible();
+    await expect(page.getByText('Submitting your query…',{exact:true})).toHaveCount(0);
+    await page.screenshot({path:'../outputs/analyst-continuous-submission.png',fullPage:true});
+    conversationRead.release();workflowRead.release();
+    await expect(page.getByRole('heading',{name:'Order Value (parent mirror)',exact:true})).toBeVisible();
     expect(state.submissions).toHaveLength(1);
+  } finally {acknowledgement.release();conversationRead.release();workflowRead.release();}
+});
+
+for(const stage of ['conversation','message']) {
+  test(`a rejected initial ${stage} request keeps the question and error available for correction`,async({page})=>{
+    const state=await fixture(page);
+    let reject=true;
+    await page.route(stage==='conversation'?'http://127.0.0.1:4174/v1/conversations':`http://127.0.0.1:4174/v1/conversations/${thread}/messages`,async route=>{
+      if(!reject || route.request().method()!=='POST') {await route.fallback();return;}
+      await route.fulfill({status:422,headers:{'Access-Control-Allow-Origin':'http://127.0.0.1:4173','Content-Type':'application/json'},body:JSON.stringify({detail:'synthetic_rejection'})});
+    });
+    await signIn(page);
+    const question=page.getByLabel('Your question',{exact:true});
+    await question.fill('Show revenue.');
+    await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
+    await expect(page).toHaveURL(stage==='conversation'?'/':`/conversations/${thread}`);
+    await expect(page.getByRole('button',{name:'Ask analyst',exact:true})).toBeEnabled();
+    await expect(page.getByRole('alert')).toContainText('The request could not be completed. Please retry.');
+    await expect(question).toHaveValue('Show revenue.');
+    await expect(question).toBeEnabled();
+    await expect(page.getByText('Submitting your query…',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
+    expect(state.submissions).toHaveLength(0);
+    reject=false;
+    await question.fill('Show revenue for the last completed month.');
+    await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Order Value (parent mirror)',exact:true})).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(state.submissions).toHaveLength(1);
+    expect(state.submissions[0].question).toBe('Show revenue for the last completed month.');
   });
 }
 
@@ -240,15 +312,15 @@ test('lost message acknowledgement offers a safe retry only after failure and re
   await signIn(page);
   await page.getByRole('button',{name:/^Order value by category /}).click();
   await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
-  await expect(page.getByRole('status')).toHaveText('Submitting your question…');
+  await expect(page.getByRole('status')).toHaveText('Submitting your query…');
   await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
   first.release();
   await expect(page.getByText('Submission was not confirmed.',{exact:false})).toBeVisible();
-  await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
+  await expect(page.getByText('Submitting your query…',{exact:true})).toHaveCount(0);
   await expect(page.getByRole('region',{name:'Current run'})).toBeVisible();
   expect(state.runs).toHaveLength(1);
   await page.getByRole('button',{name:'Retry submission',exact:true}).click();
-  await expect(page.getByText('Submitting your question…',{exact:true})).toBeVisible();
+  await expect(page.getByText('Submitting your query…',{exact:true})).toBeVisible();
   await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
   await expect.poll(()=>state.submissions.length).toBe(2);
@@ -256,7 +328,7 @@ test('lost message acknowledgement offers a safe retry only after failure and re
   expect(state.submissions[1].idempotency_key).toBeTruthy();
   expect(state.runs).toHaveLength(1);
   retry.release();
-  await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
+  await expect(page.getByText('Submitting your query…',{exact:true})).toHaveCount(0);
   await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Cancel run',exact:true})).toBeEnabled();
@@ -277,7 +349,7 @@ test('definite submission rejections surface errors without an uncertain-deliver
     await question.fill('Only category A');
     await page.getByRole('button',{name:'Ask analyst',exact:true}).click();
     await expect(page.getByRole('alert')).toBeVisible();
-    await expect(page.getByText('Submitting your question…',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('Submitting your query…',{exact:true})).toHaveCount(0);
     await expect(page.getByText('Submission was not confirmed.',{exact:false})).toHaveCount(0);
     await expect(page.getByRole('button',{name:'Retry submission',exact:true})).toHaveCount(0);
     await expect(page.getByRole('button',{name:'Ask analyst',exact:true})).toBeEnabled();
