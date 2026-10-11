@@ -72,8 +72,8 @@ def test_gemini_typed_adapter_separates_instructions_and_never_sends_key_in_url(
             assert request.headers['x-goog-api-key'] == 'test-key'
             body = json.loads(request.content)
             assert 'systemInstruction' in body and body['generationConfig']['responseMimeType'] == 'application/json'
-            assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'HIGH'
-            assert 'maxOutputTokens' not in body['generationConfig']
+            assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'LOW'
+            assert body['generationConfig']['maxOutputTokens'] == 4096
             assert 'tools' not in body and 'cachedContent' not in body
             assert 'IGNORE' not in body['systemInstruction']['parts'][0]['text']
             return httpx.Response(200,json={'candidates':[{'finishReason':'STOP','content':{'parts':[
@@ -119,23 +119,23 @@ def test_model_wall_clock_deadline_still_rejects_stalled_response():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             with pytest.raises(ProviderFailure) as caught:
                 await GeminiProvider(settings, client).generate('plan', {}, PlanDraft)
-        assert caught.value.code == 'model_timeout' and caught.value.retryable
+        assert caught.value.code == 'model_timeout' and not caught.value.retryable
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize('exhausted', [False, True])
-def test_model_timeout_retries_once_and_consumes_attempt_budget(exhausted):
+def test_transient_model_failure_retries_once_and_consumes_attempt_budget(exhausted):
     output = PlanDraft(action='plan', patch={'metric_id': 'order_parent_value', 'period': 'all_stored'})
-    failures = [ProviderFailure('model_timeout', retryable=True),
-                ProviderFailure('model_timeout', retryable=True) if exhausted else (output, {})]
+    failures = [ProviderFailure(retryable=True),
+                ProviderFailure(retryable=True) if exhausted else (output, {})]
     provider = SimpleNamespace(generate=AsyncMock(side_effect=failures))
     graph = object.__new__(ConversationGraph)
     graph.actor = graph.run_id = graph.token = None
     graph.jobs = SimpleNamespace(budget=AsyncMock(), usage=AsyncMock())
     graph.service = SimpleNamespace(provider=provider)
     if exhausted:
-        with pytest.raises(ProviderFailure, match='model_timeout'):
+        with pytest.raises(ProviderFailure, match='model_unavailable'):
             asyncio.run(graph.model('plan', {}, PlanDraft))
     else:
         assert asyncio.run(graph.model('plan', {}, PlanDraft)) == output
@@ -143,11 +143,31 @@ def test_model_timeout_retries_once_and_consumes_attempt_budget(exhausted):
     assert graph.jobs.usage.await_count == (0 if exhausted else 1)
 
 
+@pytest.mark.parametrize('failure', [
+    ProviderFailure('model_timeout'),
+    ProviderFailure('model_output_budget', usage={'promptTokenCount': 900, 'candidatesTokenCount': 0,
+                                                  'thoughtsTokenCount': 4096}),
+])
+def test_timeout_and_budget_exhaustion_are_not_retried_and_received_usage_is_charged(failure):
+    provider = SimpleNamespace(generate=AsyncMock(side_effect=[failure]))
+    graph = object.__new__(ConversationGraph)
+    graph.actor = graph.run_id = graph.token = None
+    graph.jobs = SimpleNamespace(budget=AsyncMock(), usage=AsyncMock())
+    graph.service = SimpleNamespace(provider=provider)
+    with pytest.raises(ProviderFailure, match=failure.code):
+        asyncio.run(graph.model('plan', {}, PlanDraft))
+    assert provider.generate.await_count == graph.jobs.budget.await_count == 1
+    if failure.usage:
+        graph.jobs.usage.assert_awaited_once_with(None, None, None, failure.usage)
+    else:
+        graph.jobs.usage.assert_not_awaited()
+
+
 @pytest.mark.parametrize('response,expected,retryable',[
     (httpx.Response(403,text='secret-provider-detail'),'model_authentication_failed',False),
     (httpx.Response(404),'model_not_found',False),
     (httpx.Response(429),'model_unavailable',True),
-    (httpx.Response(200,json={'candidates':[{'finishReason':'MAX_TOKENS'}]}),'model_invalid_output',False),
+    (httpx.Response(200,json={'candidates':[{'finishReason':'MAX_TOKENS'}]}),'model_output_budget',False),
     (httpx.Response(200,json={'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':'not JSON'}]}}]}),'model_invalid_output',False),
     (httpx.Response(200,content=b'x'*131073),'model_output_budget',False),
 ])

@@ -64,6 +64,7 @@ class OperationContext:
 
 
 _context = ContextVar("analyst_operation_context", default=OperationContext())
+_operation = ContextVar("analyst_operation_result", default=None)
 
 
 @contextmanager
@@ -113,6 +114,7 @@ def operation_failure(stage, error):
 class Operation:
     outcome: str | None = None
     error_code: str | None = None
+    tokens: dict | None = None
 
     def set_outcome(self, outcome, error_code=None):
         # Workflow failures are handled internally; retain their explicit outcome.
@@ -127,7 +129,7 @@ class Telemetry:
         self.coverage_values = {}
         self.coverage_observed_at = 0
 
-    def observe(self, stage, outcome, seconds, *, operation=None, operation_id=None, error_code=None):
+    def observe(self, stage, outcome, seconds, *, operation=None, operation_id=None, error_code=None, tokens=None):
         if stage not in STAGES or outcome not in OUTCOMES:
             raise ValueError("Unbounded telemetry label")
         operation = operation or DEFAULT_OPERATIONS[stage]
@@ -145,7 +147,8 @@ class Telemetry:
                              "attempt": context.attempt, "outcome": outcome,
                              "error_code": fixed_error_code(error_code, stage + "_failed")
                              if error_code is not None else None,
-                             "duration_ms": round(seconds * 1000)}))
+                             "duration_ms": round(seconds * 1000),
+                             **({"tokens": tokens} if tokens is not None else {})}))
 
     @contextmanager
     def operation(self, stage, operation, *, run_id=None, attempt=None):
@@ -158,6 +161,7 @@ class Telemetry:
                                  "operation": operation, "operation_id": str(operation_id),
                                  "run_id": context.run_id, "request_id": context.request_id,
                                  "attempt": context.attempt}))
+            current = _operation.set(result)
             try:
                 yield result
             except BaseException as error:
@@ -165,14 +169,22 @@ class Telemetry:
                     result.set_outcome(*operation_failure(stage, error))
                 raise
             finally:
+                _operation.reset(current)
                 self.observe(stage, result.outcome or "success", time.monotonic() - started,
-                             operation=operation, operation_id=operation_id, error_code=result.error_code)
+                             operation=operation, operation_id=operation_id, error_code=result.error_code,
+                             tokens=result.tokens)
 
     def usage(self, usage):
+        tokens = {}
         for kind, field in (("input", "promptTokenCount"), ("output", "candidatesTokenCount"), ("thinking", "thoughtsTokenCount")):
             value = usage.get(field, 0)
             if isinstance(value, int) and 0 <= value <= 10_000_000:
                 self.tokens[kind] += value
+                tokens[kind] = value
+        # A wall-clock timeout receives no provider response, so its end event has no tokens.
+        operation = _operation.get()
+        if operation is not None:
+            operation.tokens = tokens
 
     def coverage(self, coverage):
         # Keys come only from the fixed gateway, never model/client labels.

@@ -160,11 +160,34 @@ def test_model_transport_timeout_has_specific_fixed_code(caplog):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             with pytest.raises(ProviderFailure) as caught:
                 await GeminiProvider(settings, client).generate("plan", {}, PlanDraft)
-            assert caught.value.code == "model_timeout" and caught.value.retryable
+            assert caught.value.code == "model_timeout" and not caught.value.retryable
 
     asyncio.run(scenario())
-    assert_pair(events(caplog), run_id=None, operation="plan", outcome="timeout", error_code="model_timeout")
+    rows = events(caplog)
+    assert_pair(rows, run_id=None, operation="plan", outcome="timeout", error_code="model_timeout")
+    assert "tokens" not in rows[1]
     assert "private" not in caplog.text
+
+
+def test_model_budget_exhaustion_logs_received_token_counts(caplog):
+    async def scenario():
+        def handler(request):
+            return httpx.Response(200, json={"candidates": [{"finishReason": "MAX_TOKENS"}],
+                                             "usageMetadata": {"promptTokenCount": 2906, "thoughtsTokenCount": 4096}})
+
+        settings = SimpleNamespace(gemini_api_key=SecretStr("private-key"), model_timeout_seconds=1)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderFailure) as caught:
+                await GeminiProvider(settings, client).generate("plan", {}, PlanDraft)
+            assert caught.value.code == "model_output_budget" and not caught.value.retryable
+            assert caught.value.usage == {"promptTokenCount": 2906, "candidatesTokenCount": 0,
+                                          "thoughtsTokenCount": 4096}
+
+    asyncio.run(scenario())
+    rows = events(caplog)
+    assert_pair(rows, run_id=None, operation="plan", outcome="failed", error_code="model_output_budget")
+    assert "tokens" not in rows[0]
+    assert rows[1]["tokens"] == {"input": 2906, "output": 0, "thinking": 4096}
 
 
 @pytest.mark.parametrize("error,outcome,code", [

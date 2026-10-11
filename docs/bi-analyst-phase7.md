@@ -310,8 +310,9 @@ BI_ANALYST_MODEL_TIMEOUT_SECONDS=90
 BI_ANALYST_WORKFLOW_TIMEOUT_SECONDS=600
 ```
 
-These are maximums, not minimum response times. High model thinking, one retry
-per node and cumulative attempt budgets remain unchanged. Preflight/readiness
+These are maximums, not minimum response times. Planning uses low model thinking
+with a 4,096-token output cap; transient provider failures retry once per node,
+model timeouts do not, and cumulative attempt budgets remain unchanged. Preflight/readiness
 reject a workflow budget above 300 seconds if migration 009 is missing. After
 deployment, retry a failed question with a new run; old failed/expired runs are
 not extended. No frontend deployment is needed. Qualify real planner/presentation

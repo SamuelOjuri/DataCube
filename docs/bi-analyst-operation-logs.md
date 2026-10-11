@@ -49,8 +49,14 @@ They add a fixed `error_code`, or `null` on success. Examples include
 `run_timeout`, `permissions_changed`, `invalid_evidence`, `execution_cancelled`
 and `execution_interrupted`. Unrecognised exception codes become the fixed
 stage fallback, such as `model_failed` or `workflow_failed`. Raw exception
-messages are never logged. Model transport timeouts remain retryable and are
-now distinguished from other provider availability failures.
+messages are never logged. Model transport timeouts are distinguished from other
+provider availability failures and are not retried, because an identical request
+would most likely reach the same deadline.
+
+A model end event that received a provider response also includes provider-reported
+`tokens`, for example `"tokens":{"input":2906,"output":0,"thinking":4096}`. This
+includes `model_output_budget` and `model_invalid_output` failures. A
+`model_timeout` event has no `tokens` field because no response was received.
 
 The existing HTTP operation summary is still emitted at response preparation;
 it has `operation: http_request`, `phase: end` and no paired operation ID. An

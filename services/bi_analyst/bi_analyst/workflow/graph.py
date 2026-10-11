@@ -70,6 +70,8 @@ class ConversationGraph:
                 await self.jobs.usage(self.actor,self.run_id,self.token,usage)
                 return result
             except ProviderFailure as error:
+                if any(error.usage.values()):
+                    await self.jobs.usage(self.actor,self.run_id,self.token,error.usage)
                 if not error.retryable or attempt == 1:
                     raise
                 await asyncio.sleep(0.1)

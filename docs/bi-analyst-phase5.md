@@ -63,10 +63,9 @@ Datasets remain in `analyst_state.results`; graph state stores result references
 
 The independent provider calls the documented
 [Gemini structured output API](https://ai.google.dev/gemini-api/docs/structured-output)
-using `gemini-3.8-flash`, temperature zero, high thinking effort, a bounded response
-and Pydantic validation. The current configuration omits `maxOutputTokens`, using
-the provider's default output-token limit rather than an application-selected cap.
-This does not imply unlimited output. Prompt version is `bi-conversation-1.0.2`. The adapter
+using `gemini-3.8-flash`, temperature zero, low thinking effort, a bounded response
+and Pydantic validation. `maxOutputTokens` is 4,096, matching the benchmarked
+configuration; a response that exhausts it fails as `model_output_budget`. Prompt version is `bi-conversation-1.1.0`. The adapter
 does not import predictive scoring, ETL configuration or Monday write clients.
 Inherited LangSmith tracing is disabled around execution. Neither provider
 bodies nor raw prompts are exposed in public progress events or error messages.
@@ -134,10 +133,11 @@ The owner-approved 10 October reasoning policy defaults to two active workflows
 per instance, 600 seconds of cumulative active execution time across clarification
 segments, 90 seconds per model call, eight total model attempts,
 24 metric/entity calls and at most three clarification replies. A transient
-provider failure can retry once per node; all attempts consume the durable run
+provider failure (HTTP 429/5xx or connection error) can retry once per node; a
+model timeout is not retried. All attempts consume the durable run
 budget. Each model response is limited to 128 KiB and input context to 64 KiB;
-there is no explicit output-token cap in the request. Provider-default token
-limits, timeout checks and rejection of incomplete model output still apply.
+the request caps output at 4,096 tokens. Timeout checks and rejection of
+incomplete model output still apply.
 Phase 4 row, byte, query, connection and concurrency
 limits also apply. Waiting for a user consumes no database lease or runtime
 budget. Public event count and stored payload sizes are database bounded.
@@ -188,6 +188,16 @@ The historical evaluations below used low thinking effort and an explicit
 4,096-token cap. Their saved reports are unchanged; they do not certify the
 current generation settings. Re-evaluate before claiming equivalent model
 quality, latency or cost.
+
+On 11 October 2026, following two 90-second planning timeouts under high thinking
+in production, generation returned to the benchmarked low-thinking, 4,096-token
+configuration. The [prompt 1.1.0 planning benchmark](bi-analyst-phase5-model-evaluation-1.1.0.json)
+passed **28/28** cases, adding the production question "What was the revenue for
+January 2026?" (expected `unsupported_question` under the current period
+contract). Mean planning latency was **2.81 seconds** (maximum 4.53) with one model
+call per case; usage was 80,262 input, 1,291 candidate-output and 0 thinking tokens.
+This is a sequential synthetic planning measurement, not an end-to-end or
+concurrent-load qualification.
 
 The final isolated run passed **361 tests**. The live
 [planning benchmark](bi-analyst-phase5-model-evaluation-1.0.2.json) passed **27/27**
