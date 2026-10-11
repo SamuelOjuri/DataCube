@@ -1,0 +1,68 @@
+# Analyst UI clarity review — 11 October 2026
+
+The supplied screenshots show repeated unsuccessful attempts before a completed
+answer to “Show stored Order Value by category.” The frontend source explains
+the presentation problems:
+
+- `Workspace.tsx` rendered every saved run as a separate full question and
+  response, including repeated failed retries. It also displayed a large generic
+  heading, introductory copy and slogans on saved conversations.
+- `ResultCard.tsx` displayed the aggregate, generated answer text, chart and
+  table together. The backend's `workflow/evidence.py` generates the answer text
+  from the same aggregate and up to eight contributors, duplicating the values
+  rather than adding an explanation.
+- Full scope metadata and a coverage/freshness diagnostics block preceded the
+  chart. Source-row and known-value counts appeared in the default table.
+- The fixed-width vertical category chart had angled labels and used only part
+  of the available desktop width.
+
+The screenshot's 15,220 matching source records include 11,295 known values:
+3,925 records have no stored value. The £49,559,451.71 figure therefore needs a
+clear known-subtotal qualification. Source freshness is unknown. Those facts
+remain visible; the other diagnostics can be read on demand.
+
+## Local changes
+
+Consecutive unsuccessful attempts of the same trimmed question now belong to
+one displayed question. The most recent attempt remains visible and actionable;
+earlier attempts remain available in an expandable history. Different questions
+and completed answers keep their separate positions. No saved runs are deleted
+or changed, and retry and follow-up submission behavior is unchanged.
+
+The default result view shows the metric, scope, aggregate, relevant missing-value
+or limited-result warning and chart. Exact values can be expanded, with source
+counts available through a checkbox. Results that cannot be charted still show
+their table immediately. Original answer text, definitions, coverage counters,
+source versions and export scope are available through disclosures. Comparison
+scope, evaluation-data labels and scope-change notices are retained.
+
+Category bars are horizontal and ordered by value for single-series breakdowns.
+Month axes retain chronological order. The chart resizes with its container;
+labels remain readable without horizontal page overflow on mobile. Smaller
+saved-conversation headings, less spacing and conversation timestamps reduce
+clutter and distinguish history entries with the same title.
+
+## Verification
+
+- 19 frontend unit tests passed.
+- 15 browser tests passed, including the production build and desktop/mobile
+  accessibility checks, with no accessibility violations.
+- Browser regressions cover three failed retries followed by a completed answer,
+  a latest failure that remains retryable, preservation of unrelated questions
+  and completed answers, optional values/source counts, retained diagnostics,
+  fourteen categories with long labels, exact values across table pages and
+  chart resizing between desktop and mobile.
+- Existing sign-in, session expiry, SSE replay, clarification idempotency,
+  follow-ups, cancellation, CSV, project detail and feedback checks passed.
+- Desktop and mobile screenshots were visually reviewed. Screenshots use local
+  synthetic fixtures, not production results. The build retains its existing
+  large chart-library chunk warning.
+
+Preview artifacts: `outputs/analyst-simplified-desktop.png`,
+`outputs/analyst-category-desktop.png`, `outputs/analyst-category-mobile.png`.
+
+The in-app browser was unavailable in this session, so the deployed signed-in
+conversation was not inspected. This review establishes the rendering causes,
+not the causes of the earlier execution failures. These changes are local and
+require a frontend build/deployment to appear on Netlify. No backend deployment
+or database migration was performed or is required for this UI change.

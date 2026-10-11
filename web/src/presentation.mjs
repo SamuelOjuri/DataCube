@@ -47,20 +47,25 @@ export function chartSpec(result, intent, ownedId) {
   }
   if (series.size > 8) return no('Use the table for more than eight series.');
   if (intent.x === 'month') values.sort((a, b) => a.label.localeCompare(b.label));
+  const horizontal = intent.kind === 'bar' && intent.x !== 'month';
+  const categoryAxis = {field: 'label', type: 'ordinal', title: null, sort: horizontal && seriesIndex < 0 ? '-x' : null,
+    axis: {labelAngle: horizontal ? 0 : -35, labelLimit: 180}};
+  const valueAxis = {field: 'value', type: 'quantitative', title: unitLabel(p.unit), scale: {zero: true}, stack: null,
+    axis: {format: p.unit === 'source_currency' ? '~s' : undefined, tickCount: 5}};
   return {reason: '', spec: {
-    data: {values}, width: 560, height: 250,
+    data: {values}, width: 560, height: horizontal ? Math.max(250, new Set(values.map(v => v.label)).size * 26) : 250,
     description: `${p.metric_label} (${unitLabel(p.unit)}). ${p.dataset_scope === 'limited' ? 'Limited result.' : 'Stored result.'} Exact values are in the table.`,
     mark: {type: intent.kind, ...(intent.kind === 'line' ? {point: true} : {})},
     encoding: {
-      x: {field: 'label', type: 'ordinal', title: intent.x, sort: null, axis: {labelAngle: -35, labelLimit: 140}},
-      y: {field: 'value', type: 'quantitative', title: unitLabel(p.unit), scale: {zero: true}, stack: null},
+      x: horizontal ? valueAxis : categoryAxis,
+      y: horizontal ? categoryAxis : valueAxis,
       ...(seriesIndex >= 0 ? {color: {field: 'series', type: 'nominal', title: seriesFields[0]},
-        ...(intent.kind === 'bar' ? {xOffset: {field: 'series'}} : {})} : {}),
+        ...(intent.kind === 'bar' ? {[horizontal ? 'yOffset' : 'xOffset']: {field: 'series'}} : {})} : {}),
     },
     config: {
       background: 'transparent', view: {stroke: null}, mark: {color: '#931f1f'}, font: 'Open Sans',
       range: {category: ['#931f1f', '#262626', '#737373', '#c14c4c', '#4b5563', '#691616', '#9b6a58', '#6b5c7b']},
-      axis: {labelColor: '#666666', titleColor: '#262626', domainColor: '#8a8a8a', tickColor: '#8a8a8a', gridColor: '#e6e6e6'},
+      axis: {labelFontSize: 12, titleFontSize: 12, labelColor: '#666666', titleColor: '#262626', domainColor: '#8a8a8a', tickColor: '#8a8a8a', gridColor: '#e6e6e6'},
       legend: {labelColor: '#666666', titleColor: '#262626'},
     },
   }};

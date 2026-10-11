@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import type {Auth, Conversation, Run, Workflow} from './types';
 import {activeRun, ApiError, errorMessage, json, post, watchRun} from './api';
 import ResultCard from './ResultCard';
+import {historyTime, questionTurns} from './conversation';
 
 const route = () => /^\/conversations\/([0-9a-f-]{36})$/.exec(window.location.pathname)?.[1] || null;
 type Pending = {path: string; body: Record<string, unknown>; question: string};
@@ -63,6 +64,7 @@ export default function Workspace({auth}: {auth: Auth}) {
     return () => controller.abort();
   }, [auth, watching, reconnect]);
   const latestAnswer = runs.find(r => workflows[r.id]?.status === 'completed' && workflows[r.id]?.answer);
+  const turns = questionTurns(runs, workflows);
   const sendPending = async (request: Pending) => {
     setPending(request);
     let state: Workflow;
@@ -107,20 +109,24 @@ export default function Workspace({auth}: {auth: Auth}) {
   });
   return <div className="workspace-layout"><aside aria-label="Conversation history"><div className="sidebar-top"><p className="eyebrow">WORKSPACE</p><button className="new-chat" disabled={busy || !!pending} onClick={() => navigate(null)}>+ New conversation</button></div>
     <h2>Recent conversations</h2><nav>{conversations.map(c => <a key={c.id} href={`/conversations/${c.id}`} aria-current={c.id === conversationId ? 'page' : undefined}
-      onClick={e => {e.preventDefault(); if (!busy && !pending) navigate(c.id);}}>{c.title}</a>)}</nav>
+      onClick={e => {e.preventDefault(); if (!busy && !pending) navigate(c.id);}}><span>{c.title}</span>{historyTime(c.created_at) && <time dateTime={c.created_at}>{historyTime(c.created_at)}</time>}</a>)}</nav>
     {historyMore && <button className="text-button" disabled={busy} onClick={() => act(() => loadHistory(true))}>Older conversations</button>}
-    <p className="sidebar-note">Clear scope.<br />Traceable answers.<br />Your business, as recorded.</p></aside>
-    <main id="workspace" className="conversation"><div className="conversation-heading"><p className="eyebrow">BUSINESS INTELLIGENCE</p><h1>{conversationId ? 'Your analysis' : 'What would you like to understand?'}</h1>
-      <p>Ask a question. Explore the detail. Follow the evidence.</p></div>
+    </aside>
+    <main id="workspace" className="conversation"><div className={`conversation-heading${conversationId ? ' saved-conversation-heading' : ''}`}>
+      <h1>{conversationId ? 'Conversation' : 'What would you like to understand?'}</h1>
+      {!conversationId && <p>Ask a question about your business data.</p>}</div>
       {!runs.length && !busy && <div className="suggestions">{['Show revenue for the last completed month.', 'Show stored Order Value by category.', 'What is the five-year conversion rate?'].map(text => <button className="suggestion" key={text} onClick={() => setQuestion(text)}>{text}<span aria-hidden="true">↗</span></button>)}</div>}
       {runMore && <button className="secondary" disabled={busy} onClick={olderRuns}>Load older answers</button>}
-      <div className="messages">{[...runs].reverse().map(run => {
+      <div className="messages">{turns.map(({run, previousAttempts}) => {
         const state = workflows[run.id];
         return <article className="message" key={run.id}><div className="question"><span className="eyebrow">YOU ASKED</span><h2>{run.question}</h2></div>
-          {state?.answer ? <ResultCard auth={auth} answer={state.answer} /> : <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p>}
+          {state?.answer ? <ResultCard auth={auth} answer={state.answer} /> : !state || !['failed', 'cancelled', 'interrupted'].includes(state.status) ? <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p> : null}
           {state && ['failed', 'cancelled', 'interrupted'].includes(state.status) && <div className="notice"><p>{state.status === 'interrupted' ? 'Execution was interrupted. Retry to start a new run with current access and data.' : state.status === 'cancelled' ? 'This run was cancelled.' : 'The analyst could not complete this request. You can retry or revise the question.'}</p>
             <button className="secondary" disabled={busy || !!current || !!pending} onClick={() => send(run)}>Retry question</button></div>}
           {!state && run.status === 'completed' && <p className="note">This earlier run has no conversational answer.</p>}
+          {!!previousAttempts.length && <details className="attempt-history"><summary>{previousAttempts.length} earlier unsuccessful {previousAttempts.length === 1 ? 'attempt' : 'attempts'}</summary>
+            <ul>{previousAttempts.map(attempt => <li key={attempt.id}><time dateTime={attempt.created_at}>{historyTime(attempt.created_at)}</time> · {(workflows[attempt.id]?.status || attempt.status).replaceAll('_', ' ')}</li>)}</ul>
+          </details>}
         </article>;
       })}</div>
       {current && <section className="run-control" aria-label="Current run"><p role="status" aria-live="polite">{progress || 'A clarification is needed.'}</p>
@@ -136,8 +142,8 @@ export default function Workspace({auth}: {auth: Auth}) {
       {pending && <div className="notice"><p>Submission was not confirmed. Retry safely with the same request.</p><button disabled={busy} onClick={() => act(() => sendPending(pending))}>Retry submission</button></div>}
       <form className="composer" onSubmit={e => {e.preventDefault(); send();}}><label htmlFor="question">{latestAnswer ? 'Ask a follow-up or a new question' : 'Your question'}</label>
         <textarea id="question" placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => setQuestion(e.target.value)} required disabled={!!current} />
-        <div className="composer-footer">{latestAnswer ? <label className="checkbox"><input type="checkbox" checked={followUp} onChange={e => setFollowUp(e.target.checked)} />Use the latest answer as context</label> : <span>Five core metrics. Grounded in your data.</span>}
+        <div className="composer-footer">{latestAnswer && <label className="checkbox"><input type="checkbox" checked={followUp} onChange={e => setFollowUp(e.target.checked)} />Use the latest answer as context</label>}
           <button disabled={busy || !!current || !!pending || !question.trim()}>Ask analyst <span aria-hidden="true">↑</span></button></div>
-      </form><p className="note footer-note">Results use retained reporting history. Review scope and coverage before sharing.</p>
+      </form>
     </main></div>;
 }

@@ -3,7 +3,7 @@ import {flexRender, getCoreRowModel, getPaginationRowModel, getSortedRowModel, u
 import type {Cell, Column} from './types';
 import {compareDecimal, formatCell, unitLabel} from './presentation.mjs';
 
-export default function DataTable({columns, rows, caption, metadata = [], rowScope = 'stored rows'}: {columns: string[]; rows: Cell[][]; caption: string; metadata?: Column[]; rowScope?: string}) {
+export default function DataTable({columns, rows, caption, metadata = [], rowScope = 'rows'}: {columns: string[]; rows: Cell[][]; caption: string; metadata?: Column[]; rowScope?: string}) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const defs = useMemo<ColumnDef<Cell[]>[]>(() => columns.map((name, index) => {
     const column = metadata.find(c => c.name === name);
@@ -25,9 +25,8 @@ export default function DataTable({columns, rows, caption, metadata = [], rowSco
       <tbody>{table.getRowModel().rows.map(row => <tr key={row.id}>{row.getVisibleCells().map(cell => <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}</tr>)}</tbody>
     </table></div>
     {!rows.length && <p>No rows matched this request.</p>}
-    <div className="pagination"><button className="secondary" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>Previous rows</button>
+    {table.getPageCount() > 1 && <div className="pagination"><button className="secondary" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>Previous rows</button>
       <span>Page {table.getState().pagination.pageIndex + 1} of {Math.max(table.getPageCount(), 1)} · {rows.length} {rowScope}</span>
-      <button className="secondary" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>Next rows</button></div>
-    <p className="note">Sorting and pages apply to these {rowScope}.</p>
+      <button className="secondary" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>Next rows</button></div>}
   </div>;
 }

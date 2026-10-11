@@ -78,10 +78,11 @@ test('sign-in, streaming replay, saved results, charts, tables, CSV, detail, fee
   await expect(page.getByText('Verified parent mirror.',{exact:true})).toBeVisible();
   expect(state.events).toContain('?after=1');
   await expect(page.getByText('12 of 12 groups · Complete requested dataset · no sampling',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'View 12 values',exact:true}).click();
   await page.getByRole('button',{name:'Next rows'}).click();
   await expect(page.getByText('Page 2 of 2',{exact:false})).toBeVisible();
   await page.getByRole('button',{name:'value (GBP)'}).click();
-  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Export 12 stored rows (CSV)'}).click();
+  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Download CSV (12 rows)'}).click();
   expect((await download).suggestedFilename()).toMatch(/datacube-.*\.csv/);
   await page.getByRole('button',{name:'Explore contributing projects'}).click();
   await expect(page.getByText('project-1',{exact:true})).toBeVisible();
@@ -151,6 +152,12 @@ test('deep links survive reauthentication, expired sessions clear results, sign-
 test('mobile layout and keyboard navigation remain accessible',async({page})=>{
   await page.setViewportSize({width:390,height:844});await fixture(page,{existing:true});await signIn(page,`/conversations/${thread}`);
   await expect(page.locator('.chart svg')).toBeVisible();
+  const chartWidth=async()=>(await page.locator('.chart svg').boundingBox())!.width;
+  const mobileWidth=await chartWidth();
+  await page.setViewportSize({width:1280,height:900});
+  await expect.poll(chartWidth).toBeGreaterThan(mobileWidth);
+  await page.setViewportSize({width:390,height:844});
+  await expect.poll(chartWidth).toBeLessThanOrEqual(mobileWidth+1);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
   await page.keyboard.press('Control+Home');
@@ -169,7 +176,91 @@ test('comparison shows its baseline scope and undefined percentage change',async
 
 test('limited results explicitly label table and export scope',async({page})=>{
   await fixture(page,{existing:true,limited:true});await signIn(page,`/conversations/${thread}`);
-  await expect(page.getByText('Limited result; this display is not the full population',{exact:false})).toBeVisible();
-  await expect(page.getByText('excluded groups are not exported',{exact:false})).toBeVisible();
+  await expect(page.getByText('Showing 12 of 15 groups.',{exact:false})).toBeVisible();
+  await expect(page.getByText('the table and CSV include only these 12 groups.',{exact:false})).toBeVisible();
+  await expect(page.getByRole('table',{name:'Order Value (parent mirror) — values'})).toBeVisible();
   await expect(page.locator('.chart svg')).toHaveCount(0);
+});
+
+test('retries stay with their question while the completed answer leads the default view',async({page})=>{
+  const state=await fixture(page,{existing:true});
+  for(let i=0;i<3;i++) {
+    const id=`30000000-0000-4000-8000-${String(i+20).padStart(12,'0')}`;
+    state.runs.push({...state.runs[0],id,status:'failed',created_at:`2026-10-08T11:0${2-i}:00Z`});
+    state.workflow[id]={...state.workflow[runId],run_id:id,status:'failed',answer:null};
+  }
+  await signIn(page,`/conversations/${thread}`);
+  await expect(page.locator('.message')).toHaveCount(1);
+  await expect(page.getByRole('heading',{name:'Show stored Order Value by category.'})).toHaveCount(1);
+  await expect(page.getByRole('heading',{name:'Order Value (parent mirror)'})).toBeVisible();
+  await expect(page.getByText('3 earlier unsuccessful attempts',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Retry question'})).toHaveCount(0);
+  await expect(page.getByText('1 of 24 matching records have no value.',{exact:false})).toBeVisible();
+  await expect(page.getByText('Source freshness unknown',{exact:true})).toBeVisible();
+  await expect(page.locator('nav time')).toHaveText('8 Oct, 13:00');
+  await expect(page.getByRole('table')).toHaveCount(0);
+  await expect(page.locator('.answer-text')).toBeHidden();
+  await expect(page.locator('.limitations')).toBeHidden();
+  await page.getByRole('button',{name:'View 12 values',exact:true}).click();
+  await expect(page.getByRole('table')).toBeVisible();
+  await expect(page.getByRole('columnheader',{name:'source rows (count)'})).toHaveCount(0);
+  await page.getByLabel('Show source record counts').check();
+  await expect(page.getByRole('columnheader',{name:'source rows (count)'})).toBeVisible();
+  await expect(page.getByRole('columnheader',{name:'known values (count)'})).toBeVisible();
+  await page.getByRole('button',{name:'Hide values',exact:true}).click();
+  await expect(page.getByRole('table')).toHaveCount(0);
+  await page.screenshot({path:'../outputs/analyst-simplified-desktop.png',fullPage:true});
+  await page.getByText('3 earlier unsuccessful attempts',{exact:true}).click();
+  await expect(page.locator('.attempt-history li')).toHaveCount(3);
+  await expect(page.locator('.attempt-history li').first()).toBeVisible();
+  await page.getByText('Definitions and source details',{exact:true}).click();
+  await expect(page.getByText('One source value is unknown.',{exact:true})).toBeVisible();
+  await page.getByText('Answer text',{exact:true}).click();
+  await expect(page.locator('.answer-text')).toBeVisible();
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+});
+
+test('a fourteen-category breakdown keeps long labels readable and every exact value accessible',async({page})=>{
+  const state=await fixture(page,{existing:true});
+  const categories=['Apartments','Commercial','Commodity','Consultancy','Datacentre','Education','Health','House','Industrial','Leisure','Military','Mixed Use','Student Accommodation',null];
+  state.result.rows=categories.map((category,i)=>[category,`${14000000-i*900000}.00`,100,80]) as typeof state.result.rows;
+  state.result.provenance.returned_rows=14;
+  state.result.provenance.matched_groups=14;
+  state.result.provenance.total={value:'114100000.00',source_rows:1400,known_values:1120};
+  state.result.provenance.limitations=['Some source values are unknown.'];
+  await signIn(page,`/conversations/${thread}`);
+  await expect(page.locator('.chart svg .mark-rect.role-mark path')).toHaveCount(14);
+  const labels=page.locator('.chart svg text');
+  await expect(labels.filter({hasText:'Student Accommodation'})).toBeVisible();
+  await expect(labels.filter({hasText:'(Unclassified)'})).toBeVisible();
+  await page.screenshot({path:'../outputs/analyst-category-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await expect(labels.filter({hasText:'Student Accommodation'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.screenshot({path:'../outputs/analyst-category-mobile.png',fullPage:true});
+  await page.getByRole('button',{name:'View 14 values',exact:true}).click();
+  await page.getByRole('button',{name:'Next rows'}).click();
+  await expect(page.getByRole('cell',{name:'Student Accommodation',exact:true})).toBeVisible();
+  await expect(page.getByRole('cell',{name:'£3,200,000.00',exact:true})).toBeVisible();
+});
+
+test('a failed latest attempt remains actionable and unrelated questions and completed answers stay separate',async({page})=>{
+  const state=await fixture(page,{existing:true});
+  const latest='30000000-0000-4000-8000-000000000020';
+  const previous='30000000-0000-4000-8000-000000000021';
+  const other='30000000-0000-4000-8000-000000000022';
+  const template={...state.runs[0]};
+  state.runs=[{...template,id:latest,status:'failed'},{...template,id:previous,status:'failed'},template,
+    {...template,id:other,question:'Show revenue.',status:'failed'}];
+  for(const id of [latest,previous,other]) state.workflow[id]={...state.workflow[runId],run_id:id,status:'failed',answer:null};
+  await signIn(page,`/conversations/${thread}`);
+  await expect(page.locator('.message')).toHaveCount(3);
+  await expect(page.getByText('1 earlier unsuccessful attempt',{exact:true})).toBeVisible();
+  const turn=page.locator('.message').filter({has:page.getByText('1 earlier unsuccessful attempt',{exact:true})});
+  await expect(turn.getByRole('button',{name:'Retry question'})).toBeEnabled();
+  await turn.getByRole('button',{name:'Retry question'}).click();
+  expect(state.submissions[0].question).toBe(template.question);
+  expect(state.submissions[0].follow_up_to).toBeUndefined();
+  await expect(page.getByRole('heading',{name:'Order Value (parent mirror)'})).toHaveCount(2);
+  await expect(page.getByRole('heading',{name:'Show revenue.'})).toBeVisible();
 });
