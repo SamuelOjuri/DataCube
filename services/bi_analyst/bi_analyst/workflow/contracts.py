@@ -22,12 +22,6 @@ class Reply(Contract):
     answer: str = Field(min_length=1, max_length=2000)
 
 
-class Interpretation(Contract):
-    families: list[Literal["enquiry", "order", "invoice", "conversion", "gestation"]] = Field(max_length=5)
-    supported: bool = Field(description="True when any catalogue metric family is identifiable, even when variant or period needs clarification. Planning checks exact support.")
-    asks_for_cause: bool = False
-
-
 class PlanPatch(Contract):
     """Null means inherit; explicit clear flags remove prior filters/comparison."""
     metric_id: Identifier | None = None
@@ -47,6 +41,7 @@ class PlanDraft(Contract):
     patch: PlanPatch = Field(default_factory=PlanPatch)
     reason: Literal["metric", "period", "scope", "unsupported"] = "scope"
     candidate_metrics: list[Identifier] = Field(default_factory=list, max_length=16)
+    asks_for_cause: bool = False
 
 
 class Clarification(Contract):

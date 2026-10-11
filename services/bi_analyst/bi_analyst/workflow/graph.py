@@ -12,8 +12,8 @@ from ..contracts import Contract
 from ..metrics.compiler import InvalidMetricRequest
 from ..metrics.contracts import EntityRequest, MetricRequest, MetricResult
 from ..operations.telemetry import operation_context
-from .contracts import Clarification, Interpretation, PlanDraft, Presentation, ResultReference
-from .evidence import candidates, ground
+from .contracts import Clarification, PlanDraft, Presentation, ResultReference
+from .evidence import ground, select_presentation
 from .provider import ProviderFailure
 
 
@@ -21,7 +21,7 @@ class GraphState(Contract):
     question: str
     previous_plan: dict | None = None
     plan: dict | None = None
-    interpretation: dict | None = None
+    asks_for_cause: bool = False
     replies: list[str] = Field(default_factory=list)
     clarification: dict | None = None
     result: dict | None = None
@@ -38,10 +38,9 @@ class ConversationGraph:
         self.service, self.actor, self.run_id, self.token = service, actor, run_id, token
         self.jobs, self.metrics = service.jobs, service.metrics
         builder = StateGraph(GraphState)
-        for name in ('interpret','make_plan','clarify','execute_plan'):
+        for name in ('make_plan','clarify','execute_plan'):
             builder.add_node(name, getattr(self,name))
-        builder.add_edge(START,'interpret')
-        builder.add_edge('interpret','make_plan')
+        builder.add_edge(START,'make_plan')
         builder.add_conditional_edges('make_plan', lambda s: 'clarify' if s.clarification else 'execute_plan')
         builder.add_conditional_edges('clarify', lambda s: 'execute_plan' if s.plan and not s.clarification else 'make_plan')
         builder.add_conditional_edges('execute_plan', lambda s: 'clarify' if s.clarification else END)
@@ -75,29 +74,19 @@ class ConversationGraph:
                     raise
                 await asyncio.sleep(0.1)
 
-    async def interpret(self, state):
+    async def make_plan(self, state):
         await self.stage('authorizing')
         permitted = self.permitted()
         if not permitted:
             raise HTTPException(503,'metric_not_certified')
-        await self.stage('interpreting')
-        output = await self.model('interpret', {'question':state.question,'previous_plan':state.previous_plan,
-            'catalogue':[metric_summary(m) for m in permitted],
-            'instructions':'Classify metric families only. Include a family even for an ambiguous or unsupported period; the next planning step checks details.'}, Interpretation)
-        if not output.families:
-            raise HTTPException(422,'unsupported_question')
-        return {'interpretation':output.model_dump(mode='json')}
-
-    async def make_plan(self, state):
         await self.stage('retrieving_definitions')
-        families = state.interpretation['families']
-        permitted = {m.id:m for m in self.permitted() if m.family in families}
+        permitted = {m.id:m for m in permitted}
         await self.stage('planning')
         entries = [{**metric_summary(m), 'date_basis':m.date_basis, 'status_filters':m.status_filters,
                     'limitations':self.metrics.compiler.catalogue.runtime_limitations(m)} for m in permitted.values()]
         draft = await self.model('plan', {'question':state.question,'replies':state.replies,
             'previous_plan':state.previous_plan,'catalogue':entries,
-            'instructions':'Return a patch. Null inherits; [] clears lists. Select an explicit period for a new plan. Unsupported time windows require unsupported, never a substitute period.'},PlanDraft)
+            'instructions':'Understand the question and return one plan patch. Null inherits; [] clears lists. Select an explicit period for a new plan. Unsupported time windows require unsupported, never a substitute period. Set asks_for_cause when the user requests an explanation of causes.'},PlanDraft)
         if draft.action == 'unsupported':
             raise HTTPException(422,'unsupported_question')
         if draft.action == 'clarify':
@@ -128,7 +117,8 @@ class ConversationGraph:
                 raise InvalidMetricRequest('limit')
         except (ValidationError, InvalidMetricRequest):
             raise ProviderFailure('model_invalid_plan') from None
-        return {'plan':plan.model_dump(mode='json'),'clarification':None}
+        return {'plan':plan.model_dump(mode='json'),'clarification':None,
+                'asks_for_cause':draft.asks_for_cause}
 
     async def clarify(self, state):
         # No side effects before interrupt: LangGraph replays this node on resume.
@@ -212,17 +202,9 @@ class ConversationGraph:
     async def select_presentation(self, state):
         await self.stage('validating_evidence')
         result = await self.result(state)
-        evidence = candidates(result)
-        if not evidence:
-            raise HTTPException(422,'no_evidence')
         await self.stage('selecting_presentation')
-        selection = await self.model('presentation', {
-            'evidence':[claim.model_dump(mode='json') for claim in evidence],
-            'columns':[c.model_dump(mode='json') for c in result.provenance.columns],
-            'row_count':len(result.rows),'truncated':result.provenance.truncated,
-            'instructions':'Use table for nulls, multiple dimensions, limited data, or over 100 rows. Only month supports line. Select total and relevant comparison/contributor IDs.'},Presentation)
-        # Fail closed before anything answer-like reaches the public stream.
-        ground(result,selection,{},asks_for_cause=state.interpretation['asks_for_cause'])
+        selection = select_presentation(result)
+        ground(result,selection,{},asks_for_cause=state.asks_for_cause)
         return {'presentation':selection.model_dump(mode='json')}
 
     async def persist_answer(self, state):
@@ -232,7 +214,7 @@ class ConversationGraph:
         changes = {key:{'before':previous.get(key),'after':value} for key,value in state.plan.items()
                    if previous and previous.get(key) != value}
         answer = ground(result,Presentation.model_validate(state.presentation),changes,
-                        asks_for_cause=state.interpretation['asks_for_cause'])
+                        asks_for_cause=state.asks_for_cause)
         if state.previous_plan:
             answer.notices.append('This follow-up was queried again using current permissions, source data and reporting boundaries.')
         await self.jobs.finish(self.actor,self.run_id,self.token,'completed',plan=state.plan,

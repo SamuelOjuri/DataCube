@@ -14,7 +14,7 @@ import pytest
 
 from bi_analyst.metrics.service import MetricService
 from bi_analyst.operations.telemetry import Telemetry, operation_context
-from bi_analyst.workflow.contracts import Interpretation
+from bi_analyst.workflow.contracts import PlanDraft
 from bi_analyst.workflow.evidence import EvidenceError
 from bi_analyst.workflow.graph import ConversationGraph
 from bi_analyst.workflow.provider import GeminiProvider, ProviderFailure
@@ -63,7 +63,8 @@ def test_concurrent_runs_retries_and_child_tasks_do_not_mix_context(caplog):
             if question == private_questions[1] and calls[question] == 1:
                 return httpx.Response(429, text="private provider response")
             return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {
-                "parts": [{"text": json.dumps({"families": ["order"], "supported": True})}]}}]})
+                "parts": [{"text": json.dumps({"action": "plan", "patch": {
+                    "metric_id": "order_parent_value", "period": "all_stored"}})}]}}]})
 
         settings = SimpleNamespace(gemini_api_key=SecretStr("private-api-key"), model_timeout_seconds=2)
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -78,12 +79,12 @@ def test_concurrent_runs_retries_and_child_tasks_do_not_mix_context(caplog):
                     with telemetry.operation("workflow", "run_workflow", run_id=run_ids[index]):
                         # The production driver also executes its graph in a child task.
                         result = await asyncio.create_task(graph.model(
-                            "interpret", {"question": private_questions[index]}, Interpretation))
-                        assert result.families == ["order"]
+                            "plan", {"question": private_questions[index]}, PlanDraft))
+                        assert result.patch.metric_id == "order_parent_value"
 
             await asyncio.gather(run(0), run(1))
         # Verify reset in the caller after both child tasks and the retry have ended.
-        with telemetry.operation("model", "presentation"):
+        with telemetry.operation("model", "model_call"):
             pass
 
     asyncio.run(scenario())
@@ -95,9 +96,9 @@ def test_concurrent_runs_retries_and_child_tasks_do_not_mix_context(caplog):
         for attempt in range(1, index + 2):
             retry = index == 1 and attempt == 1
             assert_pair([row for row in own if row["stage"] == "model" and row["attempt"] == attempt],
-                        run_id=run_ids[index], request_id=request_ids[index], operation="interpret", attempt=attempt,
+                        run_id=run_ids[index], request_id=request_ids[index], operation="plan", attempt=attempt,
                         outcome="failed" if retry else "success", error_code="model_unavailable" if retry else None)
-    assert_pair(rows[-2:], run_id=None, operation="presentation")
+    assert_pair(rows[-2:], run_id=None, operation="model_call")
     assert len(rows) == 12
     assert telemetry.calls["model", "success"] == 3 and telemetry.calls["model", "failed"] == 1
     assert telemetry.calls["workflow", "success"] == 2
@@ -158,11 +159,11 @@ def test_model_transport_timeout_has_specific_fixed_code(caplog):
         settings = SimpleNamespace(gemini_api_key=SecretStr("private-key"), model_timeout_seconds=1)
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             with pytest.raises(ProviderFailure) as caught:
-                await GeminiProvider(settings, client).generate("interpret", {}, Interpretation)
+                await GeminiProvider(settings, client).generate("plan", {}, PlanDraft)
             assert caught.value.code == "model_timeout" and caught.value.retryable
 
     asyncio.run(scenario())
-    assert_pair(events(caplog), run_id=None, operation="interpret", outcome="timeout", error_code="model_timeout")
+    assert_pair(events(caplog), run_id=None, operation="plan", outcome="timeout", error_code="model_timeout")
     assert "private" not in caplog.text
 
 
@@ -220,9 +221,9 @@ def test_workflow_cancellation_keeps_explicit_outcome(caplog, user_cancelled):
 def test_log_fields_are_allowlisted_and_invalid_ids_cannot_inject_content(caplog):
     telemetry = Telemetry()
     with operation_context(run_id="private-question", request_id="private-token"):
-        with telemetry.operation("model", "interpret") as operation:
+        with telemetry.operation("model", "plan") as operation:
             operation.set_outcome("failed", "private error detail")
-    assert_pair(events(caplog), run_id=None, operation="interpret", outcome="failed", error_code="model_failed")
+    assert_pair(events(caplog), run_id=None, operation="plan", outcome="failed", error_code="model_failed")
     assert "private" not in caplog.text
     caplog.clear()
     for attempt in (0, 9, True, "private"):

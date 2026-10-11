@@ -110,7 +110,7 @@ def delayed_database(dsn, delay):
 
 @pytest.mark.parametrize('database_delay,model_delays,budget', [
     pytest.param(.1, {}, 60, id='database-only'),
-    pytest.param(.125, {'interpret': 5.272, 'plan': 11.138, 'presentation': 17.930}, 90,
+    pytest.param(.125, {'plan': 11.138}, 90,
                  id='production-model-timings'),
     pytest.param(0, {'plan': 26}, 600, id='long-reasoning-budget'),
 ])
@@ -190,7 +190,7 @@ def test_answer_survives_database_latency_and_health_checks(setup, database_dela
                    'status': saved['status']})
             assert saved['status'] == 'completed', saved
             assert saved['answer']['claims'][0]['value'] == '100.00'
-            assert saved['model_calls'] == 3 and saved['tool_calls'] == 1
+            assert saved['model_calls'] == 1 and saved['tool_calls'] == 1
             assert elapsed < budget, 'Answer exceeded the end-to-end latency budget'
             streamed = live_events.result(timeout=20)
             assert 'event: answer' in streamed and 'event: terminal' in streamed
@@ -200,7 +200,7 @@ def test_answer_survives_database_latency_and_health_checks(setup, database_dela
             assert answers == [saved['answer']]
             stages = [json.loads(block.split('\ndata: ', 1)[1])['stage'] for block in blocks
                       if '\nevent: progress\n' in block]
-            assert stages == ['registered', 'authorizing', 'interpreting', 'retrieving_definitions',
+            assert stages == ['registered', 'authorizing', 'retrieving_definitions',
                               'planning', 'resolving_entities', 'querying', 'validating_evidence',
                               'selecting_presentation', 'grounding_answer']
             events = client.get(f'/v1/runs/{run_id}/events')

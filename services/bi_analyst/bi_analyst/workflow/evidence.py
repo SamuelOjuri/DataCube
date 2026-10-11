@@ -54,6 +54,30 @@ def validate_chart(intent: ChartIntent, result: MetricResult):
             raise EvidenceError("chart_has_unknown_values")
 
 
+def select_presentation(result: MetricResult) -> Presentation:
+    """Select evidence and a chart using the same closed rules used for validation."""
+    claims = candidates(result)
+    if not claims:
+        raise EvidenceError("no_evidence")
+    claim_ids = [claim.id for claim in claims[:12]]
+    p = result.provenance
+    axes = (["month"] if p.request.grain == "month" else []) + list(p.request.dimensions)
+    value_index = result.columns.index("value") if "value" in result.columns else None
+    unsuitable = (p.truncated or not result.rows or len(result.rows) > 100 or len(axes) != 1
+                  or value_index is None
+                  or any(row[value_index] is None for row in result.rows))
+    if not axes and p.total is not None and p.comparison is None:
+        chart = ChartIntent(kind="number")
+    elif unsuitable:
+        chart = ChartIntent(kind="table")
+    else:
+        x = axes[0]
+        chart = ChartIntent(kind="line" if x == "month" else "bar", x=x)
+    presentation = Presentation(claim_ids=claim_ids, chart=chart)
+    validate_chart(presentation.chart, result)
+    return presentation
+
+
 def ground(result: MetricResult, presentation: Presentation, scope_changes: dict, *, asks_for_cause=False):
     available = {claim.id: claim for claim in candidates(result)}
     if len(set(presentation.claim_ids)) != len(presentation.claim_ids) or not set(presentation.claim_ids) <= available.keys():

@@ -26,9 +26,9 @@ ROOT = Path(__file__).resolve().parents[4]
 
 class ScriptedProvider:
     def __init__(self, metric='order_parent_value', *, patch=None, clarify=False, delay=0,
-                 malicious=False, retry=False, unsupported=False):
+                 retry=False, unsupported=False):
         self.metric, self.patch, self.clarify = metric, patch or {}, clarify
-        self.delay, self.malicious, self.retry, self.unsupported = delay, malicious, retry, unsupported
+        self.delay, self.retry, self.unsupported = delay, retry, unsupported
         self.calls = []
 
     async def generate(self, stage, payload, schema):
@@ -39,16 +39,14 @@ class ScriptedProvider:
             self.retry = False
             raise ProviderFailure(retryable=True)
         metric = Compiler().metrics[self.metric]
-        if stage == 'interpret':
-            data = {'families':[] if self.unsupported else [metric.family],'supported':not self.unsupported,'asks_for_cause':True}
-        elif stage == 'plan':
-            if self.clarify and not payload['replies']:
-                data = {'action':'clarify','reason':'metric','candidate_metrics':[metric.id]}
-            else:
-                data = {'action':'plan','patch':self.patch if payload['previous_plan'] else
-                        {'metric_id':metric.id,'period':metric.periods[0],**self.patch}}
+        if self.unsupported:
+            data = {'action':'unsupported','reason':'unsupported'}
+        elif self.clarify and not payload['replies']:
+            data = {'action':'clarify','reason':'metric','candidate_metrics':[metric.id]}
         else:
-            data = {'claim_ids':['invented'] if self.malicious else ['total'], 'chart':{'kind':'table'}}
+            data = {'action':'plan','asks_for_cause':True,
+                    'patch':self.patch if payload['previous_plan'] else
+                    {'metric_id':metric.id,'period':metric.periods[0],**self.patch}}
         return schema.model_validate(data), {'promptTokenCount':11,'candidatesTokenCount':7}
 
 
@@ -124,13 +122,13 @@ def test_golden_graph_answers(setup,metric,expected):
         row = settle(client,run_id)
         assert row['status'] == 'completed',row
         assert row['answer']['claims'][0]['value'] == expected
-        assert row['model_calls'] == 3 and row['tool_calls'] == 1
+        assert row['model_calls'] == 1 and row['tool_calls'] == 1
         assert any('freshness is unknown' in text for text in row['answer']['notices'])
         events = client.get(f'/v1/runs/{run_id}/events')
         assert events.status_code == 200
         assert 'event: answer' in events.text and 'event: terminal' in events.text
         assert 'systemInstruction' not in events.text and 'previous_plan' not in events.text
-        assert admin.execute('SELECT count(*) AS n FROM analyst_state.checkpoints WHERE thread_id=%s',(run_id,)).fetchone()['n'] > 4
+        assert admin.execute('SELECT count(*) AS n FROM analyst_state.checkpoints WHERE thread_id=%s',(run_id,)).fetchone()['n'] >= 3
         # Stored datasets are never embedded in checkpoint channels.
         channels = admin.execute('SELECT DISTINCT channel FROM analyst_state.checkpoint_blobs WHERE thread_id=%s',(run_id,)).fetchall()
         assert not {'rows','dataset','answer'} & {r['channel'] for r in channels}
@@ -151,7 +149,7 @@ def test_clarification_survives_restart_and_resume_is_idempotent(setup):
         assert settle(client,run_id)['status'] == 'completed'
         assert client.post(f'/v1/runs/{run_id}/resume',json=reply).status_code == 200
         assert client.post(f'/v1/runs/{run_id}/resume',json={**reply,'answer':'Different'}).status_code == 409
-        assert [stage for stage,_ in provider.calls] == ['plan','presentation']
+        assert [stage for stage,_ in provider.calls] == ['plan']
 
 
 def test_followup_patch_preserves_filters_and_exposes_changes(setup):
@@ -238,15 +236,11 @@ def test_owner_permission_and_checkpoint_isolation(setup):
         assert client.get(f'/v1/runs/{run_id}/workflow').status_code == 403
 
 
-def test_invalid_evidence_retries_and_runtime_budget(setup):
+def test_retries_and_runtime_budget(setup):
     _,_,_,config,start = setup
-    with start(ScriptedProvider(malicious=True)) as client:
-        row = settle(client,submit(client))
-        assert row['status'] == 'failed' and row['error_code'] == 'invalid_evidence',row
-        assert row['answer'] is None
     with start(ScriptedProvider(retry=True)) as client:
         row = settle(client,submit(client))
-        assert row['status'] == 'completed' and row['model_calls'] == 4,row
+        assert row['status'] == 'completed' and row['model_calls'] == 2,row
     with start(ScriptedProvider(delay=2),config_override=config.model_copy(update={'workflow_timeout_seconds':.5})) as client:
         row = settle(client,submit(client))
         assert row['status'] in {'failed','interrupted'} and row['answer'] is None,row
@@ -289,14 +283,24 @@ def test_model_retry_budget_is_persisted_and_bounded(setup):
     with start(AlwaysTransient()) as client:
         row = settle(client,submit(client))
         assert row['status'] == 'failed' and row['model_calls'] == 2
-    provider = ScriptedProvider(clarify=True)
+    class AlwaysClarify(ScriptedProvider):
+        async def generate(self,stage,payload,schema):
+            self.calls.append((stage,payload))
+            metric = Compiler().metrics[self.metric]
+            return schema.model_validate({'action':'clarify','reason':'metric',
+                'candidate_metrics':[metric.id]}), {}
+    provider = AlwaysClarify()
     with start(provider,config_override=config.model_copy(update={'workflow_max_model_calls':3})) as client:
         run_id = submit(client)
+        for _ in range(3):
+            row = settle(client,run_id)
+            assert row['status'] == 'awaiting_clarification'
+            reply = {'clarification_id':row['clarification']['id'],
+                     'idempotency_key':str(uuid4()),'answer':'parent'}
+            assert client.post(f'/v1/runs/{run_id}/resume',json=reply).status_code == 200
         row = settle(client,run_id)
-        reply = {'clarification_id':row['clarification']['id'],'idempotency_key':str(uuid4()),'answer':'parent'}
-        assert client.post(f'/v1/runs/{run_id}/resume',json=reply).status_code == 200
-        row = settle(client,run_id)
-        assert row['status'] == 'failed' and row['error_code'] == 'run_budget_exceeded' and row['model_calls'] == 3
+        assert row['status'] == 'failed' and row['error_code'] == 'run_budget_exceeded'
+        assert row['model_calls'] == 3
 
 
 def test_null_results_and_limited_rows_preserve_evidence(setup):
@@ -380,16 +384,16 @@ def test_submission_and_background_logs_share_run_and_request_ids(setup,caplog,m
     assert any(row['event']=='http_request' and row['request_id']==saved_request_id
                and row['run_id']==run_id for row in rows)
     operations = [row for row in rows if row['event']=='analyst_operation' and row['stage']!='http']
-    assert len(operations)==12  # one workflow, one query, four model attempts
+    assert len(operations)==8  # one workflow, one query, two model attempts
     assert all(row['run_id']==run_id and row['request_id']==request_id for row in operations)
     pairs = {}
     for row in operations:
         pairs.setdefault(row['operation_id'],[]).append(row)
-    assert len(pairs)==6
+    assert len(pairs)==4
     assert all([row['phase'] for row in pair]==['start','end'] for pair in pairs.values())
     model_ends = [row for row in operations if row['stage']=='model' and row['phase']=='end']
     assert [(row['operation'],row['attempt'],row['outcome']) for row in model_ends]==[
-        ('interpret',1,'failed'),('interpret',2,'success'),('plan',1,'success'),('presentation',1,'success')]
+        ('plan',1,'failed'),('plan',2,'success')]
     assert model_ends[0]['error_code']=='model_unavailable'
     assert next(row for row in operations if row['stage']=='workflow' and row['phase']=='end')['outcome']=='success'
     for secret in ('private-log-test-question','private-path-value',str(owner),forged_request_id,'password='):

@@ -111,7 +111,6 @@ async def evaluate(provider, selected=None):
         actual, error, state = None,None,None
         try:
             state = GraphState(question=question,previous_plan=previous_plans.get(case_id))
-            state = GraphState(**{**state.model_dump(),**await workflow.interpret(state)})
             state = GraphState(**{**state.model_dump(),**await workflow.make_plan(state)})
             actual = state.plan
             correct = (actual is None and state.clarification is not None and case_id.startswith('ambiguous_')
@@ -126,7 +125,7 @@ async def evaluate(provider, selected=None):
             error = exc.code if isinstance(exc,ProviderFailure) else getattr(exc,'detail','evaluation_failed')
             correct = (case_id.startswith('unsupported_') or case_id == 'injection') and error == 'unsupported_question'
         results.append({'id':case_id,'passed':correct,'expected_metric':expected_metric,'expected_period':expected_period,
-            'actual_plan':actual,'interpretation':state.interpretation if state else None,
+            'actual_plan':actual,'asks_for_cause':state.asks_for_cause if state else False,
             'clarification':state.clarification if state else None,
             'error_code':error,'seconds':round(time.monotonic()-started,3),
             'model_calls':jobs.calls,'usage':jobs.tokens,'decisions':recorded.decisions})
