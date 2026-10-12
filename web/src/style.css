@@ -139,7 +139,8 @@ h4 {
 .workspace-layout {
   display:grid;
   grid-template-columns:252px minmax(0,1fr);
-  min-height:calc(100vh - 68px);
+  height:calc(100dvh - 68px);
+  min-height:0;
 }
 aside {
   background:var(--color-surface);
@@ -148,6 +149,11 @@ aside {
   display:flex;
   flex-direction:column;
   gap:24px;
+  min-height:0;
+  overflow:hidden;
+}
+aside> :not(nav) {
+  flex-shrink:0;
 }
 aside h2 {
   font-size:.8125rem;
@@ -158,6 +164,11 @@ nav {
   display:flex;
   flex-direction:column;
   gap:6px;
+  flex:1;
+  min-height:0;
+  overflow-y:auto;
+  scrollbar-gutter:stable;
+  overscroll-behavior-y:contain;
 }
 nav a {
   text-decoration:none;
@@ -165,6 +176,7 @@ nav a {
   border-radius:7px;
   font-size:.875rem;
   overflow-wrap:anywhere;
+  flex-shrink:0;
 }
 nav a:hover,nav a[aria-current] {
   background:var(--color-primary-soft);
@@ -199,6 +211,8 @@ nav a time {
   max-width:1180px;
   padding:30px clamp(24px,4vw,60px) 36px;
   margin:0 auto;
+  min-height:0;
+  overflow-y:auto;
 }
 .conversation-heading {
   max-width:720px;
@@ -1116,12 +1130,16 @@ button:focus:not(:focus-visible) {
   .workspace-layout {
     display:flex;
     flex-direction:column;
+    height:auto;
+    min-height:calc(100dvh - 68px);
   }
   aside {
     border-right:0;
     border-bottom:1px solid var(--color-border);
     padding:17px 20px;
     gap:12px;
+    flex-shrink:0;
+    overflow:visible;
   }
   .sidebar-top {
     display:flex;
@@ -1138,6 +1156,9 @@ button:focus:not(:focus-visible) {
     flex-direction:row;
     overflow:auto;
     max-height:110px;
+    flex:none;
+    scrollbar-gutter:auto;
+    overscroll-behavior-y:auto;
   }
   nav a {
     min-width:150px;
@@ -1146,6 +1167,7 @@ button:focus:not(:focus-visible) {
   }
   .conversation {
     padding:30px 18px;
+    overflow:visible;
   }
   .composer {
     padding:16px;

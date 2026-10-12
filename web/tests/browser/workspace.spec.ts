@@ -446,6 +446,72 @@ test('deep links survive reauthentication, expired sessions clear results, sign-
   await expect(page.getByRole('heading',{name:'Order Value (parent mirror)'})).toHaveCount(0);
 });
 
+test('long conversation history scrolls independently and stays reachable on smaller screens',async({page})=>{
+  await page.setViewportSize({width:1280,height:900});
+  await fixture(page,{existing:true});
+  const conversations=Array.from({length:40},(_,i)=>({
+    id:i===0 ? thread : `10000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,
+    title:`Saved analysis ${i+1}: what was the revenue for January 2026?`,created_at:'2026-10-08T12:00:00Z',
+  }));
+  await page.route('http://127.0.0.1:4174/v1/conversations?*',async route=>{
+    const url=new URL(route.request().url());
+    const offset=Number(url.searchParams.get('offset') || 0);
+    await route.fulfill({json:conversations.slice(offset,offset+30),headers:{'Access-Control-Allow-Origin':'http://127.0.0.1:4173'}});
+  });
+  await signIn(page,`/conversations/${thread}`);
+  const history=page.getByRole('complementary',{name:'Conversation history'});
+  const list=history.locator('nav');
+  const links=list.getByRole('link');
+  const newConversation=history.getByRole('button',{name:'+ New conversation',exact:true});
+  const older=history.getByRole('button',{name:'Older conversations',exact:true});
+  await expect(links).toHaveCount(30);
+  await expect(older).toBeInViewport();
+  await expect.poll(()=>list.evaluate(node=>node.scrollHeight>node.clientHeight)).toBe(true);
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollHeight<=window.innerHeight+1)).toBe(true);
+  const question=page.locator('.composer');
+  const questionTop=(await question.boundingBox())!.y;
+  await list.hover();
+  await page.mouse.wheel(0,800);
+  await expect.poll(()=>list.evaluate(node=>node.scrollTop)).toBeGreaterThan(0);
+  expect((await question.boundingBox())!.y).toBeCloseTo(questionTop,0);
+  await expect(newConversation).toBeInViewport();
+  await older.click();
+  await expect(links).toHaveCount(40);
+  await expect(older).toHaveCount(0);
+  await links.last().focus();
+  await expect(links.last()).toBeInViewport();
+  await expect(newConversation).toBeInViewport();
+  await expect(page.locator('.chart svg')).toHaveCount(1);
+  await page.getByRole('button',{name:'View 12 values',exact:true}).click();
+  const main=page.locator('.conversation');
+  await expect.poll(()=>main.evaluate(node=>node.scrollHeight>node.clientHeight)).toBe(true);
+  const historyScroll=await list.evaluate(node=>node.scrollTop);
+  const mainScroll=await main.evaluate(node=>node.scrollTop);
+  await main.hover();
+  await page.mouse.wheel(0,800);
+  await expect.poll(()=>main.evaluate(node=>node.scrollTop)).toBeGreaterThan(mainScroll);
+  expect(await list.evaluate(node=>node.scrollTop)).toBe(historyScroll);
+  await expect(newConversation).toBeInViewport();
+  await page.screenshot({path:'../outputs/analyst-scrollable-history-desktop.png'});
+  await page.setViewportSize({width:800,height:600});
+  await expect(newConversation).toBeInViewport();
+  await newConversation.focus();
+  await links.last().focus();
+  await expect(links.last()).toBeInViewport();
+  expect(await history.evaluate(node=>node.getBoundingClientRect().bottom<=window.innerHeight+1)).toBe(true);
+  await page.setViewportSize({width:390,height:844});
+  await page.evaluate(()=>window.scrollTo(0,0));
+  await expect(newConversation).toBeInViewport();
+  expect((await history.boundingBox())!.height).toBeLessThan(250);
+  await newConversation.focus();
+  await links.last().focus();
+  await expect(links.last()).toBeInViewport();
+  expect(await list.evaluate(node=>node.scrollLeft)).toBeGreaterThan(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  await page.screenshot({path:'../outputs/analyst-scrollable-history-mobile.png'});
+});
+
 test('mobile layout and keyboard navigation remain accessible',async({page})=>{
   await page.setViewportSize({width:390,height:844});await fixture(page,{existing:true});await signIn(page,`/conversations/${thread}`);
   await expect(page.locator('.chart svg')).toBeVisible();
