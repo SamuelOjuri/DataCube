@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {createAuth} from './auth.mjs';
 import type {Auth, Session} from './types';
 import Workspace from './Workspace';
+import SignIn from './SignIn';
 import '@fontsource/open-sans/latin-400.css';
 import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
@@ -24,14 +25,9 @@ function App() {
     try {await fn();} catch (error) {failure(error);} finally {setBusy(false);}
   };
   return <><a href="#workspace" className="skip-link">Skip to content</a>
-    <header className="app-header"><a href="/" className="brand">DataCube <span>Analyst</span></a><div className="header-right"><span>Tapered Plus</span>
+    <header className={`app-header${session ? '' : ' signin-header'}`}><a href="/" className="brand">DataCube <span>Analyst</span></a><div className="header-right"><span>TaperedPlus</span>
       {session && <button className="secondary" onClick={() => act(auth.logout)}>Sign out</button>}</div></header>
-    {session ? <Workspace key={session.subject} auth={auth} /> : <main id="workspace" className="signin"><section>
-      <p className="eyebrow">YOUR COMPANY. CLEARER.</p><h1>Your data,<br />in conversation.</h1>
-      <p>Explore enquiries, orders, revenue, conversion and gestation.<br />Every answer comes with its source and scope.</p>
-      <button disabled={busy} onClick={() => act(auth.login)}>{busy ? 'Please wait…' : 'Continue with Monday'}</button>
-      <p className="note">Access is available to approved team members.</p><p role="status">{message}</p>
-    </section></main>}
+    {session ? <Workspace key={session.subject} auth={auth} /> : <SignIn busy={busy} message={message} onLogin={() => act(auth.login)} />}
   </>;
 }
 try {createAuth({apiOrigin: import.meta.env.VITE_API_ORIGIN}); createRoot(document.getElementById('root')!).render(<App />);}
