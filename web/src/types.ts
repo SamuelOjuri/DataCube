@@ -21,6 +21,15 @@ export type MetricResult = {id: string; run_id: string; columns: string[]; rows:
   evaluation_only: boolean;
 }};
 export type ProjectPage = {columns: string[]; rows: Cell[][]; has_more: boolean; offset: number; queried_at: string; limitation: string};
+export type ExploratoryColumn = {name: string; label: string; role: 'dimension' | 'measure'; unit: string; type: string};
+export type ExploratoryResult = {id: string; run_id: string; columns: string[]; rows: Cell[][]; provenance: {
+  kind: 'exploratory'; title: string; sql: string; relations: string[]; columns: ExploratoryColumn[]; business_timezone: string;
+  catalogue_version: string; query_reference: string; freshness: {status: string; queried_at: string; limitation: string};
+  limitations: string[]; truncated: boolean; returned_rows: number; dataset_scope: string;
+}};
+export type SavedResult = MetricResult | ExploratoryResult;
+export const isExploratory = (result: SavedResult): result is ExploratoryResult =>
+  (result.provenance as {kind?: string}).kind === 'exploratory';
 export type MetricDefinition = {id: string; version: string; source: {priority: string[]};
   calculation: {aggregation: string; nulls: string; zeroes: string; negatives: string; empty: string}};
 export type Auth = {login: () => Promise<void>; logout: () => Promise<void>; finish: () => Promise<boolean>;

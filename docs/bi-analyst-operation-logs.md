@@ -36,7 +36,9 @@ calls in the same run remain distinguishable. For example:
 | `model` | `interpret` | Identify the question's metric family |
 | `model` | `plan` | Prepare a structured metric request or clarification |
 | `model` | `presentation` | Select evidence claims and presentation |
+| `model` | `explore` | Write exploratory SQL when the certified compiler cannot express the question |
 | `query` | `metric_query` | Execute the validated metric request |
+| `query` | `exploratory_query` | Execute validated exploratory SQL (feature flag) |
 
 `attempt` starts at 1 for each model invocation and increments on its existing
 bounded retry. Each retry has its own operation ID. A later invocation or resumed
@@ -47,7 +49,8 @@ Workflow, model and query end events retain the original `stage`, `outcome` and 
 They add a fixed `error_code`, or `null` on success. Examples include
 `model_authentication_failed`, `model_timeout`, `metric_query_timeout`,
 `run_timeout`, `permissions_changed`, `invalid_evidence`, `execution_cancelled`
-and `execution_interrupted`. Unrecognised exception codes become the fixed
+and `execution_interrupted`. Exploratory runs add `exploration_invalid_sql` and
+`exploration_query_failed` after their bounded repairs, and `exploration_disabled`. Unrecognised exception codes become the fixed
 stage fallback, such as `model_failed` or `workflow_failed`. Raw exception
 messages are never logged. Model transport timeouts are distinguished from other
 provider availability failures and are not retried, because an identical request

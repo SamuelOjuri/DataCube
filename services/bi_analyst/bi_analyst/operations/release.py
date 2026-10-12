@@ -13,7 +13,7 @@ import tomllib
 
 from .. import __version__
 from ..metrics.compiler import COMPILER_VERSION, Compiler
-from ..workflow.provider import GENERATION, MODEL, PROMPT_VERSION
+from ..workflow.provider import EXPLORE_PROMPT_VERSION, GENERATION, MODEL, PROMPT_VERSION
 
 CHECKS = ('metric_parity','permissions','presentation','recovery','hosted_auth',
           'hosted_streaming','frontend_secrets','preview_isolation','rollback',
@@ -44,6 +44,7 @@ def fingerprint(root):
     return {'api_version':__version__,'contract_version':'v1','schema_version':7,
         'catalogue_version':compiler.catalogue.version,'catalogue_sha256':compiler.catalogue_hash,
         'compiler_version':COMPILER_VERSION,'model':MODEL,'prompt':PROMPT_VERSION,'generation':GENERATION,
+        'exploration_prompt':EXPLORE_PROMPT_VERSION,
         'files':files,'sha256':sha256(json.dumps(files,sort_keys=True).encode()).hexdigest()}
 
 

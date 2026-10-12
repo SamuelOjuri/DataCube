@@ -2,6 +2,7 @@
 import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from langgraph.graph import END, START, StateGraph
@@ -9,6 +10,10 @@ from langgraph.types import interrupt
 from pydantic import Field, ValidationError
 
 from ..contracts import Contract
+from ..exploration.contracts import ExplorationDraft
+from ..exploration.evidence import ground_exploration
+from ..exploration.policy import UnsafeQuery
+from ..exploration.service import ExplorationQueryError
 from ..metrics.compiler import InvalidMetricRequest
 from ..metrics.contracts import EntityRequest, MetricRequest, MetricResult
 from ..operations.telemetry import operation_context
@@ -16,11 +21,15 @@ from .contracts import Clarification, PlanDraft, Presentation, ResultReference
 from .evidence import ground, select_presentation
 from .provider import ProviderFailure
 
+# One generated query plus at most two repairs, each within the run's model and tool budgets.
+EXPLORATION_ATTEMPTS = 3
+
 
 class GraphState(Contract):
     question: str
     previous_plan: dict | None = None
     plan: dict | None = None
+    explore: bool = False
     asks_for_cause: bool = False
     replies: list[str] = Field(default_factory=list)
     clarification: dict | None = None
@@ -38,12 +47,13 @@ class ConversationGraph:
         self.service, self.actor, self.run_id, self.token = service, actor, run_id, token
         self.jobs, self.metrics = service.jobs, service.metrics
         builder = StateGraph(GraphState)
-        for name in ('make_plan','clarify','execute_plan'):
+        for name in ('make_plan','clarify','execute_plan','explore'):
             builder.add_node(name, getattr(self,name))
         builder.add_edge(START,'make_plan')
-        builder.add_conditional_edges('make_plan', lambda s: 'clarify' if s.clarification else 'execute_plan')
+        builder.add_conditional_edges('make_plan', lambda s: 'explore' if s.explore else 'clarify' if s.clarification else 'execute_plan')
         builder.add_conditional_edges('clarify', lambda s: 'execute_plan' if s.plan and not s.clarification else 'make_plan')
         builder.add_conditional_edges('execute_plan', lambda s: 'clarify' if s.clarification else END)
+        builder.add_edge('explore', END)
         self.graph = builder.compile(checkpointer=checkpointer)
 
     async def stage(self, name):
@@ -78,6 +88,9 @@ class ConversationGraph:
 
     async def make_plan(self, state):
         await self.stage('authorizing')
+        if (state.previous_plan or {}).get('exploration'):
+            # Follow-ups to exploratory answers stay exploratory; the certified planner cannot inherit SQL.
+            return {'explore':True,'plan':None,'clarification':None}
         permitted = self.permitted()
         if not permitted:
             raise HTTPException(503,'metric_not_certified')
@@ -90,6 +103,8 @@ class ConversationGraph:
             'previous_plan':state.previous_plan,'catalogue':entries,
             'instructions':'Understand the question and return one plan patch. Null inherits; [] clears lists. Select an explicit period for a new plan. Unsupported time windows require unsupported, never a substitute period. Set asks_for_cause when the user requests an explanation of causes.'},PlanDraft)
         if draft.action == 'unsupported':
+            if self.service.settings.exploratory_enabled:
+                return {'explore':True,'plan':None,'clarification':None,'asks_for_cause':draft.asks_for_cause}
             raise HTTPException(422,'unsupported_question')
         if draft.action == 'clarify':
             ids = draft.candidate_metrics or list(permitted)
@@ -220,5 +235,45 @@ class ConversationGraph:
         if state.previous_plan:
             answer.notices.append('This follow-up was queried again using current permissions, source data and reporting boundaries.')
         await self.jobs.finish(self.actor,self.run_id,self.token,'completed',plan=state.plan,
+                               answer=answer.model_dump(mode='json'))
+        return {}
+
+    async def explore(self, state):
+        # Generation, validation, execution and the answer form one fenced step without interrupts.
+        exploration = self.service.exploration
+        exploration.require_access()
+        await self.stage('exploring')
+        previous = state.previous_plan or {}
+        today = datetime.now(ZoneInfo(self.service.settings.business_timezone)).date()
+        payload = {'question':state.question,'replies':state.replies,
+                   'previous':previous.get('exploration') or ({'certified_plan':previous} if previous else None),
+                   'context':exploration.context(today),'feedback':[]}
+        failure = None
+        for _ in range(EXPLORATION_ATTEMPTS):
+            draft = await self.model('explore',payload,ExplorationDraft)
+            if draft.action == 'decline':
+                raise HTTPException(422,'unsupported_question')
+            try:
+                validated = exploration.validate(draft)
+                await self.stage('querying')
+                await self.jobs.budget(self.actor,self.run_id,self.token,'tool')
+                result = await exploration.execute(self.actor,self.run_id,draft,validated)
+                break
+            except UnsafeQuery as error:
+                failure = 'exploration_invalid_sql'
+                payload['feedback'].append({'sql':draft.sql,'error':str(error)})
+            except ExplorationQueryError as error:
+                failure = 'exploration_query_failed'
+                payload['feedback'].append({'sql':draft.sql,'error':error.feedback})
+        else:
+            raise HTTPException(422,failure)
+        await self.jobs.save_result(self.actor,self.run_id,self.token,result)
+        await self.stage('grounding_answer')
+        answer = ground_exploration(result,asks_for_cause=state.asks_for_cause or draft.asks_for_cause)
+        if previous:
+            answer.notices.append('This follow-up was queried again using current permissions and source data.')
+        plan = {'exploration':{'question':state.question[:2000],'title':result.provenance.title,
+                               'sql':result.provenance.sql}}
+        await self.jobs.finish(self.actor,self.run_id,self.token,'completed',plan=plan,
                                answer=answer.model_dump(mode='json'))
         return {}

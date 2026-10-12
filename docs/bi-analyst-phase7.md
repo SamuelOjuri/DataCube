@@ -298,6 +298,13 @@ Keep `BI_ANALYST_PILOT_ONLY=true`, the approved subject list and all existing
 rate, concurrency, SQL/GraphQL execution, row and byte limits. Leave
 `BI_ANALYST_METRIC_EVALUATION_ENABLED=false`.
 
+Exploratory SQL (Phase 8) is off by default. It needs no migration or frontend
+setting; the existing reader role and build command (which installs the pinned
+SQLGlot from `requirements.lock`) are sufficient. To pilot it, set
+`BI_ANALYST_EXPLORATORY_ENABLED=true` (optionally `BI_ANALYST_EXPLORATORY_MAX_ROWS`,
+default 200) on the Render service with the workflow enabled, redeploy the backend and
+the frontend, which renders exploratory results. Set it back to `false` to roll back.
+
 For the owner-approved 10 October reasoning allowance, apply
 `src/database/migrations/20261010_009_analyst_reasoning_budget.sql` once after 007
 and 008 in a reviewed administrator transaction, then deploy the backend. The

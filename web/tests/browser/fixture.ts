@@ -12,13 +12,23 @@ export const result = {id:resultId,run_id:runId,columns:['category','value','sou
     freshness:{status:'unknown',queried_at:'2026-10-08T12:00:00Z',limitation:'Successful ingestion and refresh evidence is unavailable.'},
     coverage:{incomplete_order_inputs:1},coverage_scope:'gateway_population_unfiltered',limitations:['One source value is unknown.'],
     truncated:false,returned_rows:12,matched_groups:12,dataset_scope:'complete',evaluation_only:true}};
+export const exploratoryResult = {id:resultId,run_id:runId,columns:['account','revenue'],
+  rows:[['=Untrusted account','1200.00'],['Account B','300.50'],[null,'10.00']],
+  provenance:{kind:'exploratory',title:'Invoiced revenue by account, 1 January 2026 to 31 January 2026',
+    sql:"SELECT account, SUM(amount_invoiced) AS revenue FROM analyst_query.invoice_reporting_facts_v1 GROUP BY account",
+    relations:['invoice_reporting_facts_v1','projects_v1'],business_timezone:'Europe/London',catalogue_version:'1.1.0',
+    query_reference:'exploratory-reference',columns:[{name:'account',label:'Account',role:'dimension',unit:'none',type:'text'},
+      {name:'revenue',label:'Revenue',role:'measure',unit:'source_currency',type:'decimal'}],
+    freshness:{status:'unknown',queried_at:'2026-10-12T09:00:00Z',limitation:'Successful ingestion and refresh evidence is unavailable.'},
+    limitations:['Exploratory analysis: generated SQL over governed views, not a certified metric.'],
+    truncated:false,returned_rows:3,dataset_scope:'complete'}};
 
-export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false,
+export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false,
   beforeConversationReply=async()=>{}, beforeMessageReply=async()=>{}, beforeResumeReply=async()=>{}}={}) {
-  const state = {result:structuredClone(result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false};
+  const state = {result:structuredClone(exploratory ? exploratoryResult as any : result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false, drilldowns:0};
   const messageRuns = new Map<string,string>();
-  const answer = (id: string) => ({text:'Order Value is GBP 10,350.00. This is a complete filtered total.',
-    result:{result_id:resultId},chart:limited?{kind:'table',x:null,y:'value'}:{kind:'bar',x:'category',y:'value'},notices:['Measured contributions do not establish cause.'],
+  const answer = (id: string) => ({text:exploratory ? 'Invoiced revenue by account.\nAccount B — Revenue: GBP 300.50.' : 'Order Value is GBP 10,350.00. This is a complete filtered total.',
+    result:{result_id:resultId},chart:limited||exploratory?{kind:'table',x:null,y:'value'}:{kind:'bar',x:'category',y:'value'},notices:['Measured contributions do not establish cause.'],
     scope_changes:id !== runId && state.submissions.at(-1)?.follow_up_to ? {filters:{before:[],after:['category: A']}} : {}});
   function create(question: string) {
     const id = state.runs.length ? `30000000-0000-4000-8000-${String(state.runs.length+1).padStart(12,'0')}` : runId;
@@ -69,7 +79,7 @@ export async function fixture(page: Page, {clarify=false, hold=false, existing=f
     if(path===`/v1/results/${resultId}`){const saved=state.result;await reply(limited ? {...saved,provenance:{...saved.provenance,truncated:true,dataset_scope:'limited',matched_groups:15}} : comparison ? {...saved,provenance:{...saved.provenance,
       comparison_period:{start_date:'2026-08-01',end_date_exclusive:'2026-09-01'},
       comparison:{baseline:{value:'0.00'},absolute_change:'10350.00',percentage_change:null,percentage_point_change:null,zero_denominator:true}}} : saved);return;}
-    if(path.endsWith('/projects')){await reply({columns:['project_id','source_value'],rows:[['project-1','1000.00']],has_more:false,offset:0,queried_at:'2026-10-08T12:01:00Z',limitation:'Live project evidence for the saved plan; not a historical snapshot.'});return;}
+    if(path.endsWith('/projects')){state.drilldowns++;await reply({columns:['project_id','source_value'],rows:[['project-1','1000.00']],has_more:false,offset:0,queried_at:'2026-10-08T12:01:00Z',limitation:'Live project evidence for the saved plan; not a historical snapshot.'});return;}
     if(path.endsWith('/export')){state.exports++;await route.fulfill({headers:{...headers,'Content-Type':'text/csv','X-Export-Scope':'stored-result-rows'},body:"category,value\n'=Untrusted CRM text,1000.00\n"});return;}
     if(path.endsWith('/feedback')){state.feedback.push(request.postDataJSON());await reply({rating:'helpful'});return;}
     await reply({detail:'not_found'},404);

@@ -106,7 +106,7 @@ async def evaluate(provider, selected=None):
         jobs = EvaluationJobs()
         recorded = RecordedProvider(provider)
         service = SimpleNamespace(jobs=jobs,metrics=SimpleNamespace(compiler=compiler,require_access=compiler.metric),
-                                  provider=recorded,settings=SimpleNamespace(metric_max_rows=1000))
+                                  provider=recorded,settings=SimpleNamespace(metric_max_rows=1000,exploratory_enabled=False))
         workflow = ConversationGraph(service,None,uuid4(),uuid4(),None)
         started = time.monotonic()
         actual, error, state = None,None,None

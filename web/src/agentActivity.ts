@@ -6,6 +6,7 @@ const stages: Record<string, AgentActivity> = {
   interpreting: {phase: 'thinking', message: 'Understanding your question'},
   retrieving_definitions: {phase: 'retrieving', message: 'Checking definitions'},
   planning: {phase: 'planning', message: 'Preparing the query'},
+  exploring: {phase: 'planning', message: 'Writing a query for your question'},
   resolving_entities: {phase: 'verifying', message: 'Checking filters'},
   querying: {phase: 'running', message: 'Reading your data'},
   validating_evidence: {phase: 'verifying', message: 'Checking the evidence'},

@@ -24,8 +24,8 @@ STAGES = {"http", "query", "model", "workflow"}
 OUTCOMES = {"success", "failed", "timeout", "cancelled", "interrupted", "clarification", "rejected"}
 OPERATIONS = {
     "http": {"http_request"},
-    "query": {"metric_query"},
-    "model": {"model_call", "interpret", "plan", "presentation"},
+    "query": {"metric_query", "exploratory_query"},
+    "model": {"model_call", "interpret", "plan", "presentation", "explore"},
     "workflow": {"run_workflow"},
 }
 DEFAULT_OPERATIONS = {"http": "http_request", "query": "metric_query",
@@ -42,6 +42,7 @@ ERROR_CODES = {
     "run_timeout", "metric_query_timeout", "execution_cancelled", "execution_interrupted",
     "storage_unavailable", "pool_timeout", "pool_capacity_reached", "request_timeout",
     "http_failed", "query_failed", "model_failed", "workflow_failed",
+    "exploration_disabled", "exploration_invalid_sql", "exploration_query_failed",
 }
 log = logging.getLogger("bi_analyst.operations")
 

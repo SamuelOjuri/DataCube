@@ -54,3 +54,5 @@ uuid-utils==0.17.1
 websockets==15.0.1
 xxhash==4.0.1
 zstandard==0.25.0
+# Phase 8 exploratory SQL validation (pure Python; no optional Rust tokenizer).
+sqlglot==30.22.0

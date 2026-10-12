@@ -61,6 +61,8 @@ class Settings(BaseModel):
     workflow_timeout_seconds: float = Field(default=DEFAULT_WORKFLOW_TIMEOUT_SECONDS, ge=1, le=600)
     workflow_max_model_calls: int = Field(default=8, ge=3, le=12)
     model_timeout_seconds: float = Field(default=DEFAULT_MODEL_TIMEOUT_SECONDS, ge=1, le=90)
+    exploratory_enabled: bool = False
+    exploratory_max_rows: int = Field(default=200, ge=1, le=1000)
 
     @model_validator(mode="after")
     def validate_boundary(self):
@@ -75,6 +77,8 @@ class Settings(BaseModel):
             raise ValueError("Unknown disabled metric")
         if self.workflow_enabled and (not self.gemini_api_key or not self.gemini_api_key.get_secret_value().strip()):
             raise ValueError("Workflow requires an independent Gemini API key")
+        if self.exploratory_enabled and not self.workflow_enabled:
+            raise ValueError("Exploratory analysis requires the conversation workflow")
         if (self.read_pool_size + self.state_pool_size) * self.replica_count * self.deployment_overlap > self.connection_budget:
             raise ValueError("Analyst pools across replicas exceed the reserved connection budget")
         targets = []

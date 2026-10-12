@@ -10,18 +10,22 @@ from langsmith import tracing_context
 from .checkpoints import ScopedPostgresSaver
 from .evidence import EvidenceError
 from .graph import ConversationGraph
-from .provider import GENERATION, MODEL, PROMPT_VERSION, ProviderFailure
+from .provider import EXPLORE_PROMPT_VERSION, GENERATION, MODEL, PROMPT_VERSION, ProviderFailure
 from .store import WorkflowStore
+from ..exploration.policy import POLICY_VERSION
+from ..exploration.service import ExplorationService
 
 
 class WorkflowService:
     def __init__(self, store, metrics, provider):
         self.store, self.metrics, self.provider = store, metrics, provider
+        self.exploration = ExplorationService(metrics)
         self.settings, self.jobs = store.db.settings, WorkflowStore(store)
         self.tasks = {}
         self.cancellations = set()
         self.admission = asyncio.Lock()
-        self.versions = {'graph':'2.0.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
+        self.versions = {'graph':'2.1.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
+                         'exploration':{'prompt':EXPLORE_PROMPT_VERSION,'policy':POLICY_VERSION},
                          'catalogue':metrics.compiler.catalogue.version,'catalogue_sha256':metrics.compiler.catalogue_hash,
                          'langgraph':version('langgraph'),'checkpointer':version('langgraph-checkpoint-postgres')}
 
@@ -119,7 +123,8 @@ class WorkflowService:
             # Only fixed internal codes; never serialize arbitrary exception details.
             code = error.detail if type(error.detail) is str and error.detail in {'unsupported_question','model_invalid_plan','clarification_limit',
                 'run_budget_exceeded','permissions_changed','access_denied','metric_not_certified','result_expired',
-                'result_evidence_changed','workflow_version_changed'} else 'run_unavailable'
+                'result_evidence_changed','workflow_version_changed','exploration_disabled','exploration_invalid_sql',
+                'exploration_query_failed'} else 'run_unavailable'
             error_code = code
             await self._fail(actor,run_id,token,'failed',code)
         except Exception:

@@ -82,3 +82,5 @@ services:
         value: 8
       - key: BI_ANALYST_MODEL_TIMEOUT_SECONDS
         value: 90
+      - key: BI_ANALYST_EXPLORATORY_ENABLED
+        value: "false"

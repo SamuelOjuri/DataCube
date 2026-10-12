@@ -87,6 +87,8 @@ def project_statement(compiler, provenance: MetricProvenance, limit: int, offset
 
 async def projects(metrics, actor, result_id: UUID, limit: int, offset: int, http_request):
     result = await metrics.store.result(actor, result_id)
+    if result['provenance'].get('kind') == 'exploratory':
+        raise HTTPException(409, 'drilldown_unavailable')
     p = MetricProvenance.model_validate(result['provenance'])
     metrics.require_access(p.metric_id, p.metric_version, p.source_population)
     statement, params, columns = project_statement(metrics.compiler, p, limit, offset)

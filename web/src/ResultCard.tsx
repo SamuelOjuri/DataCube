@@ -1,12 +1,14 @@
 import {useEffect, useState} from 'react';
-import type {Auth, MetricDefinition, MetricResult, ProjectPage, Workflow} from './types';
+import type {Auth, MetricDefinition, ProjectPage, SavedResult, Workflow} from './types';
+import {isExploratory} from './types';
 import {errorMessage, json, post} from './api';
 import {chartSpec, formatCell, unitLabel} from './presentation.mjs';
 import Chart from './Chart';
 import DataTable from './DataTable';
+import ExploratoryCard from './ExploratoryCard';
 
 export default function ResultCard({auth, answer}: {auth: Auth; answer: NonNullable<Workflow['answer']>}) {
-  const [result, setResult] = useState<MetricResult | null>(null);
+  const [saved, setResult] = useState<SavedResult | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -18,10 +20,11 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: NonNulla
   const [showCounts, setShowCounts] = useState(false);
   const [controller] = useState(() => new AbortController());
   useEffect(() => {
-    json<MetricResult>(auth, `/v1/results/${answer.result.result_id}`, {signal: controller.signal})
+    json<SavedResult>(auth, `/v1/results/${answer.result.result_id}`, {signal: controller.signal})
       .then(value => {if (!controller.signal.aborted) setResult(value);}).catch(e => {if (!controller.signal.aborted) setError(errorMessage(e));});
     return () => controller.abort();
   }, [auth, answer.result.result_id, controller]);
+  const result = saved && !isExploratory(saved) ? saved : null;
   const act = async (action: () => Promise<void>) => {
     setError(''); setBusy(true);
     try {await action();} catch (e) {if (!controller.signal.aborted) setError(errorMessage(e));} finally {setBusy(false);}
@@ -50,6 +53,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: NonNulla
       else {setDefinition(metric); setDefinitionNotice('');}
     } catch (e) {if (!controller.signal.aborted) setDefinitionNotice(errorMessage(e));}
   };
+  if (saved && isExploratory(saved)) return <ExploratoryCard auth={auth} answer={answer} result={saved} signal={controller.signal} />;
   if (!result) return <div role="status">{error || 'Loading saved result…'}</div>;
   const p = result.provenance;
   const period = p.resolved_period ? `${p.resolved_period.start_date} to ${p.resolved_period.end_date_exclusive || 'onward'}${p.resolved_period.end_date_exclusive ? ' (end exclusive)' : ''}` : 'All stored history';

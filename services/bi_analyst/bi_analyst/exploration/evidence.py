@@ -1,0 +1,67 @@
+"""Deterministic answer text for exploratory results; numbers come only from result cells."""
+from decimal import Decimal
+
+from ..workflow.contracts import ChartIntent, EvidenceClaim, GroundedAnswer, ResultReference
+from ..workflow.evidence import EvidenceError
+from .contracts import ExploratoryResult
+
+MAX_ROWS_IN_TEXT = 8
+MAX_CLAIMS = 24
+
+
+def number(value, kind):
+    if value is None or kind not in {"integer", "decimal"}:
+        return None
+    result = Decimal(str(value))
+    if not result.is_finite():
+        raise EvidenceError("nonfinite_value")
+    return result
+
+
+def formatted(value, unit, kind):
+    amount = number(value, kind)
+    if amount is None:
+        return "unknown" if value is None else str(value)
+    return {"source_currency": f"GBP {amount:f}", "ratio": f"{amount * 100:f}%", "percent": f"{amount:f}%",
+            "days": f"{amount:f} days"}.get(unit, f"{amount:f}")
+
+
+def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> GroundedAnswer:
+    p = result.provenance
+    dimensions = [i for i, c in enumerate(p.columns) if c.role == "dimension"]
+    measures = [i for i, c in enumerate(p.columns) if c.role == "measure"] or [
+        i for i in range(len(p.columns)) if i not in dimensions]
+    single = len(result.rows) == 1 and not dimensions
+    lines, claims = [], []
+    for i, row in enumerate(result.rows[:MAX_ROWS_IN_TEXT]):
+        prefix = " / ".join("Unclassified" if row[j] is None else str(row[j]) for j in dimensions)
+        for j in measures:
+            column = p.columns[j]
+            label = f"{prefix} — {column.label}" if prefix else column.label
+            lines.append(f"{label}: {formatted(row[j], column.unit, column.type)}.")
+            value = number(row[j], column.type)
+            if value is not None and len(claims) < MAX_CLAIMS:
+                claims.append(EvidenceClaim(id=f"row_{i}_{column.name}", result_id=result.id, location=f"rows.{i}.{j}",
+                                            metric_id="exploratory", unit=column.unit, period=p.title, value=value,
+                                            label=label, kind="total" if single else "contributor"))
+    if not result.rows:
+        lines.append("No matching records were found.")
+    elif len(result.rows) > MAX_ROWS_IN_TEXT:
+        lines.append(f"{len(result.rows) - MAX_ROWS_IN_TEXT} further rows are shown in the table.")
+    notices = list(p.limitations)
+    notices.append("Source freshness is unknown; query time does not establish ingestion or refresh time.")
+    if not result.rows:
+        notices.append("No matching source records were found.")
+    if p.truncated:
+        notices.append(f"Only the first {p.returned_rows} rows were kept; the query returned more.")
+    if any(c.unit == "source_currency" for c in p.columns):
+        notices.append("Currency: GBP. Amounts are as stored; VAT inclusion is unspecified.")
+    if asks_for_cause:
+        notices.append("These are measured values and differences; they do not establish causes.")
+    numeric = single and len(measures) == 1 and p.columns[measures[0]].type in {"integer", "decimal"}
+    return GroundedAnswer(
+        result=ResultReference(result_id=result.id, query_reference=p.query_reference,
+                               catalogue_sha256=p.catalogue_sha256),
+        claims=claims, text="\n".join([p.title + ".", *lines]),
+        chart=ChartIntent(kind="number" if numeric else "table"),
+        notices=list(dict.fromkeys(notices)), scope_changes={})

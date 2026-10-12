@@ -453,6 +453,30 @@ test('limited results explicitly label table and export scope',async({page})=>{
   await expect(page.locator('.chart svg')).toHaveCount(0);
 });
 
+test('exploratory answers are labelled uncertified and show their table, SQL and export without drill-down',async({page})=>{
+  const state=await fixture(page,{existing:true,exploratory:true});
+  const errors:string[]=[]; page.on('pageerror',e=>errors.push(e.message));
+  await signIn(page,`/conversations/${thread}`);
+  const card=page.getByRole('region',{name:'Invoiced revenue by account, 1 January 2026 to 31 January 2026'});
+  await expect(card.getByRole('heading',{name:'Invoiced revenue by account, 1 January 2026 to 31 January 2026'})).toBeVisible();
+  await expect(card.getByText('Exploratory analysis · not a certified metric',{exact:true})).toBeVisible();
+  await expect(card.getByText('Generated query over analyst_query.invoice_reporting_facts_v1, analyst_query.projects_v1 · Europe/London')).toBeVisible();
+  const table=card.getByRole('table',{name:'Invoiced revenue by account, 1 January 2026 to 31 January 2026 — values'});
+  await expect(table).toContainText('=Untrusted account');
+  await expect(table).toContainText('£1,200.00');
+  await expect(table.getByRole('button',{name:'revenue (GBP)'})).toBeVisible();
+  await expect(card.getByRole('button',{name:'Explore contributing projects'})).toHaveCount(0);
+  await card.getByText('How this answer was produced',{exact:true}).click();
+  await expect(card.locator('pre.sql')).toHaveText(state.result.provenance.sql);
+  await expect(card.getByText('Exploratory analysis: generated SQL over governed views, not a certified metric.',{exact:true})).toBeVisible();
+  const download=page.waitForEvent('download');await card.getByRole('button',{name:'Download CSV (3 rows)'}).click();
+  expect((await download).suggestedFilename()).toMatch(/datacube-.*\.csv/);
+  expect(state.exports).toBe(1);
+  expect(state.drilldowns).toBe(0);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('retries stay with their question while the completed answer leads the default view',async({page})=>{
   const state=await fixture(page,{existing:true});
   for(let i=0;i<3;i++) {
