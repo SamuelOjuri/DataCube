@@ -5,7 +5,7 @@ import ResultCard from './ResultCard';
 import ExplanationCard from './ExplanationCard';
 import {isExplanation} from './types';
 import {historyTime, questionTurns, runOutcome} from './conversation';
-import AgentStatus from './AgentStatus';
+import AgentStatus, {Elapsed} from './AgentStatus';
 import type {AgentActivity} from './agentActivity';
 import {readDraft, saveDraft} from './drafts.mjs';
 
@@ -30,7 +30,9 @@ export default function Workspace({auth, subject}: {auth: Auth; subject: string}
   const [followUp, setFollowUp] = useState(true);
   const [pending, setPending] = useState<Pending | null>(recovered.pending);
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [finished, setFinished] = useState(false);
   const mounted = useRef(true), loading = useRef(false);
+  const lastWatched = useRef<string | null>(null);
   const acknowledgedConversation = useRef<string | null>(null);
   const lifetime = useRef(new AbortController());
   const draft = useRef({question, reply, pending});
@@ -86,11 +88,19 @@ export default function Workspace({auth, subject}: {auth: Auth; subject: string}
   const watching = current && activeRun(current.status) ? current.run_id : null;
   useEffect(() => {
     if (!watching) {setProgress(null); return;}
-    const controller = new AbortController(); setProgress({phase: 'connecting', message: 'Connecting to your run…'});
-    watchRun(auth, watching, controller.signal, activity => {if (!controller.signal.aborted) setProgress(activity);}, state => {if (!controller.signal.aborted) update(state);})
-      .catch(e => {if (!controller.signal.aborted) {fail(e); setProgress({phase: 'waiting', message: 'Connection paused. Reconnect to retrieve the saved outcome.'});}});
+    const controller = new AbortController(); setProgress(prev => ({phase: 'connecting', message: 'Connecting to your run…', fraction: prev?.fraction}));
+    // Stages can repeat (exploration, clarification), so the bar only moves forward.
+    watchRun(auth, watching, controller.signal, activity => {if (!controller.signal.aborted) setProgress(prev => ({...activity, fraction: Math.max(prev?.fraction ?? 0, activity.fraction ?? 0)}));}, state => {if (!controller.signal.aborted) update(state);})
+      .catch(e => {if (!controller.signal.aborted) {fail(e); setProgress(prev => ({phase: 'waiting', message: 'Connection paused. Reconnect to retrieve the saved outcome.', fraction: prev?.fraction}));}});
     return () => controller.abort();
   }, [auth, watching, reconnect]);
+  useEffect(() => {
+    const previous = lastWatched.current; lastWatched.current = watching;
+    if (watching || !previous || workflows[previous]?.status !== 'completed') return;
+    setFinished(true);
+    const timer = setTimeout(() => setFinished(false), 900);
+    return () => {clearTimeout(timer); setFinished(false);};
+  }, [watching, conversationId]);
   // Explanations carry no dataset, so only result answers can anchor a follow-up.
   const latestAnswer = runs.find(r => workflows[r.id]?.status === 'completed' && workflows[r.id]?.answer && !isExplanation(workflows[r.id].answer));
   const compose = (text: string) => {editQuestion(text); document.getElementById('question')?.focus();};
@@ -175,7 +185,7 @@ export default function Workspace({auth, subject}: {auth: Auth; subject: string}
         return <article className="message" key={run.id}><div className="question"><span className="eyebrow">YOU ASKED</span><h2>{run.question}</h2></div>
           {state?.answer ? isExplanation(state.answer)
             ? <ExplanationCard answer={state.answer} onSuggest={compose} />
-            : <ResultCard auth={auth} answer={state.answer} /> : !state || !['failed', 'cancelled', 'interrupted'].includes(state.status) ? <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p> : null}
+            : <ResultCard auth={auth} answer={state.answer} /> : current?.run_id === run.id ? null : !state || !['failed', 'cancelled', 'interrupted'].includes(state.status) ? <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p> : null}
           {state && ['failed', 'cancelled', 'interrupted'].includes(state.status) && <div className="notice"><AgentStatus announce={false} {...runOutcome(state)} />
             <div className="actions"><button className="secondary" disabled={busy || !!current || !!pending} onClick={() => send(run)}>Retry question</button>
               <button className="secondary" disabled={!!current || !!pending} onClick={() => compose(run.question)}>Edit question</button></div></div>}
@@ -185,17 +195,21 @@ export default function Workspace({auth, subject}: {auth: Auth; subject: string}
           </details>}
         </article>;
       })}</div>
-      {current && <section className="run-control" aria-label="Current run"><AgentStatus {...(watching
+      {current && <section className="run-control" aria-label="Current run"><div className="run-control-head"><AgentStatus {...(watching
         ? progress ?? {phase: 'connecting', message: 'Connecting to your run…'}
         : {phase: 'waiting', message: 'A clarification is needed.'})} />
-        <div className="actions"><button className="secondary" disabled={busy} onClick={() => act(async () => {
-          await json(auth, `/v1/runs/${current.run_id}/cancel`, {...post({}), signal: lifetime.current.signal});
-          update(await json<Workflow>(auth, `/v1/runs/${current.run_id}/workflow`, {signal: lifetime.current.signal}));
-        })}>Cancel run</button>{watching && <button className="text-button" onClick={() => {setError(''); setReconnect(n => n + 1);}}>Reconnect</button>}</div>
+        <div className="run-control-actions">{watching && <Elapsed since={runs.find(r => r.id === watching)?.created_at ?? ''} />}
+          {watching && progress?.phase === 'waiting' && <button className="text-button" onClick={() => {setError(''); setReconnect(n => n + 1);}}>Reconnect</button>}
+          <button className="text-button" disabled={busy} onClick={() => act(async () => {
+            await json(auth, `/v1/runs/${current.run_id}/cancel`, {...post({}), signal: lifetime.current.signal});
+            update(await json<Workflow>(auth, `/v1/runs/${current.run_id}/workflow`, {signal: lifetime.current.signal}));
+          })}>Cancel run</button></div></div>
         {current.clarification && <form onSubmit={e => {e.preventDefault(); resume();}}><label htmlFor="reply">{current.clarification.question}</label>
           <div className="options">{current.clarification.options.map(option => <button key={option} type="button" className="secondary" onClick={() => editReply(option)}>{option}</button>)}</div>
           <textarea id="reply" maxLength={2000} value={reply} onChange={e => editReply(e.target.value)} required /><button disabled={busy || !!pending || !reply.trim()}>Send clarification</button></form>}
+        {watching && <span className="run-progress" aria-hidden="true" style={{transform: `scaleX(${progress?.fraction ?? 0})`}} />}
       </section>}
+      {!current && finished && <div className="run-control run-control--done" aria-hidden="true"><AgentStatus announce={false} phase="completed" message="Answer ready" /></div>}
       {error && <div role="alert" className="error"><p>{error}</p><button className="text-button" onClick={() => {setError(''); setReload(n => n + 1); setReconnect(n => n + 1);}}>Reload saved conversation</button></div>}
       {(creatingConversation || pending?.status === 'submitting') && <div className="notice"><AgentStatus phase="submitting" message={pending?.request.path.endsWith('/resume') ? 'Submitting your clarification…' : 'Submitting your query…'} /></div>}
       {pending?.status === 'unconfirmed' && <div className="notice"><AgentStatus announce={false} phase="waiting" message="Submission was not confirmed. Retry safely with the same request." /><button disabled={busy} onClick={() => act(() => sendPending(pending.request))}>Retry submission</button></div>}

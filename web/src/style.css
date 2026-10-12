@@ -644,11 +644,60 @@ tbody tr:last-child td {
   margin:18px 0;
   font-size:.88rem;
 }
+.notice:has(>.agent-status--waiting),.run-control:has(.agent-status--waiting) {
+  border-left-color:var(--color-warning);
+}
+.notice:has(>.agent-status--failed) {
+  border-left-color:var(--color-error);
+}
+.run-control {
+  position:relative;
+  overflow:hidden;
+  animation:run-control-in 220ms cubic-bezier(.2,0,0,1);
+}
+.run-control-head {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px 16px;
+}
+.run-control-head .agent-status {
+  flex:1 1 240px;
+}
+.run-control-actions {
+  display:flex;
+  align-items:center;
+  gap:4px;
+  margin-left:auto;
+}
+.run-elapsed {
+  margin-right:8px;
+  color:var(--color-muted);
+  font-size:.77rem;
+  font-variant-numeric:tabular-nums;
+}
+.run-control form {
+  margin-top:16px;
+}
 .run-control textarea {
   margin:14px 0;
 }
+.run-progress {
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:0;
+  height:2px;
+  background:var(--color-primary);
+  transform-origin:left;
+  transition:transform 600ms cubic-bezier(.2,0,0,1);
+}
+.run-control--done {
+  max-height:80px;
+  animation:run-control-out 280ms cubic-bezier(.4,0,.2,1) 600ms forwards;
+}
 /* Small, fixed-size indicators keep status changes from shifting the controls.
-   Only active phases animate, using transform and opacity. */
+   Every working phase shares one motion so stage changes read as progress. */
 .agent-status {
   display:flex;
   align-items:center;
@@ -661,12 +710,25 @@ tbody tr:last-child td {
   min-width:0;
   overflow-wrap:anywhere;
 }
+/* A mask keeps the text colour intact for contrast checks and forced-colours mode. */
+.agent-status--active .agent-status-message {
+  mask-image:linear-gradient(90deg,#000 40%,rgb(0 0 0/.45) 50%,#000 60%);
+  mask-size:250% 100%;
+  mask-repeat:no-repeat;
+  animation:agent-shimmer 2.4s cubic-bezier(.45,0,.55,1) infinite;
+}
+.run-control .agent-status-message {
+  animation:agent-message-in 240ms cubic-bezier(.2,0,0,1);
+}
+.run-control .agent-status--active .agent-status-message {
+  animation:agent-message-in 240ms cubic-bezier(.2,0,0,1),agent-shimmer 2.4s cubic-bezier(.45,0,.55,1) 240ms infinite;
+}
 .agent-motion {
   position:relative;
   display:flex;
   align-items:center;
   justify-content:center;
-  gap:3px;
+  gap:4px;
   flex:0 0 28px;
   width:28px;
   height:26px;
@@ -681,72 +743,18 @@ tbody tr:last-child td {
   width:24px;
   height:24px;
 }
-.agent-status--submitting i,.agent-status--connecting i,.agent-status--thinking i {
-  width:5px;
-  height:5px;
-  border-radius:50%;
-  animation:agent-hop 1.4s ease-in-out infinite;
-}
-.agent-status--planning i {
-  width:6px;
-  height:6px;
-  border-radius:2px;
-  animation:agent-step 1.6s ease-in-out infinite;
-}
-.agent-status--retrieving i {
-  width:3px;
-  height:16px;
-  border-radius:3px;
-  animation:agent-wave 1.4s ease-in-out infinite;
-}
-.agent-status--verifying i {
+.agent-status--active i {
   width:6px;
   height:6px;
   border-radius:50%;
-  animation:agent-verify 1.6s ease-in-out infinite;
+  opacity:.55;
+  animation:agent-hop 1.4s cubic-bezier(.45,0,.55,1) infinite;
 }
 .agent-motion i:nth-child(2) {
-  animation-delay:160ms;
+  animation-delay:140ms;
 }
 .agent-motion i:nth-child(3) {
-  animation-delay:320ms;
-}
-.agent-status--running i {
-  display:none;
-}
-.agent-status--running i:first-child {
-  display:block;
-  width:20px;
-  height:20px;
-  background:none;
-  border:2px solid var(--color-border);
-  border-top-color:currentColor;
-  border-right-color:currentColor;
-  border-radius:50%;
-  animation:agent-spin 1.4s linear infinite;
-}
-.agent-status--generating i {
-  position:absolute;
-  left:3px;
-  width:14px;
-  height:2px;
-  border-radius:1px;
-  opacity:.55;
-}
-.agent-status--generating i:first-child {
-  top:8px;
-}
-.agent-status--generating i:nth-child(2) {
-  top:15px;
-  width:10px;
-}
-.agent-status--generating i:nth-child(3) {
-  top:6px;
-  left:21px;
-  width:2px;
-  height:14px;
-  opacity:1;
-  animation:agent-caret 1.4s ease-in-out infinite;
+  animation-delay:280ms;
 }
 .agent-status--waiting .agent-motion {
   color:var(--color-warning);
@@ -762,6 +770,19 @@ tbody tr:last-child td {
 .agent-status--completed .agent-motion {
   color:#326653;
 }
+.agent-status--completed circle {
+  stroke-dasharray:57;
+  stroke-dashoffset:57;
+  transform:rotate(-90deg);
+  transform-box:fill-box;
+  transform-origin:center;
+  animation:agent-draw 420ms cubic-bezier(.65,0,.35,1) forwards;
+}
+.agent-status--completed path {
+  stroke-dasharray:13;
+  stroke-dashoffset:13;
+  animation:agent-draw 240ms ease-out 320ms forwards;
+}
 .agent-status--failed .agent-motion {
   color:var(--color-error);
 }
@@ -772,27 +793,24 @@ tbody tr:last-child td {
   margin:14px 0 0;
 }
 @keyframes agent-hop {
-  0%,65%,100% {opacity:.4;transform:translateY(0);}
-  35% {opacity:1;transform:translateY(-3px);}
+  0%,60%,100% {opacity:.55;transform:translateY(0);}
+  30% {opacity:1;transform:translateY(-4px);}
 }
-@keyframes agent-step {
-  0%,70%,100% {opacity:.35;transform:scale(.85);}
-  35% {opacity:1;transform:scale(1.1);}
+@keyframes agent-shimmer {
+  0% {mask-position:100% 0;}
+  75%,100% {mask-position:0 0;}
 }
-@keyframes agent-wave {
-  0%,100% {opacity:.45;transform:scaleY(.45);}
-  50% {opacity:1;transform:scaleY(1);}
+@keyframes agent-message-in {
+  from {opacity:0;transform:translateY(4px);}
 }
-@keyframes agent-verify {
-  0%,75%,100% {opacity:.35;}
-  40%,55% {opacity:1;}
+@keyframes agent-draw {
+  to {stroke-dashoffset:0;}
 }
-@keyframes agent-spin {
-  to {transform:rotate(360deg);}
+@keyframes run-control-in {
+  from {opacity:0;transform:translateY(6px);}
 }
-@keyframes agent-caret {
-  0%,100% {opacity:1;}
-  50% {opacity:.15;}
+@keyframes run-control-out {
+  to {opacity:0;max-height:0;margin-block:0;padding-block:0;border-width:0;}
 }
 .run-state {
   text-transform:capitalize;
@@ -1255,13 +1273,18 @@ button:focus:not(:focus-visible) {
   * {
     scroll-behavior:auto!important;
   }
-  .suggestion,.composer,.ask-analyst,.signin-button {
+  .suggestion,.composer,.ask-analyst,.signin-button,.run-progress {
     transition:none;
   }
   .agent-motion,.agent-motion * {
     animation:none!important;
     opacity:1!important;
     transform:none!important;
+    stroke-dashoffset:0!important;
+  }
+  .run-control,.agent-status-message {
+    animation:none!important;
+    mask-image:none!important;
   }
 }
 .session-warning {margin: 1rem auto; padding: 1rem 1.5rem; max-width: 64rem; background: #fff4dc; border: 1px solid #9a6800; border-radius: .5rem; color: #352500;}
