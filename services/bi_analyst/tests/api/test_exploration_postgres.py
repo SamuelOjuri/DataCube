@@ -134,6 +134,20 @@ def test_statement_timeout_is_repairable_and_explained_after_bounded_attempts(ex
         assert all('time limit' in item['error'] for item in provider.calls[-1][1]['feedback'])
 
 
+def test_aggregate_over_no_records_is_rechecked_then_confirmed(explore):
+    _, _, config, start = explore
+    empty = draft("SELECT avg(gestation_period) AS days, count(*) AS projects FROM analyst_query.projects_v1 "
+                  "WHERE category = 'No Such Category'",
+                  (('days', 'measure', 'days'), ('projects', 'measure', 'count')), 'Average gestation')
+    provider = Explorer(empty, empty)
+    with start(provider, config_override=config) as client:
+        row = settle(client, submit(client, question='Average gestation for the missing category'))
+        assert row['status'] == 'completed' and row['tool_calls'] == 2, row
+        assert 'matched no records' in provider.calls[-1][1]['feedback'][0]['error']
+        result = client.get(f"/v1/results/{row['answer']['result']['result_id']}").json()
+        assert result['rows'] == [[None, 0]]
+
+
 def test_declined_question_is_explained_without_querying(explore):
     _, _, config, start = explore
     provider = Explorer({'action': 'decline', 'reason': 'forecast',

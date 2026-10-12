@@ -11,7 +11,7 @@ from pydantic import Field, ValidationError
 
 from ..contracts import Contract
 from ..exploration.contracts import ExplorationDraft
-from ..exploration.evidence import ground_exploration
+from ..exploration.evidence import ground_exploration, matched_nothing
 from ..exploration.policy import UnsafeQuery
 from ..exploration.service import ExplorationQueryError
 from ..metrics.compiler import InvalidMetricRequest
@@ -24,6 +24,10 @@ from .provider import ProviderFailure
 
 # One generated query plus at most two repairs, each within the run's model and tool budgets.
 EXPLORATION_ATTEMPTS = 3
+MATCHED_NOTHING = ("The query ran but matched no records: it returned no rows, or every measure was empty or zero. "
+                   "Check that each filter uses a listed value of the right column and that the date column and "
+                   "period fit the question. If the query is already right, return the same SQL unchanged; if the "
+                   "data cannot answer the question, decline with data_unavailable.")
 
 
 class GraphState(Contract):
@@ -252,6 +256,7 @@ class ConversationGraph:
         payload = {'question':state.question,'replies':state.replies,
                    'previous':previous.get('exploration') or ({'certified_plan':previous} if previous else None),
                    'context':exploration.context(today),'feedback':[]}
+        checked, empty = set(), None
         for _ in range(EXPLORATION_ATTEMPTS):
             draft = await self.model('explore',payload,ExplorationDraft)
             if draft.action == 'decline':
@@ -263,15 +268,24 @@ class ConversationGraph:
                 await self.stage('querying')
                 await self.jobs.budget(self.actor,self.run_id,self.token,'tool')
                 result = await exploration.execute(self.actor,self.run_id,draft,validated)
-                break
             except UnsafeQuery as error:
                 payload['feedback'].append({'sql':draft.sql,'error':str(error)})
+                continue
             except ExplorationQueryError as error:
                 payload['feedback'].append({'sql':draft.sql,'error':error.feedback})
+                continue
+            # Returning a query unchanged after empty-result feedback confirms that nothing matched.
+            if not matched_nothing(result) or validated.sql in checked:
+                break
+            checked.add(validated.sql)
+            empty = draft, result
+            payload['feedback'].append({'sql':draft.sql,'error':MATCHED_NOTHING})
         else:
-            # Failed attempts stay in the operation logs; the user receives a usable explanation.
-            await self.finish_explanation(explanation_for('query_failed'))
-            return {}
+            if empty is None:
+                # Failed attempts stay in the operation logs; the user receives a usable explanation.
+                await self.finish_explanation(explanation_for('query_failed'))
+                return {}
+            draft, result = empty
         await self.jobs.save_result(self.actor,self.run_id,self.token,result)
         await self.stage('grounding_answer')
         answer = ground_exploration(result,asks_for_cause=state.asks_for_cause or draft.asks_for_cause)

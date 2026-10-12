@@ -15,14 +15,14 @@ import pytest
 
 from bi_analyst.exploration.contracts import (DraftColumn, ExplorationDraft, ExploratoryColumn,
                                               ExploratoryProvenance, ExploratoryResult)
-from bi_analyst.exploration.evidence import ground_exploration
+from bi_analyst.exploration.evidence import ground_exploration, matched_nothing
 from bi_analyst.exploration.policy import UnsafeQuery
 from bi_analyst.exploration.service import ExplorationQueryError, ExplorationService, cell, describe
 from bi_analyst.metrics.compiler import Compiler
 from bi_analyst.metrics.contracts import Freshness
 from bi_analyst.workflow.contracts import PlanDraft, WorkflowRun
 from bi_analyst.workflow.explanation import LEADS, explain, narrative
-from bi_analyst.workflow.graph import EXPLORATION_ATTEMPTS, ConversationGraph, GraphState
+from bi_analyst.workflow.graph import EXPLORATION_ATTEMPTS, MATCHED_NOTHING, ConversationGraph, GraphState
 from bi_analyst.workflow.provider import EXPLORE_SYSTEM, SYSTEM, GeminiProvider
 from test_settings import config
 
@@ -155,6 +155,63 @@ def test_declines_and_exhausted_repairs_complete_with_explanations(outputs, reas
         assert 'exploration' not in answer['text'] and not answer['suggestions']
     stages = [call.args[3] for call in workflow.jobs.progress.await_args_list]
     assert stages[-1] == 'explaining'
+
+
+MEASURE = ExploratoryColumn(name='revenue', label='Revenue', role='measure', unit='source_currency', type='decimal')
+COUNT = ExploratoryColumn(name='projects', label='Projects', role='measure', unit='count', type='integer')
+LABEL = ExploratoryColumn(name='account', label='Account', role='dimension', unit='none', type='text')
+REFURBISHMENT = REVENUE.model_copy(update={'sql': REVENUE.sql + " AND type = 'Refurbishment'"})
+
+
+@pytest.mark.parametrize('rows,columns,truncated,expected', [
+    ([], [MEASURE], False, True),
+    ([[None, 0]], [MEASURE, COUNT], False, True),
+    ([['A', Decimal('0')], ['B', None]], [LABEL, MEASURE], False, True),
+    ([[None, 3]], [MEASURE, COUNT], False, False),
+    ([['A']], [LABEL], False, False),
+    ([[Decimal('0')]], [MEASURE], True, False),
+])
+def test_matched_nothing_detects_aggregates_over_no_records(rows, columns, truncated, expected):
+    assert matched_nothing(exploratory_result(rows, columns, truncated=truncated)) is expected
+
+
+def empty_then(*values):
+    """Execute stub: NULL for the first query, then the given revenue values in order."""
+    outputs = [None, *values]
+
+    async def execute(actor, run_id, draft, validated):
+        return exploratory_result([[outputs.pop(0)]], [MEASURE], title=draft.title)
+    return execute
+
+
+def test_explore_rechecks_an_empty_result_and_uses_the_repair():
+    provider = Provider(REVENUE.model_dump(), REFURBISHMENT.model_dump())
+    workflow = graph(provider, execute=empty_then(Decimal('42.00')))
+    asyncio.run(workflow.explore(GraphState(question='Refurbishment revenue in January 2026')))
+    assert provider.calls[1][1]['feedback'] == [{'sql': REVENUE.sql, 'error': MATCHED_NOTHING}]
+    answer = workflow.jobs.finish.await_args.kwargs['answer']
+    assert answer['claims'][0]['value'] == '42.00'
+    workflow.jobs.save_result.assert_awaited_once()
+
+
+def test_explore_accepts_an_empty_result_confirmed_by_the_same_query():
+    provider = Provider(REVENUE.model_dump(), REVENUE.model_dump())
+    workflow = graph(provider, execute=empty_then(None))
+    asyncio.run(workflow.explore(GraphState(question='Revenue in January 2026')))
+    assert len(provider.calls) == 2
+    answer = workflow.jobs.finish.await_args.kwargs['answer']
+    assert answer['result'] and 'Revenue: unknown.' in answer['text']
+
+
+def test_explore_keeps_the_empty_result_when_repairs_fail():
+    bad = {**REVENUE.model_dump(), 'sql': 'SELECT pg_sleep(5) AS revenue'}
+    provider = Provider(REVENUE.model_dump(), bad, bad)
+    workflow = graph(provider, execute=empty_then())
+    asyncio.run(workflow.explore(GraphState(question='Revenue in January 2026')))
+    assert len(provider.calls) == EXPLORATION_ATTEMPTS
+    finish = workflow.jobs.finish.await_args
+    assert finish.kwargs['plan']['exploration']['title'] == REVENUE.title
+    assert finish.kwargs['answer']['result'] and 'Revenue: unknown.' in finish.kwargs['answer']['text']
 
 
 def test_explore_requires_the_feature_flag():

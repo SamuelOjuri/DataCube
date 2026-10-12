@@ -76,3 +76,12 @@ def partial_answer(result: ExploratoryResult, measures) -> list[str]:
     if p.truncated:
         sentences.append(f"Only the first {p.returned_rows} rows are included; the query matched more.")
     return sentences
+
+
+def matched_nothing(result: ExploratoryResult) -> bool:
+    """No rows, or only NULL/zero measures, as aggregates over no matching records return."""
+    if result.provenance.truncated:
+        return False
+    measures = [i for i, c in enumerate(result.provenance.columns) if c.role == "measure"]
+    return not result.rows or bool(measures) and all(
+        row[j] is None or row[j] == 0 for row in result.rows for j in measures)
