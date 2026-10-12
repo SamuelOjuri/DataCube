@@ -1,4 +1,6 @@
 """Exploratory SQL end to end: real gateways, restricted reader role, LangGraph and the API."""
+from uuid import uuid4
+
 from psycopg.conninfo import make_conninfo
 import psycopg
 import pytest
@@ -120,25 +122,57 @@ def test_database_and_policy_errors_are_repaired_with_sanitised_feedback(explore
             assert private not in feedback[0]['error']
 
 
-def test_statement_timeout_is_repairable_and_bounded(explore):
+def test_statement_timeout_is_repairable_and_explained_after_bounded_attempts(explore):
     _, _, config, start = explore
     slow = draft("SELECT count(*) AS revenue FROM analyst_query.projects_v1 CROSS JOIN generate_series(1, 200000000) AS g",
                  (('revenue', 'measure', 'count'),))
     provider = Explorer(slow, slow, slow)
     with start(provider, config_override=config.model_copy(update={'statement_timeout_ms': 200})) as client:
         row = settle(client, submit(client, question='Count everything'))
-        assert row['status'] == 'failed' and row['error_code'] == 'exploration_query_failed'
-        assert row['tool_calls'] == 3 and row['answer'] is None
+        assert row['status'] == 'completed' and row['error_code'] is None and row['tool_calls'] == 3
+        assert row['answer']['kind'] == 'explanation' and row['answer']['reason'] == 'query_failed'
         assert all('time limit' in item['error'] for item in provider.calls[-1][1]['feedback'])
 
 
-def test_declined_question_fails_without_querying(explore):
+def test_declined_question_is_explained_without_querying(explore):
     _, _, config, start = explore
-    provider = Explorer({'action': 'decline', 'reason': 'forecast'})
+    provider = Explorer({'action': 'decline', 'reason': 'forecast',
+                         'explanation': 'Invoices are recorded for completed months up to September 2026.',
+                         'suggestions': ['Show monthly invoiced revenue for the last 12 completed months.']})
     with start(provider, config_override=config) as client:
-        row = settle(client, submit(client, question='Predict next month revenue'))
-        assert row['status'] == 'failed' and row['error_code'] == 'unsupported_question'
-        assert row['tool_calls'] == 0
+        run_id = submit(client, question='Predict next month revenue')
+        row = settle(client, run_id)
+        assert row['status'] == 'completed' and row['tool_calls'] == 0
+        answer = row['answer']
+        assert answer['title'] == "Forecasts aren't available"
+        assert 'September 2026' in answer['text'] and len(answer['suggestions']) == 1
+        events = client.get(f'/v1/runs/{run_id}/events').text
+        assert 'event: answer' in events and 'explaining' in events
+        # Explanations carry no dataset and cannot anchor a follow-up plan.
+        follow = client.post(f"/v1/conversations/{row['conversation_id']}/messages",
+                             json={'question': 'And by month?', 'idempotency_key': str(uuid4()), 'follow_up_to': run_id})
+        assert follow.status_code == 409
+
+
+def test_partial_answer_caveats_are_checked_and_stored(explore):
+    _, _, config, start = explore
+    caveated = {**draft(), 'caveats': ['The current month is not complete, so it is excluded.',
+                                       'Revenue was about £120,000 last year.']}
+    with start(Explorer(caveated), config_override=config) as client:
+        row = settle(client, submit(client, question='Revenue last completed month'))
+        assert row['status'] == 'completed', row
+        assert 'The current month is not complete, so it is excluded.' in row['answer']['text']
+        assert '120,000' not in row['answer']['text']
+        result = client.get(f"/v1/results/{row['answer']['result']['result_id']}").json()
+        assert result['provenance']['caveats'] == ['The current month is not complete, so it is excluded.']
+
+
+def test_unsupported_question_is_explained_when_exploration_is_off(setup):
+    _, _, _, config, start = setup
+    with start(Explorer(), config_override=config) as client:
+        row = settle(client, submit(client, question='What was revenue for January 2026?'))
+        assert row['status'] == 'completed' and row['model_calls'] == 1
+        assert row['answer']['reason'] == 'unsupported' and len(row['answer']['suggestions']) == 3
 
 
 def test_service_row_limit_marks_result_limited(explore):

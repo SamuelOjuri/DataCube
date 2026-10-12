@@ -42,7 +42,7 @@ ERROR_CODES = {
     "run_timeout", "metric_query_timeout", "execution_cancelled", "execution_interrupted",
     "storage_unavailable", "pool_timeout", "pool_capacity_reached", "request_timeout",
     "http_failed", "query_failed", "model_failed", "workflow_failed",
-    "exploration_disabled", "exploration_invalid_sql", "exploration_query_failed",
+    "exploration_disabled", "exploration_query_failed",
 }
 log = logging.getLogger("bi_analyst.operations")
 

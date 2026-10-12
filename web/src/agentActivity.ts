@@ -12,6 +12,7 @@ const stages: Record<string, AgentActivity> = {
   validating_evidence: {phase: 'verifying', message: 'Checking the evidence'},
   selecting_presentation: {phase: 'generating', message: 'Preparing your answer'},
   grounding_answer: {phase: 'verifying', message: 'Linking the answer to its evidence'},
+  explaining: {phase: 'generating', message: 'Explaining what the data can show'},
 };
 
 export const activityForStage = (stage: unknown): AgentActivity =>

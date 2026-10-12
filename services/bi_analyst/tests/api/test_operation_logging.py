@@ -211,6 +211,31 @@ def test_handled_workflow_failures_are_not_logged_as_success(caplog, error, outc
     assert "private" not in caplog.text
 
 
+@pytest.mark.parametrize("status,outcome,code", [
+    ("completed", "success", None), ("cancelled", "failed", "run_unavailable")])
+def test_completion_saved_by_the_graph_is_not_mistaken_for_a_lost_run(caplog, monkeypatch, status, outcome, code):
+    # The graph finishes the job inside its last node, then writes its final checkpoint.
+    import bi_analyst.workflow.service as module
+    token, run_id = uuid4(), uuid4()
+
+    async def ainvoke(*args, **kwargs):
+        await asyncio.sleep(0.5)
+        return {}
+
+    monkeypatch.setattr(module, "ConversationGraph", lambda *a: SimpleNamespace(graph=SimpleNamespace(ainvoke=ainvoke)))
+    monkeypatch.setattr(module, "ScopedPostgresSaver", lambda *a: None)
+    service = object.__new__(WorkflowService)
+    service.store = SimpleNamespace(db=SimpleNamespace(telemetry=Telemetry()), run=AsyncMock(return_value={"question": "q"}))
+    guard = AsyncMock(side_effect=[{"plan": None, "follow_up_to": None, "remaining_seconds": 5},
+                                   *[HTTPException(409, "run_not_executable")] * 10])
+    service.jobs = SimpleNamespace(guard=guard, finish=AsyncMock(),
+                                   get=AsyncMock(return_value={"status": status, "execution_token": token}))
+    service.cancellations = set()
+    asyncio.run(service._drive(object(), run_id, token, None))
+    assert_pair(events(caplog), run_id=run_id, operation="run_workflow", outcome=outcome, error_code=code)
+    assert service.jobs.finish.await_count == (0 if status == "completed" else 1)
+
+
 @pytest.mark.parametrize("user_cancelled", [False, True])
 def test_workflow_cancellation_keeps_explicit_outcome(caplog, user_cancelled):
     service = object.__new__(WorkflowService)

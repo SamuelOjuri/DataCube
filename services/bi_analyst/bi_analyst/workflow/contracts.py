@@ -93,12 +93,22 @@ class GroundedAnswer(Contract):
     scope_changes: dict
 
 
+class ExplanationAnswer(Contract):
+    """A completed answer without a dataset: why the data cannot answer, and what can be asked."""
+    kind: Literal["explanation"]
+    reason: Literal["not_analytical", "data_unavailable", "forecast", "unsafe", "query_failed", "unsupported"]
+    title: str
+    text: str
+    suggestions: list[str] = Field(default_factory=list, max_length=3)
+    notices: list[str] = Field(default_factory=list)
+
+
 class WorkflowRun(Contract):
     run_id: UUID
     conversation_id: UUID
     status: Literal["registered", "running", "awaiting_clarification", "completed", "failed", "cancelled", "interrupted"]
     clarification: Clarification | None = None
-    answer: GroundedAnswer | None = None
+    answer: GroundedAnswer | ExplanationAnswer | None = None
     error_code: str | None = None
     created_at: datetime
     model_calls: int

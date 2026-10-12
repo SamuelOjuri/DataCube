@@ -15,6 +15,7 @@ from psycopg.rows import tuple_row
 from ..metrics.contracts import Freshness
 from ..metrics.service import wire_size
 from ..operations.telemetry import measured
+from ..workflow.explanation import narrative
 from .context import approved_relations, build_context
 from .contracts import ExplorationDraft, ExploratoryColumn, ExploratoryProvenance, ExploratoryResult
 from .policy import POLICY_VERSION, UnsafeQuery, ValidatedQuery, validate
@@ -150,7 +151,8 @@ class ExplorationService:
             query_reference=reference, policy_version=POLICY_VERSION, catalogue_version=self.catalogue.version,
             catalogue_sha256=self.catalogue_hash, title=title, sql=validated.sql, relations=list(validated.relations),
             columns=columns, business_timezone=timezone, freshness=Freshness(queried_at=now),
-            limitations=list(LIMITATIONS), truncated=bool(reasons), truncation_reasons=reasons,
+            limitations=list(LIMITATIONS), caveats=[c for c in (narrative(c, 240) for c in draft.caveats) if c],
+            truncated=bool(reasons), truncation_reasons=reasons,
             returned_rows=len(rows), dataset_scope="limited" if reasons else "complete")
         return ExploratoryResult(id=uuid4(), run_id=run_id, permissions_version=principal.permissions_version,
                                  columns=list(names), rows=rows, provenance=provenance, created_at=now)

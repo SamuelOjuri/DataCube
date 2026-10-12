@@ -3,9 +3,12 @@ export type Session = {subject: string; expires_at: string} | null;
 export type Conversation = {id: string; title: string; created_at: string};
 export type Run = {id: string; conversation_id: string; question: string; status: string; created_at: string};
 export type ChartIntent = {kind: 'table' | 'number' | 'bar' | 'line'; x?: 'month' | 'category' | 'type' | null; y: 'value'};
+export type ResultAnswer = {kind?: 'result'; text: string; result: {result_id: string}; chart: ChartIntent; notices: string[]; scope_changes: Record<string, unknown>};
+export type ExplanationAnswer = {kind: 'explanation'; reason: string; title: string; text: string; suggestions: string[]; notices: string[]};
 export type Workflow = {run_id: string; conversation_id: string; status: string; error_code: string | null;
   clarification: null | {id: string; question: string; options: string[]};
-  answer: null | {text: string; result: {result_id: string}; chart: ChartIntent; notices: string[]; scope_changes: Record<string, unknown>}};
+  answer: null | ResultAnswer | ExplanationAnswer};
+export const isExplanation = (answer: Workflow['answer']): answer is ExplanationAnswer => answer?.kind === 'explanation';
 export type Column = {name: string; type: string; unit?: string | null; precision?: number | null};
 export type MetricResult = {id: string; run_id: string; columns: string[]; rows: Cell[][]; provenance: {
   metric_id: string; metric_version: string; metric_label: string; unit: string; source_population: string;
@@ -25,7 +28,7 @@ export type ExploratoryColumn = {name: string; label: string; role: 'dimension' 
 export type ExploratoryResult = {id: string; run_id: string; columns: string[]; rows: Cell[][]; provenance: {
   kind: 'exploratory'; title: string; sql: string; relations: string[]; columns: ExploratoryColumn[]; business_timezone: string;
   catalogue_version: string; query_reference: string; freshness: {status: string; queried_at: string; limitation: string};
-  limitations: string[]; truncated: boolean; returned_rows: number; dataset_scope: string;
+  limitations: string[]; truncated: boolean; returned_rows: number; dataset_scope: string; caveats?: string[];
 }};
 export type SavedResult = MetricResult | ExploratoryResult;
 export const isExploratory = (result: SavedResult): result is ExploratoryResult =>

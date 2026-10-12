@@ -49,8 +49,10 @@ Workflow, model and query end events retain the original `stage`, `outcome` and 
 They add a fixed `error_code`, or `null` on success. Examples include
 `model_authentication_failed`, `model_timeout`, `metric_query_timeout`,
 `run_timeout`, `permissions_changed`, `invalid_evidence`, `execution_cancelled`
-and `execution_interrupted`. Exploratory runs add `exploration_invalid_sql` and
-`exploration_query_failed` after their bounded repairs, and `exploration_disabled`. Unrecognised exception codes become the fixed
+and `execution_interrupted`. A failed `exploratory_query` attempt ends with
+`exploration_query_failed`; `exploration_disabled` ends a run when the feature is off.
+Runs the data cannot answer complete with an explanation answer instead of an error;
+its `reason` (for example `forecast` or `query_failed`) is stored with the answer. Unrecognised exception codes become the fixed
 stage fallback, such as `model_failed` or `workflow_failed`. Raw exception
 messages are never logged. Model transport timeouts are distinguished from other
 provider availability failures and are not retried, because an identical request

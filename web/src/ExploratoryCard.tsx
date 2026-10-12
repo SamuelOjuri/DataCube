@@ -1,10 +1,10 @@
 import {useState} from 'react';
-import type {Auth, ExploratoryResult, Workflow} from './types';
+import type {Auth, ExploratoryResult, ResultAnswer} from './types';
 import {errorMessage, json, post} from './api';
 import {formatCell} from './presentation.mjs';
 import DataTable from './DataTable';
 
-export default function ExploratoryCard({auth, answer, result, signal}: {auth: Auth; answer: NonNullable<Workflow['answer']>; result: ExploratoryResult; signal: AbortSignal}) {
+export default function ExploratoryCard({auth, answer, result, signal}: {auth: Auth; answer: ResultAnswer; result: ExploratoryResult; signal: AbortSignal}) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,7 +35,8 @@ export default function ExploratoryCard({auth, answer, result, signal}: {auth: A
     <div className="result-heading"><div><p className="eyebrow">Exploratory analysis · not a certified metric</p><h3>{p.title}</h3></div><span className="badge">Source freshness unknown</span></div>
     <p className="result-scope">Generated query over {p.relations.map(r => `analyst_query.${r}`).join(', ')} · {p.business_timezone}</p>
     {single && <div className="total"><strong>{formatCell(result.rows[0][0], measures[0].unit)}</strong><span>{measures[0].label}</span></div>}
-    {!result.rows.length && <p className="data-warning">No matching records were found.</p>}
+    {!!p.caveats?.length && <div className="data-warning" role="note" aria-label="What this answer leaves out"><ul className="caveats">{p.caveats.map(text => <li key={text}>{text}</li>)}</ul></div>}
+    {!result.rows.length && <p className="data-warning">No matching records were found for this scope.</p>}
     {p.truncated && <p className="data-warning">Showing the first {p.returned_rows} rows. The query returned more; the table and CSV include only these rows.</p>}
     {!single && result.rows.length > 0 && <div className="result-values"><DataTable columns={result.columns} rows={result.rows} metadata={metadata} caption={`${p.title} — values`} /></div>}
     <div className="actions"><button className="secondary" disabled={busy} onClick={download}>Download CSV ({p.returned_rows} rows)</button></div>

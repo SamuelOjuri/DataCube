@@ -24,7 +24,7 @@ class WorkflowService:
         self.tasks = {}
         self.cancellations = set()
         self.admission = asyncio.Lock()
-        self.versions = {'graph':'2.1.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
+        self.versions = {'graph':'2.2.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
                          'exploration':{'prompt':EXPLORE_PROMPT_VERSION,'policy':POLICY_VERSION},
                          'catalogue':metrics.compiler.catalogue.version,'catalogue_sha256':metrics.compiler.catalogue_hash,
                          'langgraph':version('langgraph'),'checkpointer':version('langgraph-checkpoint-postgres')}
@@ -94,7 +94,13 @@ class WorkflowService:
                     while not work.done():
                         await asyncio.wait({work},timeout=0.2)
                         if not work.done():
-                            await self.jobs.guard(actor,run_id,token)
+                            try:
+                                await self.jobs.guard(actor,run_id,token)
+                            except HTTPException:
+                                # The graph saves its own completion before its final checkpoint write.
+                                row = await self.jobs.get(actor,run_id)
+                                if row['status'] != 'completed' or row['execution_token'] != token:
+                                    raise
                     output = await work
             if output.get('__interrupt__'):
                 pending = output['__interrupt__'][0].value
@@ -123,8 +129,7 @@ class WorkflowService:
             # Only fixed internal codes; never serialize arbitrary exception details.
             code = error.detail if type(error.detail) is str and error.detail in {'unsupported_question','model_invalid_plan','clarification_limit',
                 'run_budget_exceeded','permissions_changed','access_denied','metric_not_certified','result_expired',
-                'result_evidence_changed','workflow_version_changed','exploration_disabled','exploration_invalid_sql',
-                'exploration_query_failed'} else 'run_unavailable'
+                'result_evidence_changed','workflow_version_changed','exploration_disabled'} else 'run_unavailable'
             error_code = code
             await self._fail(actor,run_id,token,'failed',code)
         except Exception:

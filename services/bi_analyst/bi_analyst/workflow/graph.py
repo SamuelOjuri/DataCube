@@ -17,8 +17,9 @@ from ..exploration.service import ExplorationQueryError
 from ..metrics.compiler import InvalidMetricRequest
 from ..metrics.contracts import EntityRequest, MetricRequest, MetricResult
 from ..operations.telemetry import operation_context
-from .contracts import Clarification, PlanDraft, Presentation, ResultReference
+from .contracts import Clarification, ExplanationAnswer, PlanDraft, Presentation, ResultReference
 from .evidence import ground, select_presentation
+from .explanation import explain as explanation_for
 from .provider import ProviderFailure
 
 # One generated query plus at most two repairs, each within the run's model and tool budgets.
@@ -30,6 +31,7 @@ class GraphState(Contract):
     previous_plan: dict | None = None
     plan: dict | None = None
     explore: bool = False
+    explanation: dict | None = None
     asks_for_cause: bool = False
     replies: list[str] = Field(default_factory=list)
     clarification: dict | None = None
@@ -47,13 +49,15 @@ class ConversationGraph:
         self.service, self.actor, self.run_id, self.token = service, actor, run_id, token
         self.jobs, self.metrics = service.jobs, service.metrics
         builder = StateGraph(GraphState)
-        for name in ('make_plan','clarify','execute_plan','explore'):
+        for name in ('make_plan','clarify','execute_plan','explore','explain'):
             builder.add_node(name, getattr(self,name))
         builder.add_edge(START,'make_plan')
-        builder.add_conditional_edges('make_plan', lambda s: 'explore' if s.explore else 'clarify' if s.clarification else 'execute_plan')
+        builder.add_conditional_edges('make_plan', lambda s: 'explain' if s.explanation else 'explore' if s.explore
+                                      else 'clarify' if s.clarification else 'execute_plan')
         builder.add_conditional_edges('clarify', lambda s: 'execute_plan' if s.plan and not s.clarification else 'make_plan')
         builder.add_conditional_edges('execute_plan', lambda s: 'clarify' if s.clarification else END)
         builder.add_edge('explore', END)
+        builder.add_edge('explain', END)
         self.graph = builder.compile(checkpointer=checkpointer)
 
     async def stage(self, name):
@@ -105,7 +109,7 @@ class ConversationGraph:
         if draft.action == 'unsupported':
             if self.service.settings.exploratory_enabled:
                 return {'explore':True,'plan':None,'clarification':None,'asks_for_cause':draft.asks_for_cause}
-            raise HTTPException(422,'unsupported_question')
+            return {'explanation':explanation_for('unsupported').model_dump(mode='json'),'plan':None,'clarification':None}
         if draft.action == 'clarify':
             ids = draft.candidate_metrics or list(permitted)
             if not set(ids) <= permitted.keys():
@@ -248,11 +252,12 @@ class ConversationGraph:
         payload = {'question':state.question,'replies':state.replies,
                    'previous':previous.get('exploration') or ({'certified_plan':previous} if previous else None),
                    'context':exploration.context(today),'feedback':[]}
-        failure = None
         for _ in range(EXPLORATION_ATTEMPTS):
             draft = await self.model('explore',payload,ExplorationDraft)
             if draft.action == 'decline':
-                raise HTTPException(422,'unsupported_question')
+                await self.finish_explanation(explanation_for(draft.reason if draft.reason != 'none' else 'data_unavailable',
+                                                              detail=draft.explanation,suggestions=draft.suggestions))
+                return {}
             try:
                 validated = exploration.validate(draft)
                 await self.stage('querying')
@@ -260,13 +265,13 @@ class ConversationGraph:
                 result = await exploration.execute(self.actor,self.run_id,draft,validated)
                 break
             except UnsafeQuery as error:
-                failure = 'exploration_invalid_sql'
                 payload['feedback'].append({'sql':draft.sql,'error':str(error)})
             except ExplorationQueryError as error:
-                failure = 'exploration_query_failed'
                 payload['feedback'].append({'sql':draft.sql,'error':error.feedback})
         else:
-            raise HTTPException(422,failure)
+            # Failed attempts stay in the operation logs; the user receives a usable explanation.
+            await self.finish_explanation(explanation_for('query_failed'))
+            return {}
         await self.jobs.save_result(self.actor,self.run_id,self.token,result)
         await self.stage('grounding_answer')
         answer = ground_exploration(result,asks_for_cause=state.asks_for_cause or draft.asks_for_cause)
@@ -277,3 +282,11 @@ class ConversationGraph:
         await self.jobs.finish(self.actor,self.run_id,self.token,'completed',plan=plan,
                                answer=answer.model_dump(mode='json'))
         return {}
+
+    async def explain(self, state):
+        await self.finish_explanation(ExplanationAnswer.model_validate(state.explanation))
+        return {}
+
+    async def finish_explanation(self, answer):
+        await self.stage('explaining')
+        await self.jobs.finish(self.actor,self.run_id,self.token,'completed',answer=answer.model_dump(mode='json'))

@@ -2,6 +2,8 @@ import {useEffect, useRef, useState} from 'react';
 import type {Auth, Conversation, Run, Workflow} from './types';
 import {activeRun, ApiError, errorMessage, json, post, watchRun} from './api';
 import ResultCard from './ResultCard';
+import ExplanationCard from './ExplanationCard';
+import {isExplanation} from './types';
 import {historyTime, questionTurns} from './conversation';
 import AgentStatus from './AgentStatus';
 import type {AgentActivity} from './agentActivity';
@@ -74,7 +76,8 @@ export default function Workspace({auth}: {auth: Auth}) {
       .catch(e => {if (!controller.signal.aborted) {fail(e); setProgress({phase: 'waiting', message: 'Connection paused. Reconnect to retrieve the saved outcome.'});}});
     return () => controller.abort();
   }, [auth, watching, reconnect]);
-  const latestAnswer = runs.find(r => workflows[r.id]?.status === 'completed' && workflows[r.id]?.answer);
+  // Explanations carry no dataset, so only result answers can anchor a follow-up.
+  const latestAnswer = runs.find(r => workflows[r.id]?.status === 'completed' && workflows[r.id]?.answer && !isExplanation(workflows[r.id].answer));
   const turns = questionTurns(runs, workflows);
   const sendPending = async (request: SubmissionRequest) => {
     setPending({request, status:'submitting'});
@@ -147,7 +150,9 @@ export default function Workspace({auth}: {auth: Auth}) {
       <div className="messages">{turns.map(({run, previousAttempts}) => {
         const state = workflows[run.id];
         return <article className="message" key={run.id}><div className="question"><span className="eyebrow">YOU ASKED</span><h2>{run.question}</h2></div>
-          {state?.answer ? <ResultCard auth={auth} answer={state.answer} /> : !state || !['failed', 'cancelled', 'interrupted'].includes(state.status) ? <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p> : null}
+          {state?.answer ? isExplanation(state.answer)
+            ? <ExplanationCard answer={state.answer} onSuggest={suggestion => {setQuestion(suggestion); document.getElementById('question')?.focus();}} />
+            : <ResultCard auth={auth} answer={state.answer} /> : !state || !['failed', 'cancelled', 'interrupted'].includes(state.status) ? <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p> : null}
           {state && ['failed', 'cancelled', 'interrupted'].includes(state.status) && <div className="notice"><AgentStatus announce={false} phase={state.status === 'failed' ? 'failed' : 'waiting'} message={state.status === 'interrupted' ? 'Execution was interrupted. Retry to start a new run with current access and data.' : state.status === 'cancelled' ? 'This run was cancelled.' : 'The analyst could not complete this request. You can retry or revise the question.'} />
             <button className="secondary" disabled={busy || !!current || !!pending} onClick={() => send(run)}>Retry question</button></div>}
           {!state && run.status === 'completed' && <p className="note">This earlier run has no conversational answer.</p>}

@@ -466,6 +466,7 @@ test('exploratory answers are labelled uncertified and show their table, SQL and
   await expect(table).toContainText('£1,200.00');
   await expect(table.getByRole('button',{name:'revenue (GBP)'})).toBeVisible();
   await expect(card.getByRole('button',{name:'Explore contributing projects'})).toHaveCount(0);
+  await expect(card.getByRole('note',{name:'What this answer leaves out'})).toContainText('Invoices without a recorded account are grouped as an unknown account.');
   await card.getByText('How this answer was produced',{exact:true}).click();
   await expect(card.locator('pre.sql')).toHaveText(state.result.provenance.sql);
   await expect(card.getByText('Exploratory analysis: generated SQL over governed views, not a certified metric.',{exact:true})).toBeVisible();
@@ -474,6 +475,31 @@ test('exploratory answers are labelled uncertified and show their table, SQL and
   expect(state.exports).toBe(1);
   expect(state.drilldowns).toBe(0);
   expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('explanations answer in plain language and offer editable suggestions without loading a result',async({page})=>{
+  const state=await fixture(page,{existing:true,explanation:true});
+  const errors:string[]=[]; page.on('pageerror',e=>errors.push(e.message));
+  await signIn(page,`/conversations/${thread}`);
+  const card=page.getByRole('region',{name:"Forecasts aren't available"});
+  await expect(card.getByRole('heading',{name:"Forecasts aren't available"})).toBeVisible();
+  await expect(card.getByText("I report recorded results only, so I can't forecast or predict future values.",{exact:true})).toBeVisible();
+  await expect(card.getByText('Invoices are recorded for completed months up to September 2026.',{exact:true})).toBeVisible();
+  await expect(page.getByText('could not complete this request',{exact:false})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Retry question'})).toHaveCount(0);
+  // An explanation has no dataset, so it cannot be used as follow-up context.
+  await expect(page.getByLabel('Use the latest answer as context')).toHaveCount(0);
+  await card.getByRole('button',{name:'Show monthly invoiced revenue for the last 12 completed months.'}).click();
+  const composer=page.getByLabel('Your question');
+  await expect(composer).toHaveValue('Show monthly invoiced revenue for the last 12 completed months.');
+  await expect(composer).toBeFocused();
+  expect(state.submissions).toHaveLength(0);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  await page.getByRole('button',{name:'Ask analyst'}).click();
+  await expect.poll(()=>state.submissions.length).toBe(1);
+  expect(state.submissions[0].follow_up_to).toBeUndefined();
+  expect(state.resultReads).toBe(0);
   expect(errors).toEqual([]);
 });
 

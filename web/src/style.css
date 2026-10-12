@@ -447,6 +447,13 @@ nav a time {
   background:var(--color-warning-background);
   color:var(--color-warning);
 }
+.caveats {
+  margin:0;
+  padding-left:18px;
+}
+.explanation-suggestions {
+  margin-top:16px;
+}
 .table-options {
   display:flex;
   align-items:center;

@@ -45,15 +45,13 @@ def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> Gr
                                             metric_id="exploratory", unit=column.unit, period=p.title, value=value,
                                             label=label, kind="total" if single else "contributor"))
     if not result.rows:
-        lines.append("No matching records were found.")
+        lines.append("No matching records were found for this scope.")
     elif len(result.rows) > MAX_ROWS_IN_TEXT:
         lines.append(f"{len(result.rows) - MAX_ROWS_IN_TEXT} further rows are shown in the table.")
+    partial = partial_answer(result, measures)
     notices = list(p.limitations)
     notices.append("Source freshness is unknown; query time does not establish ingestion or refresh time.")
-    if not result.rows:
-        notices.append("No matching source records were found.")
-    if p.truncated:
-        notices.append(f"Only the first {p.returned_rows} rows were kept; the query returned more.")
+    notices.extend(partial)
     if any(c.unit == "source_currency" for c in p.columns):
         notices.append("Currency: GBP. Amounts are as stored; VAT inclusion is unspecified.")
     if asks_for_cause:
@@ -62,6 +60,19 @@ def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> Gr
     return GroundedAnswer(
         result=ResultReference(result_id=result.id, query_reference=p.query_reference,
                                catalogue_sha256=p.catalogue_sha256),
-        claims=claims, text="\n".join([p.title + ".", *lines]),
+        claims=claims, text="\n".join([p.title + ".", *lines, *partial]),
         chart=ChartIntent(kind="number" if numeric else "table"),
         notices=list(dict.fromkeys(notices)), scope_changes={})
+
+
+def partial_answer(result: ExploratoryResult, measures) -> list[str]:
+    """Plain sentences on what the answer does not cover; counts come from the stored result."""
+    p = result.provenance
+    sentences = list(p.caveats)
+    unknown = sum(row[j] is None for row in result.rows for j in measures)
+    if unknown:
+        sentences.append(f"{unknown} of {len(result.rows) * len(measures)} values are unknown because no records "
+                         "matched or the matching records have no value.")
+    if p.truncated:
+        sentences.append(f"Only the first {p.returned_rows} rows are included; the query matched more.")
+    return sentences

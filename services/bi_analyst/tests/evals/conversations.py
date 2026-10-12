@@ -114,7 +114,9 @@ async def evaluate(provider, selected=None):
             state = GraphState(question=question,previous_plan=previous_plans.get(case_id))
             state = GraphState(**{**state.model_dump(),**await workflow.make_plan(state)})
             actual = state.plan
-            correct = (actual is None and state.clarification is not None and case_id.startswith('ambiguous_')
+            unsupported = case_id.startswith('unsupported_') or case_id == 'injection'
+            correct = ((state.clarification is not None and case_id.startswith('ambiguous_')) or
+                       (state.explanation is not None and state.explanation['reason'] == 'unsupported' and unsupported)
                        if expected_metric is None else actual is not None and
                        actual['metric_id'] == expected_metric and actual['period'] == expected_period)
             if correct and case_id in previous_plans:
@@ -124,7 +126,7 @@ async def evaluate(provider, selected=None):
                 correct = actual == expected
         except Exception as exc:
             error = exc.code if isinstance(exc,ProviderFailure) else getattr(exc,'detail','evaluation_failed')
-            correct = (case_id.startswith('unsupported_') or case_id == 'injection') and error == 'unsupported_question'
+            correct = False
         results.append({'id':case_id,'passed':correct,'expected_metric':expected_metric,'expected_period':expected_period,
             'actual_plan':actual,'asks_for_cause':state.asks_for_cause if state else False,
             'clarification':state.clarification if state else None,

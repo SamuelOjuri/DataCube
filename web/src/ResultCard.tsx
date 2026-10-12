@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react';
-import type {Auth, MetricDefinition, ProjectPage, SavedResult, Workflow} from './types';
+import type {Auth, MetricDefinition, ProjectPage, ResultAnswer, SavedResult} from './types';
 import {isExploratory} from './types';
 import {errorMessage, json, post} from './api';
 import {chartSpec, formatCell, unitLabel} from './presentation.mjs';
@@ -7,7 +7,7 @@ import Chart from './Chart';
 import DataTable from './DataTable';
 import ExploratoryCard from './ExploratoryCard';
 
-export default function ResultCard({auth, answer}: {auth: Auth; answer: NonNullable<Workflow['answer']>}) {
+export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAnswer}) {
   const [saved, setResult] = useState<SavedResult | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');

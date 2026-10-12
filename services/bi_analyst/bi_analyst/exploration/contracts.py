@@ -25,6 +25,10 @@ class ExplorationDraft(Contract):
     sql: str = Field(default="", max_length=8000)
     columns: list[DraftColumn] = Field(default_factory=list, max_length=20)
     asks_for_cause: bool = False
+    # Free text is length-bounded here and checked for figures before display.
+    explanation: str = Field(default="", max_length=1000)
+    suggestions: list[str] = Field(default_factory=list, max_length=3)
+    caveats: list[str] = Field(default_factory=list, max_length=3)
 
 
 class ExploratoryColumn(Contract):
@@ -50,6 +54,7 @@ class ExploratoryProvenance(Contract):
     authorization_scope: Literal["company_wide"] = "company_wide"
     freshness: Freshness
     limitations: list[str]
+    caveats: list[str] = Field(default_factory=list)
     certification_basis: Literal["exploratory_uncertified"] = "exploratory_uncertified"
     truncated: bool
     truncation_reasons: list[Literal["row_limit", "byte_limit"]]

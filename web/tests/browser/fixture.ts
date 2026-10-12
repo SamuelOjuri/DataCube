@@ -21,13 +21,17 @@ export const exploratoryResult = {id:resultId,run_id:runId,columns:['account','r
       {name:'revenue',label:'Revenue',role:'measure',unit:'source_currency',type:'decimal'}],
     freshness:{status:'unknown',queried_at:'2026-10-12T09:00:00Z',limitation:'Successful ingestion and refresh evidence is unavailable.'},
     limitations:['Exploratory analysis: generated SQL over governed views, not a certified metric.'],
+    caveats:['Invoices without a recorded account are grouped as an unknown account.'],
     truncated:false,returned_rows:3,dataset_scope:'complete'}};
+export const explanationAnswer = {kind:'explanation',reason:'forecast',title:"Forecasts aren't available",
+  text:"I report recorded results only, so I can't forecast or predict future values.\nInvoices are recorded for completed months up to September 2026.",
+  suggestions:['Show monthly invoiced revenue for the last 12 completed months.'],notices:[]};
 
-export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false,
+export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false, explanation=false,
   beforeConversationReply=async()=>{}, beforeMessageReply=async()=>{}, beforeResumeReply=async()=>{}}={}) {
-  const state = {result:structuredClone(exploratory ? exploratoryResult as any : result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false, drilldowns:0};
+  const state = {result:structuredClone(exploratory ? exploratoryResult as any : result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false, drilldowns:0, resultReads:0};
   const messageRuns = new Map<string,string>();
-  const answer = (id: string) => ({text:exploratory ? 'Invoiced revenue by account.\nAccount B — Revenue: GBP 300.50.' : 'Order Value is GBP 10,350.00. This is a complete filtered total.',
+  const answer = (id: string) => explanation ? structuredClone(explanationAnswer) : ({text:exploratory ? 'Invoiced revenue by account.\nAccount B — Revenue: GBP 300.50.' : 'Order Value is GBP 10,350.00. This is a complete filtered total.',
     result:{result_id:resultId},chart:limited||exploratory?{kind:'table',x:null,y:'value'}:{kind:'bar',x:'category',y:'value'},notices:['Measured contributions do not establish cause.'],
     scope_changes:id !== runId && state.submissions.at(-1)?.follow_up_to ? {filters:{before:[],after:['category: A']}} : {}});
   function create(question: string) {
@@ -76,7 +80,7 @@ export async function fixture(page: Page, {clarify=false, hold=false, existing=f
       const event=state.streams===1?'id: 1\nevent: progress\ndata: {"stage":"querying"}\n\n':`id: 2\nevent: terminal\ndata: {"status":"${w.status}"}\n\n`;
       await route.fulfill({headers:{...headers,'Content-Type':'text/event-stream'},body:': heartbeat\n\n'+event});return;
     }
-    if(path===`/v1/results/${resultId}`){const saved=state.result;await reply(limited ? {...saved,provenance:{...saved.provenance,truncated:true,dataset_scope:'limited',matched_groups:15}} : comparison ? {...saved,provenance:{...saved.provenance,
+    if(path===`/v1/results/${resultId}`){state.resultReads++;const saved=state.result;await reply(limited ? {...saved,provenance:{...saved.provenance,truncated:true,dataset_scope:'limited',matched_groups:15}} : comparison ? {...saved,provenance:{...saved.provenance,
       comparison_period:{start_date:'2026-08-01',end_date_exclusive:'2026-09-01'},
       comparison:{baseline:{value:'0.00'},absolute_change:'10350.00',percentage_change:null,percentage_point_change:null,zero_denominator:true}}} : saved);return;}
     if(path.endsWith('/projects')){state.drilldowns++;await reply({columns:['project_id','source_value'],rows:[['project-1','1000.00']],has_more:false,offset:0,queried_at:'2026-10-08T12:01:00Z',limitation:'Live project evidence for the saved plan; not a historical snapshot.'});return;}
