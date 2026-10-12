@@ -382,7 +382,7 @@ test('clarification retry retains the same idempotency key and follow-ups name t
 test('cancellation and retry create a new run while history links recover persisted answers',async({page})=>{
   const state=await fixture(page,{hold:true});await signIn(page);
   await page.getByLabel('Your question',{exact:true}).fill('Show orders');await page.getByRole('button',{name:'Ask analyst'}).click();
-  await page.getByRole('button',{name:'Cancel run'}).click();await expect(page.getByText('This run was cancelled.')).toBeVisible();
+  await page.getByRole('button',{name:'Cancel run'}).click();await expect(page.getByText('You cancelled this question.')).toBeVisible();
   await page.getByRole('button',{name:'Retry question'}).click();
   expect(state.submissions).toHaveLength(2);expect(state.submissions[1].idempotency_key).not.toBe(state.submissions[0].idempotency_key);
 });
@@ -393,7 +393,7 @@ test('an interrupted saved run can be retried and displays the completed answer'
   state.workflow[runId].status='interrupted';
   state.workflow[runId].answer=null;
   await signIn(page,`/conversations/${thread}`);
-  await expect(page.getByText('Execution was interrupted. Retry to start a new run with current access and data.')).toBeVisible();
+  await expect(page.getByText('The analyst stopped before finishing, usually because the service restarted. Retry to ask again.')).toBeVisible();
   await page.getByRole('button',{name:'Retry question'}).click();
   await expect(page.getByRole('heading',{name:'Order Value (parent mirror)'})).toBeVisible();
   await expect(page.locator('.chart svg')).toBeVisible();
@@ -404,6 +404,32 @@ test('an interrupted saved run can be retried and displays the completed answer'
   expect(state.workflow[runId].status).toBe('interrupted');
   await expect(page.getByText('Scope changed from the previous answer')).toHaveCount(0);
   await page.screenshot({path:'../outputs/analyst-interrupted-retry.png',fullPage:true});
+});
+
+test('unsuccessful runs explain the cause in plain language without internal codes',async({page})=>{
+  const state=await fixture(page,{existing:true});
+  const failures=[
+    ['model_timeout','failed','Show revenue by month.','The AI model took too long to respond. This is usually temporary, so please retry.'],
+    ['run_budget_exceeded','failed','Compare every account by every product.','This question needed more steps than one answer allows. Try splitting it into smaller questions.'],
+    ['metric_query_timeout','failed','Show all order history.','Reading the data took longer than the time allowed. Try a shorter period or fewer breakdowns.'],
+    ['an_unrecognised_code','failed','Show bookings.','Something went wrong while answering this question. Please retry.'],
+    ['execution_interrupted','interrupted','Show conversion.','The analyst stopped before finishing, usually because the service restarted. Retry to ask again.'],
+  ];
+  failures.forEach(([code,status,question],i)=>{
+    const id=`30000000-0000-4000-8000-${String(i+40).padStart(12,'0')}`;
+    state.runs.unshift({...state.runs.at(-1),id,question,status,created_at:`2026-10-08T12:1${i}:00Z`});
+    state.workflow[id]={run_id:id,conversation_id:thread,status,error_code:code,clarification:null,answer:null};
+  });
+  await signIn(page,`/conversations/${thread}`);
+  const turn=(question:string)=>page.locator('.message').filter({has:page.getByRole('heading',{name:question,exact:true})});
+  for(const [,,question,message] of failures) await expect(turn(question).getByText(message,{exact:true})).toBeVisible();
+  const text=await page.locator('main').innerText();
+  for(const [code] of failures) expect(text).not.toContain(code);
+  await turn('Compare every account by every product.').getByRole('button',{name:'Edit question'}).click();
+  await expect(page.locator('#question')).toHaveValue('Compare every account by every product.');
+  await expect(page.locator('#question')).toBeFocused();
+  expect(state.submissions).toHaveLength(0);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
 });
 
 test('deep links survive reauthentication, expired sessions clear results, sign-out clears the workspace',async({page})=>{
@@ -486,7 +512,7 @@ test('explanations answer in plain language and offer editable suggestions witho
   await expect(card.getByRole('heading',{name:"Forecasts aren't available"})).toBeVisible();
   await expect(card.getByText("I report recorded results only, so I can't forecast or predict future values.",{exact:true})).toBeVisible();
   await expect(card.getByText('Invoices are recorded for completed months up to September 2026.',{exact:true})).toBeVisible();
-  await expect(page.getByText('could not complete this request',{exact:false})).toHaveCount(0);
+  await expect(page.locator('.message .notice')).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Retry question'})).toHaveCount(0);
   // An explanation has no dataset, so it cannot be used as follow-up context.
   await expect(page.getByLabel('Use the latest answer as context')).toHaveCount(0);

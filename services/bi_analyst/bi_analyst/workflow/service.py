@@ -6,6 +6,7 @@ from importlib.metadata import version
 from fastapi import HTTPException
 from langgraph.types import Command
 from langsmith import tracing_context
+import psycopg
 
 from .checkpoints import ScopedPostgresSaver
 from .evidence import EvidenceError
@@ -118,6 +119,10 @@ class WorkflowService:
             outcome = 'timeout'
             error_code = 'run_timeout'
             await self._fail(actor,run_id,token,'failed','run_timeout')
+        except (psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable):
+            outcome = 'timeout'
+            error_code = 'metric_query_timeout'
+            await self._fail(actor,run_id,token,'failed','metric_query_timeout')
         except ProviderFailure as error:
             outcome = 'timeout' if error.code == 'model_timeout' else 'failed'
             error_code = error.code
@@ -129,7 +134,8 @@ class WorkflowService:
             # Only fixed internal codes; never serialize arbitrary exception details.
             code = error.detail if type(error.detail) is str and error.detail in {'unsupported_question','model_invalid_plan','clarification_limit',
                 'run_budget_exceeded','permissions_changed','access_denied','metric_not_certified','result_expired',
-                'result_evidence_changed','workflow_version_changed','exploration_disabled'} else 'run_unavailable'
+                'result_evidence_changed','workflow_version_changed','exploration_disabled',
+                'metric_capacity_reached'} else 'run_unavailable'
             error_code = code
             await self._fail(actor,run_id,token,'failed',code)
         except Exception:

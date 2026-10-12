@@ -4,7 +4,7 @@ import {activeRun, ApiError, errorMessage, json, post, watchRun} from './api';
 import ResultCard from './ResultCard';
 import ExplanationCard from './ExplanationCard';
 import {isExplanation} from './types';
-import {historyTime, questionTurns} from './conversation';
+import {historyTime, questionTurns, runOutcome} from './conversation';
 import AgentStatus from './AgentStatus';
 import type {AgentActivity} from './agentActivity';
 
@@ -78,6 +78,7 @@ export default function Workspace({auth}: {auth: Auth}) {
   }, [auth, watching, reconnect]);
   // Explanations carry no dataset, so only result answers can anchor a follow-up.
   const latestAnswer = runs.find(r => workflows[r.id]?.status === 'completed' && workflows[r.id]?.answer && !isExplanation(workflows[r.id].answer));
+  const compose = (text: string) => {setQuestion(text); document.getElementById('question')?.focus();};
   const turns = questionTurns(runs, workflows);
   const sendPending = async (request: SubmissionRequest) => {
     setPending({request, status:'submitting'});
@@ -151,10 +152,11 @@ export default function Workspace({auth}: {auth: Auth}) {
         const state = workflows[run.id];
         return <article className="message" key={run.id}><div className="question"><span className="eyebrow">YOU ASKED</span><h2>{run.question}</h2></div>
           {state?.answer ? isExplanation(state.answer)
-            ? <ExplanationCard answer={state.answer} onSuggest={suggestion => {setQuestion(suggestion); document.getElementById('question')?.focus();}} />
+            ? <ExplanationCard answer={state.answer} onSuggest={compose} />
             : <ResultCard auth={auth} answer={state.answer} /> : !state || !['failed', 'cancelled', 'interrupted'].includes(state.status) ? <p className="run-state">{(state?.status || run.status).replaceAll('_', ' ')}</p> : null}
-          {state && ['failed', 'cancelled', 'interrupted'].includes(state.status) && <div className="notice"><AgentStatus announce={false} phase={state.status === 'failed' ? 'failed' : 'waiting'} message={state.status === 'interrupted' ? 'Execution was interrupted. Retry to start a new run with current access and data.' : state.status === 'cancelled' ? 'This run was cancelled.' : 'The analyst could not complete this request. You can retry or revise the question.'} />
-            <button className="secondary" disabled={busy || !!current || !!pending} onClick={() => send(run)}>Retry question</button></div>}
+          {state && ['failed', 'cancelled', 'interrupted'].includes(state.status) && <div className="notice"><AgentStatus announce={false} {...runOutcome(state)} />
+            <div className="actions"><button className="secondary" disabled={busy || !!current || !!pending} onClick={() => send(run)}>Retry question</button>
+              <button className="secondary" disabled={!!current || !!pending} onClick={() => compose(run.question)}>Edit question</button></div></div>}
           {!state && run.status === 'completed' && <p className="note">This earlier run has no conversational answer.</p>}
           {!!previousAttempts.length && <details className="attempt-history"><summary>{previousAttempts.length} earlier unsuccessful {previousAttempts.length === 1 ? 'attempt' : 'attempts'}</summary>
             <ul>{previousAttempts.map(attempt => <li key={attempt.id}><time dateTime={attempt.created_at}>{historyTime(attempt.created_at)}</time> · {(workflows[attempt.id]?.status || attempt.status).replaceAll('_', ' ')}</li>)}</ul>

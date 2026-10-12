@@ -52,7 +52,11 @@ They add a fixed `error_code`, or `null` on success. Examples include
 and `execution_interrupted`. A failed `exploratory_query` attempt ends with
 `exploration_query_failed`; `exploration_disabled` ends a run when the feature is off.
 Runs the data cannot answer complete with an explanation answer instead of an error;
-its `reason` (for example `forecast` or `query_failed`) is stored with the answer. Unrecognised exception codes become the fixed
+its `reason` (for example `forecast` or `query_failed`) is stored with the answer.
+A run whose database statement or lock times out ends with `metric_query_timeout`
+(outcome `timeout`), and a run refused a query slot ends with `metric_capacity_reached`.
+The web app maps each run error code to a plain message (for example a model
+timeout, step budget or interruption) and never displays the code. Unrecognised exception codes become the fixed
 stage fallback, such as `model_failed` or `workflow_failed`. Raw exception
 messages are never logged. Model transport timeouts are distinguished from other
 provider availability failures and are not retried, because an identical request

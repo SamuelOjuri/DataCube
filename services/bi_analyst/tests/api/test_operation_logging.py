@@ -197,6 +197,8 @@ def test_model_budget_exhaustion_logs_received_token_counts(caplog):
     (EvidenceError("private evidence"), "failed", "invalid_evidence"),
     (TimeoutError("private timeout"), "timeout", "run_timeout"),
     (HTTPException(403, "permissions_changed"), "failed", "permissions_changed"),
+    (HTTPException(429, "metric_capacity_reached"), "failed", "metric_capacity_reached"),
+    (psycopg.errors.QueryCanceled("private statement timeout"), "timeout", "metric_query_timeout"),
     (HTTPException(400, {"private": "payload"}), "failed", "run_unavailable"),
     (RuntimeError("private internal error"), "failed", "workflow_failed"),
 ])
