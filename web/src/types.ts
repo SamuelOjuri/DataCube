@@ -1,5 +1,6 @@
 export type Cell = string | number | null;
-export type Session = {subject: string; expires_at: string} | null;
+export type Session = {subject: string; expires_at?: string; permissions_version?: number; transport: 'bearer'; managed: boolean;
+  absolute_expires_at?: string; idle_expires_at?: string; absoluteDeadline: number; idleDeadline: number; warning_seconds?: number} | null;
 export type Conversation = {id: string; title: string; created_at: string};
 export type Run = {id: string; conversation_id: string; question: string; status: string; created_at: string};
 export type ChartIntent = {kind: 'table' | 'number' | 'bar' | 'line'; x?: 'month' | 'category' | 'type' | null; y: 'value'};
@@ -36,4 +37,5 @@ export const isExploratory = (result: SavedResult): result is ExploratoryResult 
 export type MetricDefinition = {id: string; version: string; source: {priority: string[]};
   calculation: {aggregation: string; nulls: string; zeroes: string; negatives: string; empty: string}};
 export type Auth = {login: () => Promise<void>; logout: () => Promise<void>; finish: () => Promise<boolean>;
+  restore: () => Promise<boolean>; activity: (options?: {force?: boolean}) => Promise<void>; dispose: () => void;
   request: (path: string, options?: RequestInit & {query?: Record<string, number>}) => Promise<Response>};

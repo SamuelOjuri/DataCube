@@ -113,6 +113,9 @@ def create_app(settings: Settings) -> FastAPI:
         started = time.monotonic()
         try:
             response = await call_next(request)
+        except HTTPException as error:
+            request.state.auth_outcome = error.detail
+            response = JSONResponse({'detail': error.detail}, status_code=error.status_code, headers=error.headers)
         except Exception:
             response = JSONResponse({"detail": "internal_error"}, status_code=500)
         route = getattr(request.scope.get("route"), "path", "unmatched")
@@ -143,6 +146,13 @@ def create_app(settings: Settings) -> FastAPI:
     async def invalid_request(request, exc):
         # FastAPI's default includes rejected input; questions can contain sensitive text.
         return JSONResponse({"detail": "invalid_request"}, status_code=422)
+
+    @app.exception_handler(HTTPException)
+    async def auth_failure(request, exc):
+        if exc.detail in {'authentication_required', 'session_idle_expired', 'session_absolute_expired', 'session_revoked',
+                          'permissions_changed', 'access_denied', 'origin_denied'}:
+            request.state.auth_outcome = exc.detail
+        return JSONResponse({'detail': exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(InvalidMetricRequest)
     async def invalid_metric(request, exc):
@@ -276,7 +286,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/v1/runs/{run_id}/cancel", response_model=Run)
     async def cancel_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
-        if request.app.state.database.schema_version in (6, 7) and await request.app.state.workflow.cancel(actor,run_id):
+        if request.app.state.database.schema_version in (6, 7, 8) and await request.app.state.workflow.cancel(actor,run_id):
             return await request.app.state.store.run(actor,run_id)
         return await request.app.state.store.run(actor, run_id, cancel=True)
 

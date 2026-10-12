@@ -1,12 +1,17 @@
 import type {Auth, Workflow} from './types';
 import {readEvents} from './sse.mjs';
 import {activityForStage, type AgentActivity} from './agentActivity';
+import {AuthError} from './auth.mjs';
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string) {super(code);}
+  constructor(public status: number, public code: string, message = code) {super(message);}
 }
 export async function json<T>(auth: Auth, path: string, options: RequestInit & {query?: Record<string, number>} = {}): Promise<T> {
-  const response = await auth.request(path, options);
+  let response: Response;
+  try {response = await auth.request(path, options);} catch (e) {
+    if (e instanceof AuthError) throw new ApiError(e.status, e.code, e.message);
+    throw e;
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(response.status, body.detail || 'request_failed');
@@ -17,6 +22,7 @@ export const post = (body: unknown): RequestInit => ({method: 'POST', headers: {
 export const activeRun = (status: string) => ['registered', 'running'].includes(status);
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (['origin_denied', 'authentication_required', 'session_idle_expired', 'session_absolute_expired', 'session_revoked', 'permissions_changed', 'access_denied'].includes(error.code)) return error.message;
     if (error.status === 429) return 'The analyst is busy. Please wait a moment and retry.';
     if (error.status === 404) return 'This conversation or result is unavailable to your account.';
     if (error.code === 'workflow_disabled') return 'Conversations are not enabled on this API yet.';

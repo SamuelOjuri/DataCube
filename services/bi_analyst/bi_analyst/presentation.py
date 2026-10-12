@@ -17,7 +17,7 @@ class Feedback(Contract):
 
 
 async def save_feedback(store, actor, result_id: UUID, body: Feedback):
-    if store.db.schema_version != 7:
+    if store.db.schema_version not in (7, 8):
         raise HTTPException(503, 'feedback_requires_migration_007')
     await store.result(actor, result_id)
     async with store.scoped(actor) as conn:

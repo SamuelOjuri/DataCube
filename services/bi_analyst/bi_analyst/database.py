@@ -73,19 +73,23 @@ class Database:
                     await conn.execute(sql.SQL("SELECT * FROM analyst_query.{} LIMIT 0").format(sql.Identifier(relation)))
         async with self.transaction() as conn:
             row = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
-            if row not in ({"version": 3}, {"version": 5}, {"version": 6}, {"version": 7}) or (self.settings.auth_provider == "monday" and row == {"version": 3}):
+            if row not in ({"version": 3}, {"version": 5}, {"version": 6}, {"version": 7}, {"version": 8}) or (self.settings.auth_provider == "monday" and row == {"version": 3}):
                 raise RuntimeError("Unexpected analyst schema version")
-            if self.settings.workflow_enabled and row not in ({"version": 6}, {"version": 7}):
+            if self.settings.session_seconds > 900 and row != {"version": 8}:
+                raise RuntimeError("Extended sessions require migration 010")
+            if row == {"version": 8}:
+                await conn.execute("SELECT last_active_at,idle_timeout_seconds FROM analyst_state.sessions LIMIT 0")
+            if self.settings.workflow_enabled and row not in ({"version": 6}, {"version": 7}, {"version": 8}):
                 raise RuntimeError("Workflow requires migration 006")
-            if row in ({"version": 5}, {"version": 6}, {"version": 7}):
+            if row in ({"version": 5}, {"version": 6}, {"version": 7}, {"version": 8}):
                 for relation in AUTH_TABLES:
                     await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
-            if row in ({"version": 6}, {"version": 7}):
+            if row in ({"version": 6}, {"version": 7}, {"version": 8}):
                 for relation in WORKFLOW_TABLES:
                     await conn.execute(sql.SQL("SELECT * FROM analyst_state.{} LIMIT 0").format(sql.Identifier(relation)))
-            if row == {"version": 7}:
+            if row in ({"version": 7}, {"version": 8}):
                 await conn.execute("SELECT * FROM analyst_state.result_feedback LIMIT 0")
-            if row in ({"version": 6}, {"version": 7}):
+            if row in ({"version": 6}, {"version": 7}, {"version": 8}):
                 versions = await (await conn.execute("SELECT v FROM analyst_state.checkpoint_migrations ORDER BY v")).fetchall()
                 if versions != [{'v': i} for i in range(10)]:
                     raise RuntimeError("Unexpected checkpointer schema version")
@@ -96,14 +100,17 @@ class Database:
                           AND contype='c' AND convalidated""")).fetchone()
                     if not budget:
                         raise RuntimeError("Workflow budgets above 300 seconds require migration 009")
+        self.schema_version = row['version']
 
     async def verify_permissions(self):
         async with self.transaction() as conn:
             version = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
         self.schema_version = version['version'] if version else None
-        auth_installed = version in ({"version": 5}, {"version": 6}, {"version": 7})
-        workflow_installed = version in ({"version": 6}, {"version": 7})
-        presentation_installed = version == {"version": 7}
+        if self.settings.session_seconds > 900 and self.schema_version != 8:
+            raise RuntimeError('Extended sessions require migration 010')
+        auth_installed = version in ({"version": 5}, {"version": 6}, {"version": 7}, {"version": 8})
+        workflow_installed = version in ({"version": 6}, {"version": 7}, {"version": 8})
+        presentation_installed = version in ({"version": 7}, {"version": 8})
         for analytical, expected in (
             (True, "bi_analyst_reader"),
             (False, "bi_analyst_state"),
@@ -113,7 +120,8 @@ class Database:
                 if row["role"] != expected:
                     raise RuntimeError("Unexpected analyst connection role")
                 violations = await (await conn.execute(
-                    files("bi_analyst").joinpath("permissions_presentation.sql" if presentation_installed else
+                    files("bi_analyst").joinpath("permissions_sessions.sql" if self.schema_version == 8 else
+                                                "permissions_presentation.sql" if presentation_installed else
                                                 "permissions_workflow.sql" if workflow_installed else
                                                 "permissions_auth.sql" if auth_installed else "permissions.sql").read_text(encoding="utf-8")
                 )).fetchall()
@@ -164,6 +172,12 @@ class Database:
                         """)).fetchone()
                         if drift['unsafe']:
                             raise RuntimeError("Unsafe workflow permissions")
+                    if self.schema_version == 8:
+                        drift = await (await conn.execute("""SELECT
+                            has_column_privilege('analyst_state.sessions','idle_timeout_seconds','UPDATE') AS unsafe
+                        """)).fetchone()
+                        if drift['unsafe']:
+                            raise RuntimeError("Unsafe session policy permissions")
                     if auth_installed:
                         drift = await (await conn.execute("""
                             SELECT has_any_column_privilege('analyst_state.external_identities','INSERT,UPDATE')

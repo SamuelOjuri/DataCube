@@ -1,5 +1,10 @@
 # Phase 7: fresh production deployment, restricted pilot
 
+The session-management compatibility implementation supports state schemas 7 and 8.
+For migration 010, extended bearer sessions and rollback using the existing URLs,
+follow [the session rollout guide](bi-analyst-session-rollout.md). The original deployment
+steps below describe the bearer/schema-7 baseline with a fifteen-minute lifetime.
+
 Revised with the owner's approval on 9 October 2026 to reduce cost and setup work.
 The owner subsequently reported deleting the staging Render and Netlify instances
 and requested new, production-named services. This replaces both the original

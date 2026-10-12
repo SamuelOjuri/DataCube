@@ -35,8 +35,8 @@ async def check(settings, *, pilot=False):
     try:
         await database.open()
         await database.ready()
-        if database.schema_version != 7:
-            errors.append('schema_7_required')
+        if database.schema_version not in (7, 8):
+            errors.append('schema_7_or_8_required')
         # No user data; verify the additive maintenance role has been installed.
         async with database.transaction() as conn:
             if not await (await conn.execute("SELECT 1 FROM pg_roles WHERE rolname='bi_analyst_maintenance'")).fetchone():

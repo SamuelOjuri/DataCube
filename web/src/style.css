@@ -1264,3 +1264,7 @@ button:focus:not(:focus-visible) {
     transform:none!important;
   }
 }
+.session-warning {margin: 1rem auto; padding: 1rem 1.5rem; max-width: 64rem; background: #fff4dc; border: 1px solid #9a6800; border-radius: .5rem; color: #352500;}
+.session-warning h2 {font-size: 1.1rem; margin: 0 0 .5rem;}
+.session-retry {display: block; margin: 1rem auto;}
+.session-checking {padding: 3rem; text-align: center;}

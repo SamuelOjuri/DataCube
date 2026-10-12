@@ -9,6 +9,21 @@ function acknowledgementGate() {
   return {wait,release};
 }
 
+test('uncertain submission survives reload and same-subject login with its original key',async({page})=>{
+  const state=await fixture(page); await signIn(page); state.failSubmission=true;
+  await page.getByLabel('Your question',{exact:true}).fill('Recover an uncertain query');
+  await page.getByRole('button',{name:'Ask analyst'}).click();
+  await expect(page.getByRole('button',{name:'Retry submission'})).toBeVisible();
+  const key=state.submissions[0].idempotency_key;
+  await page.reload(); await page.getByRole('button',{name:'Continue with Monday'}).click();
+  await expect(page.getByRole('button',{name:'Retry submission'})).toBeVisible();
+  await expect(page.locator('.message .question h2')).toHaveText('Recover an uncertain query');
+  await page.getByRole('button',{name:'Retry submission'}).click();
+  await expect(page.getByRole('button',{name:'Retry submission'})).toBeHidden();
+  expect(state.submissions.map(s=>s.idempotency_key)).toEqual([key,key]);
+  expect(state.runs).toHaveLength(1);
+});
+
 test('production assets exclude backend secrets and test fixtures',async()=>{
   for(const name of await readdir('dist/assets')) {
     const contents=await readFile('dist/assets/'+name,'utf8');

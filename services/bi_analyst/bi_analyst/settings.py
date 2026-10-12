@@ -47,7 +47,10 @@ class Settings(BaseModel):
     monday_read_max_bytes: int = Field(default=262144, ge=4096, le=524288)
     monday_read_concurrency: int = Field(default=2, ge=1, le=4)
     auth_frontend_url: str | None = None
-    session_seconds: int = Field(default=900, ge=60, le=900)
+    session_transport: str = "bearer"
+    session_seconds: int = Field(default=900, ge=60, le=28800)
+    session_idle_seconds: int = Field(default=1800, ge=60, le=1800)
+    session_warning_seconds: int = Field(default=120, gt=0)
     auth_requests_per_minute: int = Field(default=120, ge=10, le=600)
     business_timezone: str | None = "Europe/London"
     metric_evaluation_enabled: bool = False
@@ -66,6 +69,12 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_boundary(self):
+        if self.session_transport != "bearer":
+            raise ValueError("Only bearer sessions are supported on the current hosting URLs")
+        if self.session_seconds > 900 and self.auth_provider != "monday":
+            raise ValueError("Extended sessions require configured Monday authentication")
+        if self.session_seconds > 900 and self.session_warning_seconds >= min(self.session_seconds, self.session_idle_seconds):
+            raise ValueError("Session warning must fit the idle and absolute lifetimes")
         if self.environment not in {"production", "staging", "test"}:
             raise ValueError("environment must be production, staging or test")
         if self.telemetry_token and len(self.telemetry_token.get_secret_value()) < 32:

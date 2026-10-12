@@ -109,7 +109,7 @@ def test_auth_migration_embeds_its_versioned_permission_audit():
 
 
 @pytest.mark.parametrize('change', [
-    {'monday_client_secret':None}, {'monday_account_id':'*'}, {'session_seconds':901},
+    {'monday_client_secret':None}, {'monday_account_id':'*'}, {'session_seconds':28801},
     {'auth_frontend_url':'https://evil.test/callback'},
     {'auth_frontend_url':'https://analyst.example.test/callback?next=evil'},
     {'monday_redirect_uri':'https://api.example.test/elsewhere'},
@@ -123,3 +123,33 @@ def test_auth_configuration_fails_closed(change):
     values.update(change)
     with pytest.raises(ValidationError):
         config(**values)
+
+
+def session_config(**change):
+    values = dict(auth_provider='monday',monday_client_id='client',monday_client_secret='secret',
+        monday_account_id='123',monday_redirect_uri='https://datacube-bi-analyst.onrender.com/auth/callback',
+        auth_frontend_url='https://datacube-bi-analyst.netlify.app/auth/callback',cors_origins=['https://datacube-bi-analyst.netlify.app'],
+        session_transport='bearer',session_seconds=28800,session_idle_seconds=1800,session_warning_seconds=120)
+    return config(**{**values,**change})
+
+
+@pytest.mark.parametrize('change', [
+    {'session_transport':'refresh'}, {'session_seconds':28801}, {'session_seconds':59},
+    {'session_idle_seconds':1801}, {'session_idle_seconds':59},
+    {'session_transport':'cookie'},
+    {'session_warning_seconds':1800}, {'session_warning_seconds':0},
+    {'cors_origins':['https://retired.example.test']},
+    {'auth_provider':'disabled'}, {'monday_redirect_uri':'http://api.example.test/auth/callback'},
+])
+def test_session_policy_fails_closed(change):
+    with pytest.raises(ValidationError): session_config(**change)
+
+
+def test_session_policy_preserves_legacy_and_existing_hosting_urls():
+    assert config().session_transport == 'bearer' and config().session_seconds == 900
+    assert config(session_seconds=60).session_warning_seconds == 120
+    s = session_config()
+    assert s.session_seconds == 28800 and s.session_transport == 'bearer'
+    assert s.monday_redirect_uri == 'https://datacube-bi-analyst.onrender.com/auth/callback'
+    assert s.auth_frontend_url == 'https://datacube-bi-analyst.netlify.app/auth/callback'
+    assert s.cors_origins == ['https://datacube-bi-analyst.netlify.app']

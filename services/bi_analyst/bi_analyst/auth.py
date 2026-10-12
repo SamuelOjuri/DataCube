@@ -25,6 +25,23 @@ class Exchange(BaseModel):
     verifier: str = Field(pattern=TOKEN_PATTERN)
 
 
+class EmptyMutation(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+
+def metadata(row, settings):
+    absolute = max(0, min(int((row["expires_at"] - row["created_at"]).total_seconds() * 1000),
+        int((row["expires_at"] - row["database_now"]).total_seconds() * 1000)))
+    idle = max(0, min(row["idle_timeout_seconds"] * 1000,
+        int((row["idle_expires_at"] - row["database_now"]).total_seconds() * 1000)))
+    return {"subject": row["owner_id"], "permissions_version": row["permissions_version"],
+            "expires_at": row["expires_at"],
+            "absolute_expires_at": row["expires_at"], "idle_expires_at": row["idle_expires_at"],
+            "absolute_expires_in_ms": absolute, "idle_expires_in_ms": idle,
+            "idle_timeout_seconds": row["idle_timeout_seconds"],
+            "warning_seconds": min(settings.session_warning_seconds, row["idle_timeout_seconds"] - 1)}
+
+
 def routes(principal):
     router = APIRouter(prefix="/auth")
 
@@ -85,26 +102,37 @@ def routes(principal):
     async def exchange(body: Exchange, request: Request):
         config = request.app.state.settings
         front = urlsplit(config.auth_frontend_url)
-        if request.headers.get("origin") != f"{front.scheme}://{front.netloc}":
+        if request.headers.getlist("origin") != [f"{front.scheme}://{front.netloc}"]:
             raise HTTPException(403, "origin_denied")
         await request.app.state.auth_store.budget()
         token = secrets.token_urlsafe(32)
-        subject, expires = await request.app.state.auth_store.exchange(body.code, challenge(body.verifier), token, config.session_seconds)
+        subject, expires = await request.app.state.auth_store.exchange(body.code, challenge(body.verifier), token, config.session_seconds,
+            idle=min(config.session_idle_seconds, config.session_seconds))
         request.state.subject = subject
-        return {"access_token": token, "token_type": "Bearer", "expires_at": expires,
+        result = {"access_token": token, "token_type": "Bearer", "expires_at": expires,
                 "expires_in": config.session_seconds, "subject": subject}
+        if request.app.state.database.schema_version == 8:
+            result.update(metadata(await request.app.state.auth_store.validate_session(token), config))
+        return result
 
     @router.get("/session")
     async def session(request: Request, actor=Depends(principal)):
-        row = await request.app.state.auth_store.session(bearer(request))
+        row = request.state.session
+        if request.app.state.database.schema_version == 8:
+            return metadata(row, request.app.state.settings)
         return {"subject": actor.subject, "permissions_version": actor.permissions_version, "expires_at": row["expires_at"]}
 
+    @router.post("/activity")
+    async def activity(body: EmptyMutation, request: Request, actor=Depends(principal)):
+        row = await request.app.state.auth_store.record_activity(bearer(request))
+        return metadata(row, request.app.state.settings)
+
     @router.post("/logout", dependencies=[Depends(configured)])
-    async def logout(request: Request):
+    async def logout(request: Request, body: EmptyMutation | None = None):
         token = bearer(request)
         # Revocation remains usable after DataCube access has been withdrawn.
         try:
-            row = await request.app.state.auth_store.session(token)
+            row = await request.app.state.auth_store.validate_session(token)
             request.state.subject = row["owner_id"]
         except HTTPException:
             pass

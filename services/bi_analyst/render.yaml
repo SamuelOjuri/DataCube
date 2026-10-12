@@ -44,6 +44,12 @@ services:
         sync: false
       - key: BI_ANALYST_SESSION_SECONDS
         value: 900
+      - key: BI_ANALYST_SESSION_TRANSPORT
+        value: bearer
+      - key: BI_ANALYST_SESSION_IDLE_SECONDS
+        value: 1800
+      - key: BI_ANALYST_SESSION_WARNING_SECONDS
+        value: 120
       - key: BI_ANALYST_CONNECTION_BUDGET
         value: 8
       - key: BI_ANALYST_DEPLOYMENT_OVERLAP

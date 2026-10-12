@@ -4,6 +4,12 @@ Implemented 8 October 2026. This closes the authentication **code** gap in Phase
 It supersedes the earlier request to defer all authentication. It does not apply a
 hosted migration, register a Monday app, grant anyone access or deploy either service.
 
+**Proposed session-management update, 12 October 2026:** see the
+[implementation plan](bi-analyst-session-management-plan.md) for eight-hour maximum
+sessions, thirty-minute inactivity expiry, cookie restoration and work recovery.
+That proposal has not been implemented; the fifteen-minute behaviour below remains
+the current code contract.
+
 **Deployment update, 9 October 2026:** follow the
 [single-production-deployment plan](bi-analyst-phase7.md). Following deletion of
 the staging instances, create one new production Render API and one new production

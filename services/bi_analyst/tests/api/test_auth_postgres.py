@@ -22,8 +22,8 @@ from bi_analyst.settings import Settings
 
 pytestmark = pytest.mark.postgres
 ROOT = Path(__file__).resolve().parents[4]
-ORIGIN = 'https://analyst.example.test'
-BASE = 'https://api.example.test'
+ORIGIN = 'https://datacube-bi-analyst.netlify.app'
+BASE = 'https://datacube-bi-analyst.onrender.com'
 
 
 @pytest.fixture(scope='module')
@@ -45,7 +45,7 @@ def auth_settings(auth_database, settings, request):
         'session_seconds': getattr(request, 'param', 900),
         'monday_client_id': 'client-id', 'monday_client_secret': 'client-secret-marker',
         'monday_account_id': '123', 'monday_redirect_uri': BASE+'/auth/callback',
-        'auth_frontend_url': ORIGIN+'/auth/callback'})
+        'auth_frontend_url': ORIGIN+'/auth/callback', 'cors_origins':[ORIGIN]})
 
 
 @pytest.fixture
@@ -167,6 +167,14 @@ def test_exchange_includes_configured_session_duration(client, auth_settings):
     assert response.json()['expires_at'] == session['expires_at']
 
 
+def test_legacy_bootstrap_uses_the_existing_frontend_without_credentials(client):
+    response = client[0].options('/auth/exchange',headers={'Origin':ORIGIN,
+        'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'})
+    assert response.status_code == 200
+    assert response.headers['access-control-allow-origin'] == ORIGIN
+    assert 'access-control-allow-credentials' not in response.headers
+
+
 @pytest.mark.parametrize('change', [{'enabled':False},{'is_guest':True},{'is_pending':True},
     {'is_verified':False},{'is_guest':None},{'account':{'id':'999'}},{'id':'untrusted'}, {'id':'9999999999999999999'}])
 def test_denied_monday_identity(client, auth_database, change):
@@ -194,9 +202,9 @@ def test_browser_binding_replay_and_expiry(client, auth_database):
     browser.cookies.clear()
     assert '#error=' in callback(browser,state).headers['location']
     assert seen == []
-    browser.cookies.set('__Host-datacube_oauth',cookie,domain='api.example.test',path='/')
+    browser.cookies.set('__Host-datacube_oauth',cookie,domain=urlsplit(BASE).hostname,path='/')
     assert '#error=' in callback(browser,secrets.token_urlsafe(32)).headers['location']
-    browser.cookies.set('__Host-datacube_oauth',cookie,domain='api.example.test',path='/')
+    browser.cookies.set('__Host-datacube_oauth',cookie,domain=urlsplit(BASE).hostname,path='/')
     assert '#code=' in callback(browser,state).headers['location']
     browser.cookies.set('__Host-datacube_oauth',cookie,domain='api.example.test',path='/')
     assert '#error=' in callback(browser,state).headers['location']

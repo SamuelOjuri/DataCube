@@ -43,7 +43,7 @@ async def load(client, tokens, *, samples, concurrency, mode):
     health = (await client.get('/health/ready')).json()
     if (health.get('environment') != 'staging' or health.get('metric_execution') != 'owner_accepted'
         or health.get('identity') != 'monday' or health.get('pilot_only') is not True
-        or health.get('schema_version') != 7 or mode == 'answer' and health.get('workflow') != 'enabled'):
+        or health.get('schema_version') not in (7, 8) or mode == 'answer' and health.get('workflow') != 'enabled'):
         raise ValueError('Dedicated enabled staging pilot required')
     metrics = Compiler().catalogue.metrics
     semaphore, durations, statuses = asyncio.Semaphore(concurrency), [], Counter()

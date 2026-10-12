@@ -25,6 +25,7 @@ def bearer(request: Request) -> str:
 async def current_identity(request: Request) -> Identity:
     if request.app.state.settings.auth_provider == "disabled":
         raise HTTPException(503, detail="identity_not_configured")
-    row = await request.app.state.auth_store.session(bearer(request))
+    row = await request.app.state.auth_store.validate_session(bearer(request))
+    request.state.session = row
     request.state.subject = row["owner_id"]
     return Identity(row["owner_id"], row["permissions_version"], row["expires_at"])

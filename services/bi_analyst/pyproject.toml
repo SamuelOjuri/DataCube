@@ -27,7 +27,7 @@ bi-analyst-preflight = "bi_analyst.operations.preflight:main"
 include = ["bi_analyst*"]
 
 [tool.setuptools.package-data]
-"bi_analyst" = ["permissions.sql", "permissions_auth.sql", "permissions_workflow.sql", "permissions_presentation.sql"]
+"bi_analyst" = ["permissions.sql", "permissions_auth.sql", "permissions_workflow.sql", "permissions_presentation.sql", "permissions_sessions.sql"]
 "bi_analyst.semantic" = ["catalogue.json", "acceptance.json"]
 
 [tool.pytest.ini_options]

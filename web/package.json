@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "playwright test",
+    "test:browser:https": "node tests/https/run.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

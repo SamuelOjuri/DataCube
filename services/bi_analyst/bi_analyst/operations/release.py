@@ -41,7 +41,7 @@ def fingerprint(root):
     # Canonical text endings make Windows and Linux checkouts agree on a candidate.
     files = {p.relative_to(root).as_posix():sha256(p.read_bytes().replace(b'\r\n',b'\n')).hexdigest() for p in sorted(inputs)}
     compiler = Compiler()
-    return {'api_version':__version__,'contract_version':'v1','schema_version':7,
+    return {'api_version':__version__,'contract_version':'v1','schema_version':8,'compatible_schema_versions':[7,8],
         'catalogue_version':compiler.catalogue.version,'catalogue_sha256':compiler.catalogue_hash,
         'compiler_version':COMPILER_VERSION,'model':MODEL,'prompt':PROMPT_VERSION,'generation':GENERATION,
         'exploration_prompt':EXPLORE_PROMPT_VERSION,

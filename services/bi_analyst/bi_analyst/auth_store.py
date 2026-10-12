@@ -61,7 +61,7 @@ class AuthStore:
                 WHERE state_hash=%s AND phase='exchanging'""",
                 (principal.subject, principal.permissions_version, digest(state)))
 
-    async def exchange(self, state, challenge, token, ttl):
+    async def exchange(self, state, challenge, token, ttl, *, idle=900):
         async with self.scoped("oauth_state", digest(state)) as conn:
             row = await (await conn.execute("""UPDATE analyst_state.oauth_attempts SET phase='used'
                 WHERE state_hash=%s AND client_challenge=%s AND phase='complete'
@@ -75,21 +75,84 @@ class AuthStore:
                 (row["subject"], row["permissions_version"]))).fetchone()
             if not grant:
                 raise HTTPException(403, "access_denied")
+            if self.db.settings.pilot_only and row["subject"] not in self.db.settings.pilot_subjects:
+                raise HTTPException(403, "access_denied")
             await conn.execute("SELECT set_config('bi_analyst.session_hash',%s,true)", (digest(token),))
-            session = await (await conn.execute("""INSERT INTO analyst_state.sessions
+            if self.db.schema_version == 8:
+                session = await (await conn.execute("""INSERT INTO analyst_state.sessions
+                    (token_hash,owner_id,permissions_version,expires_at,last_active_at,idle_timeout_seconds)
+                    VALUES (%s,%s,%s,statement_timestamp()+make_interval(secs=>%s),statement_timestamp(),%s)
+                    RETURNING expires_at""",
+                    (digest(token), row["subject"], row["permissions_version"], ttl, idle))).fetchone()
+            else:
+                if ttl > 900:
+                    raise HTTPException(503, "session_schema_required")
+                session = await (await conn.execute("""INSERT INTO analyst_state.sessions
                 (token_hash,owner_id,permissions_version,expires_at)
                 VALUES (%s,%s,%s,statement_timestamp()+make_interval(secs=>%s)) RETURNING expires_at""",
                 (digest(token), row["subject"], row["permissions_version"], ttl))).fetchone()
         return row["subject"], session["expires_at"]
 
-    async def session(self, token):
-        async with self.scoped("session_hash", digest(token)) as conn:
-            row = await (await conn.execute("""SELECT owner_id,permissions_version,expires_at
-                FROM analyst_state.sessions WHERE token_hash=%s AND revoked_at IS NULL
-                AND expires_at>clock_timestamp()""", (digest(token),))).fetchone()
+    @staticmethod
+    def check(row):
+        reason = None
         if not row:
-            raise HTTPException(401, "session_expired", headers={"WWW-Authenticate": "Bearer"})
+            reason = "authentication_required"
+        elif row["revoked_at"] is not None:
+            reason = "session_revoked"
+        elif row["expires_at"] <= row["database_now"]:
+            reason = "session_absolute_expired"
+        elif row.get("idle_expires_at", row["expires_at"]) <= row["database_now"]:
+            reason = "session_idle_expired"
+        if reason:
+            raise HTTPException(401, reason)
         return row
+
+    async def validate_session(self, token):
+        async with self.scoped("session_hash", digest(token)) as conn:
+            columns = "*, last_active_at+make_interval(secs=>idle_timeout_seconds) AS idle_expires_at" if self.db.schema_version == 8 else "*"
+            row = await (await conn.execute(f"SELECT {columns},clock_timestamp() AS database_now FROM analyst_state.sessions WHERE token_hash=%s",
+                                           (digest(token),))).fetchone()
+        return self.check(row)
+
+    async def session(self, token):
+        return await self.validate_session(token)
+
+    async def record_activity(self, token):
+        if self.db.schema_version != 8:
+            raise HTTPException(400, "activity_unavailable")
+        async with self.scoped("session_hash", digest(token)) as conn:
+            row = await (await conn.execute("""SELECT *,last_active_at+make_interval(secs=>idle_timeout_seconds) AS idle_expires_at
+                FROM analyst_state.sessions WHERE token_hash=%s FOR UPDATE""", (digest(token),))).fetchone()
+            # Time is obtained AFTER the lock, including any wait for logout/activity.
+            now = await (await conn.execute("SELECT clock_timestamp() AS now")).fetchone()
+            if row:
+                row["database_now"] = now["now"]
+            self.check(row)
+            subject = row["owner_id"]
+            if self.db.settings.pilot_only and subject not in self.db.settings.pilot_subjects:
+                raise HTTPException(403, "access_denied")
+            if not self.db.settings.analyst_enabled:
+                raise HTTPException(503, "analyst_disabled")
+            await conn.execute("SELECT set_config('bi_analyst.subject',%s,true)", (str(subject),))
+            grant = await (await conn.execute("SELECT enabled,company_wide,permissions_version FROM analyst_state.principals WHERE subject=%s", (subject,))).fetchone()
+            if not grant or not grant["enabled"] or not grant["company_wide"]:
+                raise HTTPException(403, "access_denied")
+            if grant["permissions_version"] != row["permissions_version"]:
+                raise HTTPException(403, "permissions_changed")
+            updated = await (await conn.execute("""UPDATE analyst_state.sessions SET last_active_at=%s
+                WHERE token_hash=%s AND revoked_at IS NULL AND expires_at>clock_timestamp()
+                  AND last_active_at+make_interval(secs=>idle_timeout_seconds)>clock_timestamp()
+                  AND EXISTS(SELECT FROM analyst_state.principals p WHERE p.subject=owner_id
+                    AND p.enabled AND p.company_wide AND p.permissions_version=sessions.permissions_version)
+                RETURNING *,last_active_at+make_interval(secs=>idle_timeout_seconds) AS idle_expires_at,
+                  clock_timestamp() AS database_now""", (now["now"], digest(token)))).fetchone()
+            if not updated:
+                clock = await (await conn.execute("SELECT clock_timestamp() AS now")).fetchone()
+                row["database_now"] = clock["now"]
+                self.check(row)
+                raise HTTPException(403, "permissions_changed")
+        return updated
 
     async def revoke(self, token):
         async with self.scoped("session_hash", digest(token)) as conn:

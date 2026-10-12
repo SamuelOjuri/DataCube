@@ -61,6 +61,15 @@ test('valid server sessions are accepted with browser clocks ahead or behind',as
   }
 });
 
+test('legacy visibility restoration rechecks the bearer without extending its deadline',async()=>{
+  const f=fixture(); await login(f); f.advance(60000);
+  assert.equal(await f.auth.restore(),true);
+  assert.equal(f.seen.at(-1)[1].headers.get('Authorization'),'Bearer '+f.session.access_token);
+  assert.equal(f.timerDelay(),900000);
+  f.advance(840000);
+  await assert.rejects(f.auth.request('/v1/conversations'),/sign in/);
+});
+
 test('exchange time is deducted and requests enforce the deadline even before the timer runs',async () => {
   for (const duration of [60,900]) {
     const f = fixture();

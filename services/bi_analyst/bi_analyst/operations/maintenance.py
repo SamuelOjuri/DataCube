@@ -79,8 +79,8 @@ def verify_role(conn):
             and function['proconfig']==['search_path=""'] and function['prosqlbody'] is None
             and function['prosrc'].replace('\r\n','\n')==reviewed.replace('\r\n','\n')):
             raise ValueError('Unexpected maintenance function privilege')
-    if conn.execute('SELECT version FROM analyst_state.schema_version').fetchone() != {'version':7}:
-        raise ValueError('Maintenance requires schema 7')
+    if conn.execute('SELECT version FROM analyst_state.schema_version').fetchone() not in ({'version':7}, {'version':8}):
+        raise ValueError('Maintenance requires schema 7 or 8')
 
 
 def retain(conn, *, conversation_days=30, audit_days=90, batch=100, apply=False, now=None):
