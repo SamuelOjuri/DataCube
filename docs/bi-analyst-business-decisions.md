@@ -80,6 +80,21 @@ in the implementation conversation (recorded at 13:02 UTC, 14:02 Europe/London):
 
 The gestation averages and medians are unchanged, because they already count only
 positive values. The backfill was applied at 12:51–12:52 UTC on 20 October, and
-all 22,608 previewed values were confirmed in production. The six projects need a
-re-run with the amended rule, and the `gestation_fallback` finding stays open until
-the owner confirms that result.
+all 22,608 previewed values were confirmed in production.
+
+### Closure of `gestation_fallback` (20 October 2026)
+
+The six projects were re-run with the amended rule at 13:12:59 UTC and now store
+blank gestation. A read-only check at 13:14 UTC re-ran the reconciliation query
+(stored gestation differing from first invoice minus first design). It returned
+6 reportable projects, down from 17 on 8 October, and all 6 are the flagged
+invoice-before-design projects. Of the three projects sampled on 8 October,
+#15003 and #11359 are among the six, and #14990 now stores 763 days, matching its
+dates. Asked whether to record the finding as resolved, Sam selected (recorded at
+13:15 UTC, 14:15 Europe/London):
+
+> Yes: record gestation_fallback as resolved and the 8 Oct sample as reviewed (signed off by Sam)
+
+The six projects keep blank gestation until their dates are corrected in Monday:
+#15003 (1772099102), #11359 (1775854338), #11288 (1775884726), #10367 (1776374621),
+#8151 (1776991244) and #17217 (2049922801).
