@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import importlib
+import re
 import sys
 from unittest.mock import Mock, patch
 from datetime import datetime, timezone
@@ -304,6 +305,70 @@ def test_order_subitem_changes_refetch_authoritative_hidden_values(order_webhook
     }))
     server._queue_rehydrate_job.assert_called_once_with("p1", "subitem_order_change")
     server.supabase_client.client.table.assert_not_called()
+
+
+class _FakeQuery:
+    """Minimal PostgREST builder: eq is exact, ilike 'x%' is a case-insensitive prefix."""
+
+    def __init__(self, table, rows, calls):
+        self.table, self.rows, self.calls, self.filters = table, rows, calls, []
+
+    def select(self, *_):
+        return self
+
+    def eq(self, field, value):
+        self.filters.append(("eq", field, value))
+        return self
+
+    def ilike(self, field, pattern):
+        self.filters.append(("ilike", field, pattern))
+        return self
+
+    def limit(self, _):
+        return self
+
+    def execute(self):
+        self.calls.append((self.table, tuple(self.filters)))
+
+        def matches(row):
+            return all(str(row.get(field) or "") == value if op == "eq"
+                       else str(row.get(field) or "").lower().startswith(value.rstrip("%").lower())
+                       for op, field, value in self.filters)
+        return Mock(data=[row for row in self.rows.get(self.table, []) if matches(row)])
+
+
+def test_hidden_parent_lookup_uses_exact_project_number_not_estimate_code(order_webhook_server, monkeypatch):
+    server = order_webhook_server
+    rows = {
+        "hidden_items": [{"monday_id": "h1", "item_name": "17684_25.01 Roof", "prefix": "LA"}],
+        "projects": [
+            {"monday_id": "p-right", "item_name": "17684", "project_name": "Roof"},
+            {"monday_id": "p-longer-number", "item_name": "176840", "project_name": ""},
+            {"monday_id": "p-code-name", "item_name": "LAND AT HILL", "project_name": "LA Fitness"},
+        ],
+        "subitems": [{"parent_monday_id": "p-code-name", "item_name": "LA_1", "hidden_item_id": None}],
+    }
+    calls = []
+    client = Mock()
+    client.client.table.side_effect = lambda name: _FakeQuery(name, rows, calls)
+    monkeypatch.setattr(server, "supabase_client", client)
+    server.sync_service._load_subitems_by_relation.return_value = []
+    server.sync_service._normalize_hidden_name_key.side_effect = lambda value: str(value).lower()
+    server.sync_service._leading_digits_from_name.side_effect = (
+        lambda value: next(iter(re.findall(r"^\d+", str(value or "").strip())), None))
+
+    # Callers previously passed the hidden-board prefix column (an estimate code) as a prefix.
+    parents = server._lookup_parents_for_hidden("h1", extra_prefixes={"LA"})
+
+    assert parents == {"p-right"}
+    assert not any(op == "ilike" and not pattern[0].isdigit()
+                   for _, filters in calls for op, _, pattern in filters)
+
+
+@pytest.mark.parametrize("name, expected", [("17684_25.01 Roof", "17684"), (" 18922", "18922"),
+                                            ("LA 17684", ""), (None, "")])
+def test_project_number_is_leading_digits_only(order_webhook_server, name, expected):
+    assert order_webhook_server._project_number(name) == expected
 
 
 if __name__ == "__main__":

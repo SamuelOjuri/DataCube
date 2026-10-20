@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import asyncio
+import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Set, List
 import time
@@ -93,6 +94,13 @@ def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _project_number(value: Any) -> str:
+    """Leading project number of a Monday item name. The hidden-board prefix
+    column holds an estimate code (TP, LA, FA, ...), not a project number."""
+    match = re.match(r"\d+", _clean_text(value))
+    return match.group(0) if match else ""
+
+
 def _load_hidden_snapshot(hidden_item_id: str) -> Optional[Dict[str, Any]]:
     try:
         rows = (
@@ -127,7 +135,7 @@ def _lookup_parents_for_hidden(
 ) -> Set[str]:
     matched_parent_ids: Set[str] = set()
     candidate_names: Set[str] = {_clean_text(v) for v in (extra_names or set()) if _clean_text(v)}
-    candidate_prefixes: Set[str] = {_clean_text(v) for v in (extra_prefixes or set()) if _clean_text(v)}
+    candidate_prefixes: Set[str] = {p for p in map(_clean_text, extra_prefixes or set()) if p.isdigit()}
 
     hidden_snapshot = _load_hidden_snapshot(hidden_item_id)
     if hidden_snapshot:
@@ -135,16 +143,8 @@ def _lookup_parents_for_hidden(
         if snapshot_name:
             candidate_names.add(snapshot_name)
 
-        snapshot_prefix = (
-            _clean_text(hidden_snapshot.get("prefix"))
-            or sync_service._leading_digits_from_name(snapshot_name)
-            or ""
-        )
-        if snapshot_prefix:
-            candidate_prefixes.add(snapshot_prefix)
-
     for name in list(candidate_names):
-        derived_prefix = sync_service._leading_digits_from_name(name)
+        derived_prefix = _project_number(name)
         if derived_prefix:
             candidate_prefixes.add(derived_prefix)
 
@@ -234,7 +234,7 @@ def _lookup_parents_for_hidden(
         row_hidden_id = _clean_text(row.get("hidden_item_id"))
         row_name = _clean_text(row.get("item_name"))
         row_normalized = sync_service._normalize_hidden_name_key(row_name) if row_name else ""
-        row_prefix = sync_service._leading_digits_from_name(row_name) if row_name else None
+        row_prefix = _project_number(row_name)
 
         if row_hidden_id and row_hidden_id == hidden_item_id:
             matched_parent_ids.add(parent_id)
@@ -260,7 +260,7 @@ def _lookup_parents_for_hidden(
             try:
                 rows = (
                     supabase_client.client.table("projects")
-                    .select("monday_id")
+                    .select(f"monday_id, {field_name}")
                     .ilike(field_name, f"{prefix}%")
                     .limit(HIDDEN_PROJECT_FALLBACK_LIMIT)
                     .execute()
@@ -279,7 +279,8 @@ def _lookup_parents_for_hidden(
 
             for row in rows:
                 project_id = _clean_text(row.get("monday_id"))
-                if project_id:
+                # ILIKE is only a coarse filter: 1768% also matches 17684.
+                if project_id and _project_number(row.get(field_name)) == prefix:
                     matched_parent_ids.add(project_id)
                     prefix_project_matches += 1
 
@@ -765,11 +766,7 @@ async def handle_item_created(
                 if hidden_name:
                     extra_names.add(hidden_name)
 
-                hidden_prefix = (
-                    _clean_text(transformed[0].get("prefix"))
-                    or sync_service._leading_digits_from_name(hidden_name)
-                    or ""
-                )
+                hidden_prefix = _project_number(hidden_name)
                 if hidden_prefix:
                     extra_prefixes.add(hidden_prefix)
             else:
@@ -1014,15 +1011,11 @@ async def handle_item_name_updated(board_id: str, item_id: str, payload: Dict) -
             if new_name:
                 extra_names.add(new_name)
 
-            old_prefix = (
-                _clean_text((hidden_snapshot or {}).get("prefix"))
-                or sync_service._leading_digits_from_name(old_name)
-                or ""
-            )
+            old_prefix = _project_number(old_name)
             if old_prefix:
                 extra_prefixes.add(old_prefix)
 
-            new_prefix = sync_service._leading_digits_from_name(new_name) or ""
+            new_prefix = _project_number(new_name)
             if new_prefix:
                 extra_prefixes.add(new_prefix)
 
