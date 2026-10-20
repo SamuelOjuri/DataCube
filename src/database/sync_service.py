@@ -37,6 +37,7 @@ from ..core.normalization import (
 from .supabase_client import SupabaseClient
 from ..core.enhanced_extractor import EnhancedColumnExtractor, EnhancedMondayExtractor
 from ..services import monday_archive as archive
+from ..services import project_rollups
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -594,7 +595,9 @@ class DataSyncService:
         if not cleaned_parent_ids:
             return 0
         if archive.enabled():
-            return await asyncio.to_thread(archive.refresh_parents, cleaned_parent_ids)
+            # Dates and gestation from stored subitems first; money from verified parent values.
+            derived = await asyncio.to_thread(project_rollups.refresh_projects, cleaned_parent_ids)
+            return derived + await asyncio.to_thread(archive.refresh_parents, cleaned_parent_ids)
 
         (
             order_total_map,

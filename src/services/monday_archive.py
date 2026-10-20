@@ -10,6 +10,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from . import monday_lifecycle as life
+from . import project_rollups
 
 LOG = logging.getLogger(__name__)
 POLICY = 'verified_archive_v1'
@@ -434,6 +435,10 @@ def prepare_sync_rows(table, rows):
                                 clean.pop(field, None)
                             else:
                                 clean[field] = None
+                        # Written after the subitems by project_rollups; the parent's date
+                        # mirrors are blank through the API and would erase stored values.
+                        for field in project_rollups.DERIVED_FIELDS:
+                            clean.pop(field, None)
                     accepted.append(clean)
             return accepted
 

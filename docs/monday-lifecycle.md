@@ -522,6 +522,38 @@ events. The feature protects deleted IDs across all writers; it does not replace
 every existing sync field mapping or promise that an unrelated writer cannot
 subsequently change an ordinary value. Repeated differences appear in job review.
 
+### Project dates and gestation in archive mode
+
+Archive mode does not build money values from stored children, and the parent's
+"First/Last Date Designed" and "First Date Invoiced" mirrors are always blank
+through the Monday API. The archive sync gate therefore drops these project
+fields from the ordinary upsert: `first_date_designed`, `last_date_designed`,
+`first_date_invoiced`, `last_date_invoiced`, `date_order_received` and
+`gestation_period`. A separate step ([project_rollups.py](../src/services/project_rollups.py))
+then writes them from the stored subitems, before the verified money refresh:
+
+- first/last design date, first/last invoice date and the earliest order date come
+  from the project's subitems. Children recorded as archived or deleted are
+  ignored; children without a verified state count.
+- A field only changes when a live child supplies a value, so a stored value is
+  never replaced by a missing one. Projects without stored subitems, and projects
+  recorded as archived or deleted, are left unchanged.
+- `gestation_period` follows the resulting dates: 0 when designed but not yet
+  invoiced, otherwise the days from first design to first invoice (never below 0).
+  Projects without a design date keep their stored value.
+
+To restore values written before this step existed, run the backfill from the
+repository root. It uses the same SQL, makes no Monday API calls, previews by
+default and asks for confirmation before writing:
+
+```powershell
+python -m scripts.backfill_project_derived_dates --report derived-dates-preview.csv
+python -m scripts.backfill_project_derived_dates --apply
+```
+
+It writes in short batches and retries lock timeouts, so it can run while the
+workers are active. Re-running it is safe; a second run reports no changes.
+
 ## Historical recovery: project 18824
 
 The known candidate is deleted subitem `3242789524`, not active same-name subitem
