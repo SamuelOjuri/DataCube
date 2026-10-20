@@ -90,17 +90,32 @@ def connect():
                            connect_timeout=10, application_name='datacube-monday-lifecycle')
 
 
-def enqueue(connection, kind, board, item, *, parent=None, payload=None, key=None):
+ENQUEUE_SQL = ('INSERT INTO public.monday_lifecycle_events '
+               '(event_key,board_id,item_id,kind,parent_id,payload) VALUES (%s,%s,%s,%s,%s,%s) '
+               'ON CONFLICT(event_key) DO NOTHING')
+
+
+def event_values(kind, board, item, *, parent=None, payload=None, key=None):
     from . import monday_archive as archive
     if str(board) not in BOARDS or not str(item).isdecimal():
         raise ValueError('Invalid lifecycle target')
     key = key or str(uuid4())
     if archive.enabled():
         payload = {**(payload or {}), 'archive_policy': archive.POLICY}
-    connection.execute('INSERT INTO public.monday_lifecycle_events '
-        '(event_key,board_id,item_id,kind,parent_id,payload) VALUES (%s,%s,%s,%s,%s,%s) '
-        'ON CONFLICT(event_key) DO NOTHING', (key, str(board), str(item), kind, parent, Jsonb(payload or {})))
-    return key
+    return (key, str(board), str(item), kind, parent, Jsonb(payload or {}))
+
+
+def enqueue(connection, kind, board, item, *, parent=None, payload=None, key=None):
+    values = event_values(kind, board, item, parent=parent, payload=payload, key=key)
+    connection.execute(ENQUEUE_SQL, values)
+    return values[0]
+
+
+def enqueue_many(connection, events):
+    """enqueue() each event_values() tuple in one pipelined batch."""
+    if events:
+        with connection.cursor() as cursor:
+            cursor.executemany(ENQUEUE_SQL, events)
 
 
 def claim(connection, *, event_prefixes=None):
@@ -275,13 +290,23 @@ def require_item(items, item, table, state=None):
     return row
 
 
+MARKER_SQL = ('INSERT INTO public.monday_item_lifecycle '
+              '(table_name,monday_id,blocked,last_event_key,former_parent_id) VALUES (%s,%s,%s,%s,%s) '
+              'ON CONFLICT(table_name,monday_id) DO UPDATE SET blocked=EXCLUDED.blocked, '
+              'last_event_key=EXCLUDED.last_event_key,changed_at=now(), '
+              'former_parent_id=COALESCE(EXCLUDED.former_parent_id,monday_item_lifecycle.former_parent_id)')
+
+
 def marker(connection, table, item, blocked, job, *, parent=None):
-    connection.execute('INSERT INTO public.monday_item_lifecycle '
-        '(table_name,monday_id,blocked,last_event_key,former_parent_id) VALUES (%s,%s,%s,%s,%s) '
-        'ON CONFLICT(table_name,monday_id) DO UPDATE SET blocked=EXCLUDED.blocked, '
-        'last_event_key=EXCLUDED.last_event_key,changed_at=now(), '
-        'former_parent_id=COALESCE(EXCLUDED.former_parent_id,monday_item_lifecycle.former_parent_id)',
-        (table, item, blocked, job['event_key'], parent))
+    connection.execute(MARKER_SQL, (table, item, blocked, job['event_key'], parent))
+
+
+def markers(connection, job, entries):
+    """marker() each (table, item, blocked, parent) entry, in order, in one pipelined batch."""
+    if entries:
+        with connection.cursor() as cursor:
+            cursor.executemany(MARKER_SQL, [(table, item, blocked, job['event_key'], parent)
+                                            for table, item, blocked, parent in entries])
 
 
 AUDIT_SQL = ('INSERT INTO public.monday_lifecycle_audit '
@@ -294,6 +319,8 @@ def audit(connection, job, action, table, item, before, evidence):
 
 
 def audit_many(connection, job, entries):
+    if not entries:
+        return
     with connection.cursor() as cursor:
         cursor.executemany(AUDIT_SQL, [
             (job['event_key'], action, table, item, Jsonb(before), Jsonb(evidence))

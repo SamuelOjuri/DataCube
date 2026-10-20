@@ -95,6 +95,17 @@ def state_row(connection, table, item):
                               (table, item)).fetchone()
 
 
+def state_rows(connection, keys):
+    """state_row() for many (table, monday_id) keys in one indexed read."""
+    keys = sorted(set(keys))
+    if not keys:
+        return {}
+    return {(r['table_name'], r['monday_id']): r for r in connection.execute(
+        'SELECT l.* FROM unnest(%s::text[],%s::text[]) AS k(table_name,monday_id) '
+        'JOIN public.monday_item_lifecycle l USING (table_name,monday_id)',
+        ([t for t, _ in keys], [i for _, i in keys])).fetchall()}
+
+
 def read_states(connection, boundary):
     return {table: {r['row']['monday_id']: r['row'] for r in connection.execute(
         'SELECT to_jsonb(l) AS row FROM public.monday_item_lifecycle l '
@@ -161,9 +172,7 @@ def observe_source(connection, job, source, verified_at, *, restore=False):
               for item, evidence in sorted(source.get(table, {}).items()) if evidence.get('state') == 'active']
     if not active:
         return
-    previous = {(r['table_name'], r['monday_id']): r for r in connection.execute(
-        'SELECT * FROM public.monday_item_lifecycle WHERE monday_id=ANY(%s)',
-        ([item for _, item, _ in active],)).fetchall()}
+    previous = state_rows(connection, [(table, item) for table, item, _ in active])
     values, audits = [], []
     for table, item, evidence in active:
         observed = life.require_item({item: evidence}, item, table)
@@ -199,9 +208,11 @@ def observe_active_source_batch(connection, job, source, verified_at):
     life.audit_many(connection, job, audits)
 
 
+REFRESH_PAYLOAD = {'archive_policy': POLICY, 'refresh_mode': 'archive_current_values'}
+
+
 def enqueue_refresh(connection, parent, key):
-    return life.enqueue(connection, 'refresh', life.PARENT_BOARD_ID, parent,
-        key=key, payload={'archive_policy': POLICY, 'refresh_mode': 'archive_current_values'})
+    return life.enqueue(connection, 'refresh', life.PARENT_BOARD_ID, parent, key=key, payload=REFRESH_PAYLOAD)
 
 
 def archive_item(connection, monday, job, evidence):
@@ -367,37 +378,57 @@ def prepare_sync_rows(table, rows):
                 hidden and life.read_items(monday, hidden_ids) != hidden):
             raise life.ReviewRequired('Monday changed while gating normal sync')
         operation = {'event_key': f'sync-observation:{uuid4()}'}
+        boards = {t: b for b, t in life.BOARDS.items()}
 
         def write():
-            accepted = []
+            accepted, observations, audits, events = [], [], [], []
             with connection.transaction():
                 connection.execute("SET LOCAL lock_timeout='750ms'")
                 connection.execute("SET LOCAL statement_timeout='4s'")
                 connection.execute('LOCK TABLE public.projects,public.hidden_items,public.subitems IN SHARE ROW EXCLUSIVE MODE')
+                # Every other gated writer waits while this lock is held, so read stored rows and
+                # lifecycle states once and send all writes as pipelined batches, not per row.
+                stored_rows = {r['monday_id']: r for r in life.read_rows(connection, table, 'monday_id', ids)}
+                states = state_rows(connection, {(table, i) for i in ids} | {('projects', p) for p in parents}
+                                    | {('hidden_items', h) for h in hidden_ids})
+
+                def observe_later(obs_table, item, evidence):
+                    """observe(), with the write deferred to the batch below."""
+                    observed = life.require_item(evidence, item, obs_table)
+                    previous = states.get((obs_table, item))
+                    state, proof, before = observation_values(obs_table, item, observed, previous, verified_at)
+                    observations.append((obs_table, item, state, verified_at, operation['event_key'], Jsonb(proof)))
+                    audits.append(('observe_monday_state', obs_table, item, before,
+                                   {**proof, 'verified_at': verified_at.isoformat(), 'state': state}))
+                    # Later rows see this observation, as they would by re-reading it.
+                    states[(obs_table, item)] = {**(previous or {'blocked': False}), 'table_name': obs_table,
+                        'monday_id': item, 'monday_state': state, 'state_verified_at': verified_at,
+                        'state_event_key': operation['event_key'], 'state_evidence': proof}
+
                 for row in rows:
                     item = str(row['monday_id'])
-                    previous = state_row(connection, table, item)
+                    previous = states.get((table, item))
                     state = source[item]['state']
-                    stored = life.read_rows(connection, table, 'monday_id', [item])
+                    stored = stored_rows.get(item)
                     moved = (table == 'subitems' and stored
-                             and stored[0].get('parent_monday_id') != (source[item].get('parent_item') or {}).get('id'))
+                             and stored.get('parent_monday_id') != (source[item].get('parent_item') or {}).get('id'))
                     if state == 'active' and (moved or (previous and (
                             previous['blocked'] or previous['monday_state'] in {'archived', 'deleted'}))):
-                        life.enqueue(connection, 'restore', next(b for b, t in life.BOARDS.items() if t == table),
-                            item, payload={'archive_policy': POLICY}, key=f"{operation['event_key']}:restore:{item}")
+                        events.append(life.event_values('restore', boards[table], item,
+                            payload={'archive_policy': POLICY}, key=f"{operation['event_key']}:restore:{item}"))
                         LOG.warning('Deferring %s %s to verified restoration', table, item)
                         continue
-                    observe(connection, operation, table, item, source, verified_at)
+                    observe_later(table, item, source)
                     if state != 'active':
                         if state == 'archived':
-                            stored = life.deletion_snapshot(connection, table, item)
-                            life.audit(connection, operation, 'retain_archived_record', table, item,
-                                       stored[table][0] if stored[table] else None, source[item])
-                            life.enqueue(connection, 'reconcile', next(b for b, t in life.BOARDS.items() if t == table),
-                                         item, key=f"{operation['event_key']}:verify:{item}",
-                                         payload={'verification_only': True})
-                            for pid in sorted({r.get('parent_monday_id') for r in stored['subitems']} - {None, ''}):
-                                enqueue_refresh(connection, pid, f"{operation['event_key']}:refresh:{pid}")
+                            snapshot = life.deletion_snapshot(connection, table, item)
+                            audits.append(('retain_archived_record', table, item,
+                                           snapshot[table][0] if snapshot[table] else None, source[item]))
+                            events.append(life.event_values('reconcile', boards[table], item,
+                                key=f"{operation['event_key']}:verify:{item}", payload={'verification_only': True}))
+                            for pid in sorted({r.get('parent_monday_id') for r in snapshot['subitems']} - {None, ''}):
+                                events.append(life.event_values('refresh', life.PARENT_BOARD_ID, pid,
+                                    key=f"{operation['event_key']}:refresh:{pid}", payload=REFRESH_PAYLOAD))
                         LOG.info('Retaining inactive %s %s without a business-row upsert', table, item)
                         continue
                     if table == 'subitems':
@@ -415,23 +446,22 @@ def prepare_sync_rows(table, rows):
                         dependencies.extend(('hidden_items', hid, hidden[hid]) for hid in expected)
                         deferred = False
                         for dep_table, dep_id, dep_source in dependencies:
-                            previous_dep = state_row(connection, dep_table, dep_id)
+                            previous_dep = states.get((dep_table, dep_id))
                             if previous_dep and (previous_dep['blocked'] or previous_dep['monday_state'] in {'archived', 'deleted'}):
                                 if dep_source['state'] == 'active':
-                                    life.enqueue(connection, 'restore', next(b for b, t in life.BOARDS.items() if t == dep_table),
-                                        dep_id, key=f"{operation['event_key']}:restore:{dep_table}:{dep_id}")
+                                    events.append(life.event_values('restore', boards[dep_table], dep_id,
+                                        key=f"{operation['event_key']}:restore:{dep_table}:{dep_id}"))
                                 deferred = True
                             elif dep_source['state'] != 'active':
-                                observe(connection, operation, dep_table, dep_id, {dep_id: dep_source}, verified_at)
+                                observe_later(dep_table, dep_id, {dep_id: dep_source})
                                 deferred = True
                         if deferred:
                             LOG.warning('Deferring subitem %s until parent/source lifecycle is eligible', item)
                             continue
                     clean = dict(row)
                     if table == 'projects':
-                        existing = life.read_rows(connection, table, 'monday_id', [item])
                         for field in FINANCIAL_FIELDS:
-                            if existing:
+                            if stored:
                                 clean.pop(field, None)
                             else:
                                 clean[field] = None
@@ -440,6 +470,11 @@ def prepare_sync_rows(table, rows):
                         for field in project_rollups.DERIVED_FIELDS:
                             clean.pop(field, None)
                     accepted.append(clean)
+                if observations:
+                    with connection.cursor() as cursor:
+                        cursor.executemany(OBSERVATION_SQL, observations)
+                life.audit_many(connection, operation, audits)
+                life.enqueue_many(connection, events)
             return accepted
 
         return life.retry_lock_conflicts(connection, write)

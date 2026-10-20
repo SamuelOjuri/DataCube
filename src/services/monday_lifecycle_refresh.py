@@ -213,8 +213,20 @@ def build_values(pid, source, before, contract, *, lifecycle=None, reparent_id=N
 
 
 def write_values(connection, values, before, contract, *, job=None):
+    """Write, read back and check each table's rows, a table at a time.
+
+    Runs under the three-table lock, so each table's writes are pipelined and read back
+    together; one round trip per statement made larger projects exceed the lock's
+    ten-second transaction limit. Row triggers change no other business row, so reading
+    after the table's last write sees what reading after each write did.
+    """
+    from psycopg.types.json import Jsonb
+    audits = []
     for table in ('projects', 'hidden_items', 'subitems'):
+        if not values[table]:
+            continue
         old = {r['monday_id'] for r in before[table]}
+        statements = []
         for row in values[table]:
             fields = list(row)
             if row['monday_id'] in old:
@@ -227,11 +239,15 @@ def write_values(connection, values, before, contract, *, job=None):
                     sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, fields)),
                     sql.SQL(',').join(sql.Placeholder() for _ in fields))
                 args = [row[f] for f in fields]
-            from psycopg.types.json import Jsonb
-            args = [Jsonb(v) if isinstance(v, (dict, list)) else v for v in args]
-            if connection.execute(command, args).fetchone() is None:
-                raise ValueError('Lifecycle guard refused a row; capture current Monday state again')
-            actual = life.read_rows(connection, table, 'monday_id', [row['monday_id']])[0]
+            statements.append((command, [Jsonb(v) if isinstance(v, (dict, list)) else v for v in args]))
+        with connection.pipeline():
+            cursors = [connection.execute(command, args) for command, args in statements]
+        if any(cursor.fetchone() is None for cursor in cursors):
+            raise ValueError('Lifecycle guard refused a row; capture current Monday state again')
+        written = {r['monday_id']: r for r in life.read_rows(
+            connection, table, 'monday_id', [row['monday_id'] for row in values[table]])}
+        for row in values[table]:
+            actual = written[row['monday_id']]
             for field, wanted in row.items():
                 observed = actual.get(field)
                 if wanted is not None and contract[table][field]['type'] == 'numeric':
@@ -247,9 +263,11 @@ def write_values(connection, values, before, contract, *, job=None):
                     raise ValueError('Generated status_category differs from defined schema')
             if job is not None:
                 baseline = next((r for r in before[table] if r['monday_id'] == row['monday_id']), {})
-                life.audit(connection, job, 'refresh_field_changes', table, row['monday_id'], baseline,
+                audits.append(('refresh_field_changes', table, row['monday_id'], baseline,
                     {'after_row': actual, 'changes': {k: {'before': baseline.get(k), 'after': actual.get(k)}
-                        for k in sorted(set(baseline) | set(actual)) if baseline.get(k) != actual.get(k)}})
+                        for k in sorted(set(baseline) | set(actual)) if baseline.get(k) != actual.get(k)}}))
+    if job is not None:
+        life.audit_many(connection, job, audits)
 
 
 def refresh_new_enquiry(connection, monday, job, pid):
@@ -343,18 +361,21 @@ def refresh_project(connection, monday, job, *, pid=None):
             raise ValueError('Stored rows/schema changed during lifecycle refresh')
         if archive.enabled():
             archive.observe_source(connection, job, source, verified_at, restore=True)
-            for table in life.BOARDS.values():
-                for item, evidence in source[table].items():
-                    if evidence['state'] == 'active':
-                        life.marker(connection, table, item, False, job)
+        # Batched: per-row round trips under the lock made larger projects time out.
+        cleared = [(table, item, False, None) for table in life.BOARDS.values()
+                   for item, evidence in source[table].items()
+                   if evidence['state'] == 'active'] if archive.enabled() else []
+        audits = []
         for table, rows in values.items():
             old = {r['monday_id']: r for r in before[table]}
             for row in rows:
                 item = row['monday_id']
                 # Only a fresh active item on the exact expected board can clear a marker.
                 evidence = life.require_item(source[table], item, table, 'active')
-                life.marker(connection, table, item, False, job)
-                life.audit(connection, job, 'refresh_or_restore', table, item, old.get(item), evidence)
+                cleared.append((table, item, False, None))
+                audits.append(('refresh_or_restore', table, item, old.get(item), evidence))
+        life.markers(connection, job, cleared)
+        life.audit_many(connection, job, audits)
         write_values(connection, values, before, contract, job=job)
         if archive.enabled() and not any(i['table'] == 'projects' and i['field'] in archive.FINANCIAL_FIELDS for i in issues):
             archive.verify_parent_values(connection, job, pid)

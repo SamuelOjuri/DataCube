@@ -22,7 +22,7 @@ class FakeConnection:
     def __init__(self, lock_failures=0):
         self.lock_failures = lock_failures
         self.closed = False
-        self.statements, self.commits, self.rollbacks = [], 0, 0
+        self.statements, self.batches, self.commits, self.rollbacks = [], [], 0, 0
         self.info = type('Info', (), {'transaction_status': IDLE})()
 
     def __enter__(self):
@@ -51,6 +51,18 @@ class FakeConnection:
             self.lock_failures -= 1
             raise lock_timeout()
         return type('Cursor', (), {'fetchone': lambda s: None, 'fetchall': lambda s: []})()
+
+    @contextmanager
+    def cursor(self):
+        batches = self.batches
+
+        class Cursor:
+            def executemany(self, statement, rows):
+                batches.append((str(statement), list(rows)))
+        yield Cursor()
+
+    def batched(self, table):
+        return [row for statement, rows in self.batches if f'public.{table}' in statement for row in rows]
 
 
 @pytest.fixture
@@ -108,10 +120,8 @@ def test_lock_timeouts_inside_an_outer_transaction_are_not_retried(no_sleep):
 def test_sync_gate_retries_its_locked_transaction_after_lock_timeouts(monkeypatch, no_sleep):
     connection = FakeConnection(lock_failures=2)
     source = {'101': {'state': 'active', 'board': {'id': next(iter(life.BOARDS))}, 'parent_item': None}}
-    observed = []
     monkeypatch.setattr(archive, 'enabled', lambda: True)
     monkeypatch.setattr(archive, 'require_runtime', lambda c: None)
-    monkeypatch.setattr(archive, 'observe', lambda *args: observed.append(args[3]))
     monkeypatch.setattr(life, 'connect', lambda: connection)
     monkeypatch.setattr(life, 'read_items', lambda monday, ids, **kw: {})
     monkeypatch.setattr(life, 'read_rows', lambda *args: [])
@@ -123,7 +133,35 @@ def test_sync_gate_retries_its_locked_transaction_after_lock_timeouts(monkeypatc
     assert rows == [{'monday_id': '101', 'item_name': 'x', **{f: None for f in archive.FINANCIAL_FIELDS}}]
     assert sum(s.startswith('LOCK TABLE') for s in connection.statements) == 3
     assert (connection.rollbacks, connection.commits) == (2, 1)
-    assert observed == ['101']
+    assert [row[1] for row in connection.batched('monday_item_lifecycle')] == ['101']
+
+
+def test_sync_gate_round_trips_under_the_lock_do_not_grow_with_rows(monkeypatch):
+    """Production held the three-table lock for ~7 round trips per row; other writers timed out."""
+    boards = {table: board for board, table in life.BOARDS.items()}
+
+    def gate(count):
+        connection = FakeConnection()
+        parent = {'state': 'active', 'board': {'id': boards['projects']}, 'parent_item': None}
+        source = {str(200 + i): {'state': 'active', 'board': {'id': boards['subitems']}, 'parent_item': {'id': '101'},
+                                 'column_values': [{'id': compare.SUBITEM_COLUMNS['hidden_item_id'],
+                                                    'type': 'board_relation', 'linked_item_ids': [str(300 + i)]}]}
+                  for i in range(count)}
+        hidden = {str(300 + i): {'state': 'active', 'board': {'id': boards['hidden_items']}} for i in range(count)}
+        monkeypatch.setattr(life, 'connect', lambda: connection)
+        monkeypatch.setattr(life, 'read_items', lambda monday, ids, **kw: {'101': parent} if '101' in ids else hidden)
+        monkeypatch.setattr(compare, 'fetch_items', lambda *args, **kw: source)
+        rows = [{'monday_id': str(200 + i), 'parent_monday_id': '101', 'hidden_item_id': str(300 + i)}
+                for i in range(count)]
+        assert archive.prepare_sync_rows('subitems', rows) == rows
+        assert len(connection.batched('monday_item_lifecycle')) == len(connection.batched('monday_lifecycle_audit')) == count
+        return connection.statements
+    monkeypatch.setattr(archive, 'enabled', lambda: True)
+    monkeypatch.setattr(archive, 'require_runtime', lambda c: None)
+    monkeypatch.setattr(compare, 'ComparisonMondayClient', lambda: object())
+
+    assert gate(40) == gate(2)
+    assert len(gate(40)) <= 6
 
 
 @pytest.fixture
@@ -286,22 +324,9 @@ def test_rest_upserts_give_up_after_bounded_lock_waits(rest):
 
 
 class RecordingConnection(FakeConnection):
-    def __init__(self):
-        super().__init__()
-        self.batches = []
-
     def execute(self, statement, params=None):
         self.statements.append(str(statement))
         return type('Cursor', (), {'fetchall': lambda s: [], 'fetchone': lambda s: None})()
-
-    @contextmanager
-    def cursor(self):
-        batches = self.batches
-
-        class Cursor:
-            def executemany(self, statement, rows):
-                batches.append((str(statement), list(rows)))
-        yield Cursor()
 
 
 def test_source_observations_use_one_read_and_two_batched_writes():

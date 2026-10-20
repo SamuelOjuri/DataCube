@@ -485,6 +485,13 @@ missed deletions; the daily marker check covers already known deletions/restores
   a fresh connection when the original one has been closed. The sync's PostgREST
   upserts run with 8-second lock and statement timeouts, so they retry those two
   errors a few times; a timed-out request has already been rolled back.
+- While a writer holds the three-table lock, every other gated writer waits, and
+  each database round trip from the service costs tens of milliseconds. The sync
+  gate and full project refresh therefore read their stored rows and lifecycle
+  states once and send their observations, markers, audits, queued jobs and
+  business writes as pipelined batches. Their locked transactions cost a fixed
+  number of round trips, whatever the batch or project size; with per-row round
+  trips, full refreshes of projects with 10 or more subitems timed out.
 - A deleted project cascades to stored subitems only after **every affected child**
   is independently confirmed deleted in Monday. Moved or unreadable children stop
   the operation for review. Independently existing hidden sources are retained.

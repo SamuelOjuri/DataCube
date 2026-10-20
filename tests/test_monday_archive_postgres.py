@@ -402,6 +402,49 @@ def test_normal_sync_missing_source_aborts_without_partial_observations(archive_
     assert archive.state_row(c, 'projects', '999') is None
 
 
+def linked_subitem(ident, hidden_id, state='active'):
+    source = item(ident, 'subitems', state)
+    source['parent_item'] = {'id': '101'}
+    source['column_values'] = [{'id': compare.SUBITEM_COLUMNS['hidden_item_id'], 'type': 'board_relation',
+                                'text': None, 'value': None, 'linked_item_ids': [hidden_id]}]
+    return source
+
+
+def test_batched_sync_gate_keeps_each_rows_lifecycle_decision(archive_db, monkeypatch):
+    c, dsn = archive_db
+    monkeypatch.setenv('SUPABASE_DB_URL', dsn)
+    observe(c, 'subitems', '205', state='archived', parent='101')
+    life.marker(c, 'hidden_items', '303', True, {'event_key': 'earlier-deletion'})
+    links = {'201': '301', '202': '302', '203': '302', '204': '303', '205': '301', '206': '301'}
+    sources = {ident: linked_subitem(ident, hid) for ident, hid in links.items()}
+    sources['206']['state'] = 'archived'
+    monkeypatch.setattr(compare, 'ComparisonMondayClient', lambda: Monday({
+        **sources, '101': item('101', 'projects', 'active'), '301': item('301', 'hidden_items', 'active'),
+        '302': item('302', 'hidden_items', 'archived'), '303': item('303', 'hidden_items', 'active')}))
+    rows = [{'monday_id': ident, 'parent_monday_id': '101', 'hidden_item_id': hid} for ident, hid in links.items()]
+
+    assert archive.prepare_sync_rows('subitems', rows) == rows[:1]
+
+    states = {(r['table_name'], r['monday_id']): (r['monday_state'], r['blocked']) for r in c.execute(
+        'SELECT table_name,monday_id,monday_state,blocked FROM monday_item_lifecycle')}
+    assert {k: v for k, v in states.items() if k[0] == 'subitems'} == {
+        ('subitems', i): ('active', False) for i in ('201', '202', '203', '204')} | {
+        ('subitems', '205'): ('archived', False), ('subitems', '206'): ('archived', False)}
+    assert states[('hidden_items', '302')] == ('archived', False)
+    assert states[('hidden_items', '303')] == (None, True)
+    # The shared archived source is observed once; the second owner sees that observation.
+    assert [(r['action'], r['monday_id']) for r in c.execute(
+        "SELECT action,monday_id FROM monday_lifecycle_audit WHERE event_key LIKE 'sync-observation:%' ORDER BY id")] == [
+        ('observe_monday_state', '201'), ('observe_monday_state', '202'), ('observe_monday_state', '302'),
+        ('observe_monday_state', '203'), ('observe_monday_state', '204'), ('observe_monday_state', '206'),
+        ('retain_archived_record', '206')]
+    assert {(r['kind'], r['board_id'], r['item_id'], r['payload']['archive_policy']) for r in c.execute(
+        "SELECT kind,board_id,item_id,payload FROM monday_lifecycle_events WHERE event_key LIKE 'sync-observation:%'")} == {
+        ('restore', life.HIDDEN_ITEMS_BOARD_ID, '303', archive.POLICY),
+        ('restore', life.SUBITEM_BOARD_ID, '205', archive.POLICY),
+        ('reconcile', life.SUBITEM_BOARD_ID, '206', archive.POLICY)}
+
+
 def test_incomplete_analysis_population_is_an_error_not_an_empty_dataset(monkeypatch):
     from types import SimpleNamespace
     from src.database.supabase_client import SupabaseClient

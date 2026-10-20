@@ -24,10 +24,9 @@ def test_archive_gate_leaves_derived_fields_to_the_rollup_step(monkeypatch):
     source = {pid: {'state': 'active', 'board': {'id': board}, 'parent_item': None} for pid in ('101', '102')}
     monkeypatch.setattr(archive, 'enabled', lambda: True)
     monkeypatch.setattr(archive, 'require_runtime', lambda c: None)
-    monkeypatch.setattr(archive, 'observe', lambda *args: None)
     monkeypatch.setattr(life, 'connect', lambda: FakeConnection())
     monkeypatch.setattr(life, 'read_items', lambda monday, ids, **kw: {})
-    monkeypatch.setattr(life, 'read_rows', lambda connection, table, field, ids: stored.get(ids[0], []))
+    monkeypatch.setattr(life, 'read_rows', lambda connection, table, field, ids: [r for i in ids for r in stored.get(i, [])])
     monkeypatch.setattr(compare, 'ComparisonMondayClient', lambda: object())
     monkeypatch.setattr(compare, 'fetch_items', lambda *args, **kw: source)
     blank_dates = {field: None for field in rollups.DERIVED_FIELDS}
