@@ -283,3 +283,40 @@ def test_rest_upserts_give_up_after_bounded_lock_waits(rest):
     with pytest.raises(APIError):
         sc.execute_with_lock_retry(request)
     assert request.calls == len(sc.LOCK_WAIT_RETRY_DELAYS) + 1
+
+
+class RecordingConnection(FakeConnection):
+    def __init__(self):
+        super().__init__()
+        self.batches = []
+
+    def execute(self, statement, params=None):
+        self.statements.append(str(statement))
+        return type('Cursor', (), {'fetchall': lambda s: [], 'fetchone': lambda s: None})()
+
+    @contextmanager
+    def cursor(self):
+        batches = self.batches
+
+        class Cursor:
+            def executemany(self, statement, rows):
+                batches.append((str(statement), list(rows)))
+        yield Cursor()
+
+
+def test_source_observations_use_one_read_and_two_batched_writes():
+    from datetime import datetime, timezone
+    boards = {table: board for board, table in life.BOARDS.items()}
+
+    def evidence(table, state='active', parent=None):
+        return {'state': state, 'board': {'id': boards[table]}, 'parent_item': {'id': parent} if parent else None}
+    source = {'projects': {'101': evidence('projects')},
+              'subitems': {str(200 + i): evidence('subitems', parent='101') for i in range(40)},
+              'hidden_items': {'301': evidence('hidden_items'), '302': evidence('hidden_items', 'archived')}}
+    connection = RecordingConnection()
+    archive.observe_source(connection, {'event_key': 'k'}, source, datetime.now(timezone.utc))
+    assert len(connection.statements) == 1
+    (observation_sql, observations), (audit_sql, audits) = connection.batches
+    assert 'monday_item_lifecycle' in observation_sql and 'monday_lifecycle_audit' in audit_sql
+    assert len(observations) == len(audits) == 42
+    assert '302' not in {row[1] for row in observations}

@@ -95,6 +95,26 @@ def test_stale_observation_and_ordinary_reactivation_are_rejected(archive_db):
     assert archive.state_row(c, 'projects', '101')['monday_state'] == 'archived'
 
 
+def test_source_observation_batch_validates_every_item_before_writing(archive_db):
+    c, _ = archive_db
+    now = datetime.now(timezone.utc)
+    observe(c, 'projects', '101', verified_at=now)
+    child = item('201', 'subitems', 'active')
+    child['parent_item'] = {'id': '101'}
+    source = {'projects': {'101': item('101', 'projects', 'active')}, 'subitems': {'201': child},
+              'hidden_items': {'301': item('301', 'hidden_items', 'archived')}}
+    with pytest.raises(life.ReviewRequired, match='newer'):
+        with c.transaction():
+            archive.observe_source(c, {'event_key': 'batch'}, source, now - timedelta(seconds=1))
+    assert archive.state_row(c, 'subitems', '201') is None
+    with c.transaction():
+        archive.observe_source(c, {'event_key': 'batch'}, source, now + timedelta(seconds=1))
+    assert archive.state_row(c, 'projects', '101')['state_verified_at'] == now + timedelta(seconds=1)
+    assert archive.state_row(c, 'subitems', '201')['monday_state'] == 'active'
+    assert archive.state_row(c, 'hidden_items', '301') is None
+    assert c.execute("SELECT count(*) AS n FROM monday_lifecycle_audit WHERE event_key='batch'").fetchone()['n'] == 2
+
+
 def test_archive_rechecks_are_bounded_and_old_workers_cannot_claim(archive_db):
     c, _ = archive_db
     observe(c, 'projects', '101', state='archived')

@@ -151,10 +151,29 @@ def observe(connection, job, table, item, evidence, verified_at, *, restore=Fals
 
 
 def observe_source(connection, job, source, verified_at, *, restore=False):
-    for table in life.BOARDS.values():
-        for item, evidence in sorted(source.get(table, {}).items()):
-            if evidence.get('state') == 'active':
-                observe(connection, job, table, item, {item: evidence}, verified_at, restore=restore)
+    """observe() every active source item with one state read and pipelined writes.
+
+    Runs under the three-table write lock; per-item round trips made larger
+    projects exceed the locked transaction's ten-second limit.
+    """
+    active = [(table, item, evidence) for table in life.BOARDS.values()
+              for item, evidence in sorted(source.get(table, {}).items()) if evidence.get('state') == 'active']
+    if not active:
+        return
+    previous = {(r['table_name'], r['monday_id']): r for r in connection.execute(
+        'SELECT * FROM public.monday_item_lifecycle WHERE monday_id=ANY(%s)',
+        ([item for _, item, _ in active],)).fetchall()}
+    values, audits = [], []
+    for table, item, evidence in active:
+        observed = life.require_item({item: evidence}, item, table)
+        state, proof, before = observation_values(
+            table, item, observed, previous.get((table, item)), verified_at, restore=restore)
+        values.append((table, item, state, verified_at, job['event_key'], Jsonb(proof)))
+        audits.append(('observe_monday_state', table, item, before,
+                       {**proof, 'verified_at': verified_at.isoformat(), 'state': state}))
+    with connection.cursor() as cursor:
+        cursor.executemany(OBSERVATION_SQL, values)
+    life.audit_many(connection, job, audits)
 
 
 def observe_active_source_batch(connection, job, source, verified_at):
