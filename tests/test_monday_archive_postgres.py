@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import threading
 
 import psycopg
 import pytest
@@ -350,6 +351,24 @@ def test_active_normal_sync_ignores_archive_label_and_preserves_financial_histor
     assert rows == [{'monday_id': '101', 'pipeline_stage': 'Archive'}]
     assert archive.state_row(c, 'projects', '101')['monday_state'] == 'active'
     assert life.read_rows(c, 'projects', 'monday_id', ['101']) == before
+
+
+def test_sync_gate_waits_out_a_concurrent_lock_holder(archive_db, monkeypatch):
+    c, dsn = archive_db
+    monkeypatch.setenv('SUPABASE_DB_URL', dsn)
+    monkeypatch.setattr(compare, 'ComparisonMondayClient',
+                        lambda: Monday({'101': item('101', 'projects', 'active')}))
+    with psycopg.connect(dsn) as holder:
+        holder.execute('LOCK TABLE public.projects,public.hidden_items,public.subitems IN SHARE ROW EXCLUSIVE MODE')
+        # Another gated writer keeps the lock for several 750 ms lock waits.
+        release = threading.Timer(2.5, holder.rollback)
+        release.start()
+        try:
+            rows = archive.prepare_sync_rows('projects', [{'monday_id': '101', 'pipeline_stage': 'Open'}])
+        finally:
+            release.join()
+    assert rows == [{'monday_id': '101', 'pipeline_stage': 'Open'}]
+    assert archive.state_row(c, 'projects', '101')['monday_state'] == 'active'
 
 
 def test_normal_sync_missing_source_aborts_without_partial_observations(archive_db, monkeypatch):

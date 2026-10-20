@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import time
 from uuid import UUID, uuid4
 
@@ -28,6 +29,9 @@ ARCHIVE_EVENTS = {'archive_pulse', 'archive_item', 'item_archived', 'archive_sub
 MAX_ROWS = 500
 MAX_ATTEMPTS = 12
 CLEANUP_POLICY = 'enquiry_active_open_v1'
+# Gated writers hold the three-table lock for seconds while each waits only 750 ms,
+# so concurrent writers mostly time out. Retry for about 20 s before failing.
+LOCK_RETRY_DELAYS = (0.25, 0.5, 1, 1.5, 2, 3, 4, 5)
 
 
 class ReviewRequired(ValueError):
@@ -191,6 +195,23 @@ def write_transaction(connection, job):
     with locked_write_transaction(connection):
         check_lease(connection, job)
         yield
+
+
+def retry_lock_conflicts(connection, write):
+    """Run write(), which opens and closes its own transaction, again after a lock timeout.
+
+    The timed-out transaction has rolled back before each wait, so nothing is held or
+    written between attempts and every check inside write() reruns on current rows.
+    """
+    for delay in LOCK_RETRY_DELAYS:
+        try:
+            return write()
+        except psycopg.errors.LockNotAvailable:
+            # Never retry inside an outer transaction that is still open or aborted.
+            if connection.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                raise
+            time.sleep(delay * random.uniform(0.5, 1.5))
+    return write()
 
 
 def read_rows(connection, table, field, ids):

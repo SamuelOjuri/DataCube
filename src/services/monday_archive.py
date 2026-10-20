@@ -6,6 +6,7 @@ import logging
 import os
 from uuid import uuid4
 
+import psycopg
 from psycopg.types.json import Jsonb
 
 from . import monday_lifecycle as life
@@ -195,20 +196,24 @@ def archive_item(connection, monday, job, evidence):
     if life.read_items(monday, [item]).get(item) != observed:
         raise life.ReviewRequired('Monday changed during archive verification')
     parents = {r.get('parent_monday_id') for r in before['subitems']} - {None, ''}
-    with life.write_transaction(connection, job):
-        if life.deletion_snapshot(connection, table, item) != before:
-            raise life.ReviewRequired('Stored archive scope changed; retry')
-        observe(connection, job, table, item, {item: observed}, verified_at)
-        life.audit(connection, job, 'retain_archived_record', table, item, before[table][0], observed)
-        if table != 'projects' and not job['payload'].get('verification_only'):
-            for parent in sorted(parents):
-                enqueue_refresh(connection, parent, f"{job['event_key']}:refresh:{parent}")
-        if not job['payload'].get('verification_only'):
-            life.enqueue(connection, 'reconcile', job['board_id'], item,
-                         key=f"{job['event_key']}:verify_archive", payload={'verification_only': True})
-        life.finish(connection, job, 'processed',
-            {'archived': item, 'table': table, 'retained': True, 'business_rows_changed': 0,
-             'refresh_projects': sorted(parents) if table != 'projects' else []})
+
+    def write():
+        with life.write_transaction(connection, job):
+            if life.deletion_snapshot(connection, table, item) != before:
+                raise life.ReviewRequired('Stored archive scope changed; retry')
+            observe(connection, job, table, item, {item: observed}, verified_at)
+            life.audit(connection, job, 'retain_archived_record', table, item, before[table][0], observed)
+            if table != 'projects' and not job['payload'].get('verification_only'):
+                for parent in sorted(parents):
+                    enqueue_refresh(connection, parent, f"{job['event_key']}:refresh:{parent}")
+            if not job['payload'].get('verification_only'):
+                life.enqueue(connection, 'reconcile', job['board_id'], item,
+                             key=f"{job['event_key']}:verify_archive", payload={'verification_only': True})
+            life.finish(connection, job, 'processed',
+                {'archived': item, 'table': table, 'retained': True, 'business_rows_changed': 0,
+                 'refresh_projects': sorted(parents) if table != 'projects' else []})
+
+    life.retry_lock_conflicts(connection, write)
 
 
 def refresh_current_values(connection, monday, job):
@@ -231,10 +236,13 @@ def refresh_current_values(connection, monday, job):
     lifecycle = read_states(connection, {t: list(source[t]) for t in life.BOARDS.values()})
     parent_state = lifecycle['projects'].get(pid, {})
     if parent_state.get('blocked') or parent_state.get('monday_state') in {'archived', 'deleted'}:
-        with life.write_transaction(connection, job):
-            life.enqueue(connection, 'restore', life.PARENT_BOARD_ID, pid,
-                         key=f"{job['event_key']}:restore")
-            life.finish(connection, job, 'processed', {'deferred_to_restoration': pid, 'rows_written': 0})
+        def defer():
+            with life.write_transaction(connection, job):
+                life.enqueue(connection, 'restore', life.PARENT_BOARD_ID, pid,
+                             key=f"{job['event_key']}:restore")
+                life.finish(connection, job, 'processed', {'deferred_to_restoration': pid, 'rows_written': 0})
+
+        life.retry_lock_conflicts(connection, defer)
         LOG.warning('Deferring current values for %s until full restoration', pid)
         return
     proposed, issues = compare.project_projection(pid, source, before, contract, lifecycle=lifecycle)
@@ -248,20 +256,24 @@ def refresh_current_values(connection, monday, job):
     verified_at = datetime.now(timezone.utc)
     if compare.capture(monday, [pid], [r['monday_id'] for r in before_children]) != source:
         raise life.ReviewRequired('Monday changed during current-value refresh')
-    with life.write_transaction(connection, job):
-        if refresh.read_snapshot(connection, pid, source) != before or reconcile.read_contract(connection) != contract:
-            raise life.ReviewRequired('Current-value baseline changed')
-        if read_states(connection, {t: list(source[t]) for t in life.BOARDS.values()}) != lifecycle:
-            raise life.ReviewRequired('Lifecycle states changed during current-value refresh')
-        # This path is not a restoration path. Never reactivate an archived row here.
-        observe_source(connection, job, source, verified_at)
-        refresh.write_values(connection, values, before, contract, job=job)
-        financial_issues = [i for i in issues if i['table'] == 'projects' and i['field'] in FINANCIAL_FIELDS]
-        if not financial_issues:
-            verify_parent_values(connection, job, pid)
-        life.finish(connection, job, 'review' if financial_issues else 'processed',
-            {'project_id': pid, 'rows_written': len(values['projects']), 'issues': issues,
-             'financial_issues': financial_issues, 'refresh_mode': 'archive_current_values'})
+
+    def write():
+        with life.write_transaction(connection, job):
+            if refresh.read_snapshot(connection, pid, source) != before or reconcile.read_contract(connection) != contract:
+                raise life.ReviewRequired('Current-value baseline changed')
+            if read_states(connection, {t: list(source[t]) for t in life.BOARDS.values()}) != lifecycle:
+                raise life.ReviewRequired('Lifecycle states changed during current-value refresh')
+            # This path is not a restoration path. Never reactivate an archived row here.
+            observe_source(connection, job, source, verified_at)
+            refresh.write_values(connection, values, before, contract, job=job)
+            financial_issues = [i for i in issues if i['table'] == 'projects' and i['field'] in FINANCIAL_FIELDS]
+            if not financial_issues:
+                verify_parent_values(connection, job, pid)
+            life.finish(connection, job, 'review' if financial_issues else 'processed',
+                {'project_id': pid, 'rows_written': len(values['projects']), 'issues': issues,
+                 'financial_issues': financial_issues, 'refresh_mode': 'archive_current_values'})
+
+    life.retry_lock_conflicts(connection, write)
 
 
 def refresh_parents(parent_ids):
@@ -282,8 +294,20 @@ def refresh_parents(parent_ids):
             try:
                 refresh_current_values(connection, monday, job)
             except (ValueError, RuntimeError) as exc:
-                with life.write_transaction(connection, job):
-                    life.finish(connection, job, 'review', {}, error=str(exc))
+                def review():
+                    with life.write_transaction(connection, job):
+                        life.finish(connection, job, 'review', {}, error=str(exc))
+
+                life.retry_lock_conflicts(connection, review)
+                raise
+            except Exception as exc:
+                # Return transient failures, such as exhausted lock retries, to the durable
+                # queue now; otherwise the claim stays 'processing' until its lease expires.
+                try:
+                    life.finish(connection, job, 'retry', {'error_type': type(exc).__name__},
+                                error=type(exc).__name__)
+                except psycopg.Error:
+                    LOG.warning('Could not release refresh %s; its lease will expire', job['event_key'])
                 raise
             result = connection.execute('SELECT status,result FROM public.monday_lifecycle_events WHERE event_key=%s',
                                         (key,)).fetchone()
@@ -322,75 +346,79 @@ def prepare_sync_rows(table, rows):
                 parents and life.read_items(monday, parent_ids) != parents) or (
                 hidden and life.read_items(monday, hidden_ids) != hidden):
             raise life.ReviewRequired('Monday changed while gating normal sync')
-        accepted = []
         operation = {'event_key': f'sync-observation:{uuid4()}'}
-        with connection.transaction():
-            connection.execute("SET LOCAL lock_timeout='750ms'")
-            connection.execute("SET LOCAL statement_timeout='4s'")
-            connection.execute('LOCK TABLE public.projects,public.hidden_items,public.subitems IN SHARE ROW EXCLUSIVE MODE')
-            for row in rows:
-                item = str(row['monday_id'])
-                previous = state_row(connection, table, item)
-                state = source[item]['state']
-                stored = life.read_rows(connection, table, 'monday_id', [item])
-                moved = (table == 'subitems' and stored
-                         and stored[0].get('parent_monday_id') != (source[item].get('parent_item') or {}).get('id'))
-                if state == 'active' and (moved or (previous and (
-                        previous['blocked'] or previous['monday_state'] in {'archived', 'deleted'}))):
-                    life.enqueue(connection, 'restore', next(b for b, t in life.BOARDS.items() if t == table),
-                        item, payload={'archive_policy': POLICY}, key=f"{operation['event_key']}:restore:{item}")
-                    LOG.warning('Deferring %s %s to verified restoration', table, item)
-                    continue
-                observe(connection, operation, table, item, source, verified_at)
-                if state != 'active':
-                    if state == 'archived':
-                        stored = life.deletion_snapshot(connection, table, item)
-                        life.audit(connection, operation, 'retain_archived_record', table, item,
-                                   stored[table][0] if stored[table] else None, source[item])
-                        life.enqueue(connection, 'reconcile', next(b for b, t in life.BOARDS.items() if t == table),
-                                     item, key=f"{operation['event_key']}:verify:{item}",
-                                     payload={'verification_only': True})
-                        for pid in sorted({r.get('parent_monday_id') for r in stored['subitems']} - {None, ''}):
-                            enqueue_refresh(connection, pid, f"{operation['event_key']}:refresh:{pid}")
-                    LOG.info('Retaining inactive %s %s without a business-row upsert', table, item)
-                    continue
-                if table == 'subitems':
-                    pid = (source[item].get('parent_item') or {}).get('id')
-                    if row.get('parent_monday_id') != pid:
-                        raise life.ReviewRequired(f'Stale parent membership in incoming subitem {item}')
-                    if parents[pid]['state'] != 'active':
-                        LOG.info('Skipping subitem %s under inactive parent %s', item, pid)
+
+        def write():
+            accepted = []
+            with connection.transaction():
+                connection.execute("SET LOCAL lock_timeout='750ms'")
+                connection.execute("SET LOCAL statement_timeout='4s'")
+                connection.execute('LOCK TABLE public.projects,public.hidden_items,public.subitems IN SHARE ROW EXCLUSIVE MODE')
+                for row in rows:
+                    item = str(row['monday_id'])
+                    previous = state_row(connection, table, item)
+                    state = source[item]['state']
+                    stored = life.read_rows(connection, table, 'monday_id', [item])
+                    moved = (table == 'subitems' and stored
+                             and stored[0].get('parent_monday_id') != (source[item].get('parent_item') or {}).get('id'))
+                    if state == 'active' and (moved or (previous and (
+                            previous['blocked'] or previous['monday_state'] in {'archived', 'deleted'}))):
+                        life.enqueue(connection, 'restore', next(b for b, t in life.BOARDS.items() if t == table),
+                            item, payload={'archive_policy': POLICY}, key=f"{operation['event_key']}:restore:{item}")
+                        LOG.warning('Deferring %s %s to verified restoration', table, item)
                         continue
-                    links = compare.links(source[item])
-                    expected = [str(row['hidden_item_id'])] if row.get('hidden_item_id') else []
-                    if links != expected:
-                        raise life.ReviewRequired(f'Stale or ambiguous hidden-source link for {item}')
-                    dependencies = [('projects', pid, parents[pid])]
-                    dependencies.extend(('hidden_items', hid, hidden[hid]) for hid in expected)
-                    deferred = False
-                    for dep_table, dep_id, dep_source in dependencies:
-                        previous_dep = state_row(connection, dep_table, dep_id)
-                        if previous_dep and (previous_dep['blocked'] or previous_dep['monday_state'] in {'archived', 'deleted'}):
-                            if dep_source['state'] == 'active':
-                                life.enqueue(connection, 'restore', next(b for b, t in life.BOARDS.items() if t == dep_table),
-                                    dep_id, key=f"{operation['event_key']}:restore:{dep_table}:{dep_id}")
-                            deferred = True
-                        elif dep_source['state'] != 'active':
-                            observe(connection, operation, dep_table, dep_id, {dep_id: dep_source}, verified_at)
-                            deferred = True
-                    if deferred:
-                        LOG.warning('Deferring subitem %s until parent/source lifecycle is eligible', item)
+                    observe(connection, operation, table, item, source, verified_at)
+                    if state != 'active':
+                        if state == 'archived':
+                            stored = life.deletion_snapshot(connection, table, item)
+                            life.audit(connection, operation, 'retain_archived_record', table, item,
+                                       stored[table][0] if stored[table] else None, source[item])
+                            life.enqueue(connection, 'reconcile', next(b for b, t in life.BOARDS.items() if t == table),
+                                         item, key=f"{operation['event_key']}:verify:{item}",
+                                         payload={'verification_only': True})
+                            for pid in sorted({r.get('parent_monday_id') for r in stored['subitems']} - {None, ''}):
+                                enqueue_refresh(connection, pid, f"{operation['event_key']}:refresh:{pid}")
+                        LOG.info('Retaining inactive %s %s without a business-row upsert', table, item)
                         continue
-                clean = dict(row)
-                if table == 'projects':
-                    existing = life.read_rows(connection, table, 'monday_id', [item])
-                    for field in FINANCIAL_FIELDS:
-                        if existing:
-                            clean.pop(field, None)
-                        else:
-                            clean[field] = None
-                accepted.append(clean)
-        return accepted
+                    if table == 'subitems':
+                        pid = (source[item].get('parent_item') or {}).get('id')
+                        if row.get('parent_monday_id') != pid:
+                            raise life.ReviewRequired(f'Stale parent membership in incoming subitem {item}')
+                        if parents[pid]['state'] != 'active':
+                            LOG.info('Skipping subitem %s under inactive parent %s', item, pid)
+                            continue
+                        links = compare.links(source[item])
+                        expected = [str(row['hidden_item_id'])] if row.get('hidden_item_id') else []
+                        if links != expected:
+                            raise life.ReviewRequired(f'Stale or ambiguous hidden-source link for {item}')
+                        dependencies = [('projects', pid, parents[pid])]
+                        dependencies.extend(('hidden_items', hid, hidden[hid]) for hid in expected)
+                        deferred = False
+                        for dep_table, dep_id, dep_source in dependencies:
+                            previous_dep = state_row(connection, dep_table, dep_id)
+                            if previous_dep and (previous_dep['blocked'] or previous_dep['monday_state'] in {'archived', 'deleted'}):
+                                if dep_source['state'] == 'active':
+                                    life.enqueue(connection, 'restore', next(b for b, t in life.BOARDS.items() if t == dep_table),
+                                        dep_id, key=f"{operation['event_key']}:restore:{dep_table}:{dep_id}")
+                                deferred = True
+                            elif dep_source['state'] != 'active':
+                                observe(connection, operation, dep_table, dep_id, {dep_id: dep_source}, verified_at)
+                                deferred = True
+                        if deferred:
+                            LOG.warning('Deferring subitem %s until parent/source lifecycle is eligible', item)
+                            continue
+                    clean = dict(row)
+                    if table == 'projects':
+                        existing = life.read_rows(connection, table, 'monday_id', [item])
+                        for field in FINANCIAL_FIELDS:
+                            if existing:
+                                clean.pop(field, None)
+                            else:
+                                clean[field] = None
+                    accepted.append(clean)
+            return accepted
+
+        return life.retry_lock_conflicts(connection, write)
 
 
 def preview_values(connection, monday, selected):
