@@ -482,7 +482,9 @@ missed deletions; the daily marker check covers already known deletions/restores
   refresh that still fails returns its claimed job to `retry` rather than leaving
   it `processing` until the lease expires. Because a transaction timeout ends the
   whole session, the lifecycle worker and parent refresh release failed claims on
-  a fresh connection when the original one has been closed.
+  a fresh connection when the original one has been closed. The sync's PostgREST
+  upserts run with 8-second lock and statement timeouts, so they retry those two
+  errors a few times; a timed-out request has already been rolled back.
 - A deleted project cascades to stored subitems only after **every affected child**
   is independently confirmed deleted in Monday. Moved or unreadable children stop
   the operation for review. Independently existing hidden sources are retained.

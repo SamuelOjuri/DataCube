@@ -1,7 +1,10 @@
 import os
+import random
+import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import logging
+from postgrest.exceptions import APIError
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from ..services import monday_archive as archive
@@ -9,6 +12,23 @@ from ..services import monday_archive as archive
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# PostgREST sessions use 8 s lock and statement timeouts, while archive-gated writers
+# hold table locks for seconds. A timed-out request was rolled back, so send it again.
+LOCK_WAIT_CODES = {'55P03', '57014'}
+LOCK_WAIT_RETRY_DELAYS = (1, 2, 4)
+
+
+def execute_with_lock_retry(request):
+    for delay in LOCK_WAIT_RETRY_DELAYS:
+        try:
+            return request.execute()
+        except APIError as exc:
+            if exc.code not in LOCK_WAIT_CODES:
+                raise
+            logger.warning('Supabase write timed out waiting for a table lock (%s); retrying', exc.code)
+            time.sleep(delay * random.uniform(0.5, 1.5))
+    return request.execute()
 
 
 class SupabaseClient:
@@ -37,10 +57,10 @@ class SupabaseClient:
                 .execute().count
             
             # Perform upsert
-            result = self.client.table('projects').upsert(
+            result = execute_with_lock_retry(self.client.table('projects').upsert(
                 projects,
                 on_conflict='monday_id'
-            ).execute()
+            ))
             
             # Get count after upsert
             count_after = self.client.table('projects')\
@@ -66,10 +86,10 @@ class SupabaseClient:
         if not subitems:
             return {"success": True, "count": 0}
         try:
-            result = self.client.table('subitems').upsert(
+            result = execute_with_lock_retry(self.client.table('subitems').upsert(
                 subitems,
                 on_conflict='monday_id'
-            ).execute()
+            ))
             return {"success": True, "count": len(result.data)}
         except Exception as e:
             logger.error(f"Failed to upsert subitems: {e}")
@@ -81,10 +101,10 @@ class SupabaseClient:
         if not hidden_items:
             return {"success": True, "count": 0}
         try:
-            result = self.client.table('hidden_items').upsert(
+            result = execute_with_lock_retry(self.client.table('hidden_items').upsert(
                 hidden_items,
                 on_conflict='monday_id'
-            ).execute()
+            ))
             return {"success": True, "count": len(result.data)}
         except Exception as e:
             logger.error(f"Failed to upsert hidden items: {e}")

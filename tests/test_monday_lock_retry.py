@@ -1,5 +1,6 @@
 """Lock-timeout retries for archive-gated writes. Offline: database and Monday are fakes."""
 from contextlib import contextmanager
+import time
 
 import psycopg
 import pytest
@@ -230,3 +231,55 @@ def test_parent_refresh_releases_claims_after_a_transaction_timeout(refresh_one,
     with pytest.raises(psycopg.errors.TransactionTimeout):
         archive.refresh_parents(['101'])
     assert calls == [(fresh, 'retry', 'TransactionTimeout')]
+
+
+class FakeRequest:
+    def __init__(self, errors):
+        self.errors, self.calls = list(errors), 0
+
+    def execute(self):
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return type('Response', (), {'data': [{'monday_id': '201'}]})()
+
+
+def rest_error(code):
+    from postgrest.exceptions import APIError
+    return APIError({'code': code, 'message': 'canceling statement', 'hint': None, 'details': None})
+
+
+@pytest.fixture
+def rest(monkeypatch):
+    from src.database import supabase_client as sc
+    sleeps = []
+    monkeypatch.setattr(time, 'sleep', sleeps.append)
+    monkeypatch.delenv('MONDAY_ARCHIVE_ENABLED', raising=False)
+    client = sc.SupabaseClient.__new__(sc.SupabaseClient)
+    return sc, client, sleeps
+
+
+@pytest.mark.parametrize('code', ['55P03', '57014'])
+def test_rest_upserts_retry_postgrest_lock_waits(rest, code):
+    sc, client, sleeps = rest
+    request = FakeRequest([rest_error(code), rest_error(code)])
+    client.client = type('Client', (), {'table': lambda s, name: type('T', (), {'upsert': lambda s, rows, on_conflict: request})()})()
+    assert client.upsert_subitems([{'monday_id': '201'}]) == {'success': True, 'count': 1}
+    assert request.calls == 3 and len(sleeps) == 2
+
+
+def test_rest_upserts_report_other_errors_without_retrying(rest):
+    sc, client, sleeps = rest
+    request = FakeRequest([rest_error('23505')])
+    client.client = type('Client', (), {'table': lambda s, name: type('T', (), {'upsert': lambda s, rows, on_conflict: request})()})()
+    assert client.upsert_hidden_items([{'monday_id': '301'}])['success'] is False
+    assert request.calls == 1 and not sleeps
+
+
+def test_rest_upserts_give_up_after_bounded_lock_waits(rest):
+    from postgrest.exceptions import APIError
+    sc, client, sleeps = rest
+    request = FakeRequest([rest_error('57014')] * 10)
+    with pytest.raises(APIError):
+        sc.execute_with_lock_retry(request)
+    assert request.calls == len(sc.LOCK_WAIT_RETRY_DELAYS) + 1
