@@ -240,6 +240,37 @@ def test_failed_batch_results_reach_scheduler(monkeypatch):
     assert result == {'total': 2, 'succeeded': 1, 'errors': 1}
 
 
+def _targeted_manager(cls):
+    from unittest.mock import AsyncMock
+    manager = object.__new__(cls)
+    manager.logger = Mock()
+    manager.monday = Mock()
+    manager.sync_service = Mock(_batch_upsert_hidden_items=AsyncMock(return_value=1))
+    manager._warm_hidden_cache = AsyncMock()
+    return manager
+
+
+@pytest.mark.parametrize('name', ['DeltaRehydrationManager', 'RecentRehydrationManager'])
+def test_targeted_hidden_warmup_crawls_board_only_when_monday_read_fails(name):
+    from src.tasks import pipeline
+    manager = _targeted_manager(getattr(pipeline, name))
+    manager.monday.get_hidden_items_by_prefix.side_effect = ConnectionError('monday down')
+    asyncio.run(manager._warm_hidden_cache_targeted({'17684'}))
+    manager._warm_hidden_cache.assert_awaited_once_with({'17684'})
+
+
+@pytest.mark.parametrize('name', ['DeltaRehydrationManager', 'RecentRehydrationManager'])
+def test_targeted_hidden_write_rejection_fails_fast_without_board_crawl(name):
+    from src.tasks import pipeline
+    manager = _targeted_manager(getattr(pipeline, name))
+    manager.monday.get_hidden_items_by_prefix.return_value = [{'id': 'h1', 'name': '17684_25.01 Roof'}]
+    manager.sync_service._transform_for_hidden_table.return_value = [{'monday_id': 'h1'}]
+    manager.sync_service._batch_upsert_hidden_items.side_effect = TimeoutError('lock timeout')
+    with pytest.raises(TimeoutError):
+        asyncio.run(manager._warm_hidden_cache_targeted({'17684'}))
+    manager._warm_hidden_cache.assert_not_awaited()
+
+
 def test_missing_maintenance_function_is_a_failure(monkeypatch):
     from src.tasks import postgres_maintenance as maintenance
     from test_postgres_maintenance_phase5 import FakeConnection

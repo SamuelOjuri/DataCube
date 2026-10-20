@@ -96,37 +96,39 @@ class DeltaRehydrationManager:
                 column_ids=column_ids,
                 limit=50,
             )
-
-            if not hidden_rows:
-                self.logger.warning("No hidden items found for prefixes: %s", prefixes)
-                return
-
-            # Build prefix buckets for later use in _rehydrate_batches
-            prefix_buckets: Dict[str, List[Dict]] = {}
-            for row in hidden_rows:
-                name = (row.get("name") or "").strip()
-                prefix = self._leading_digits(name)
-                if prefix:
-                    prefix_buckets.setdefault(prefix, []).append(row)
-            self._hidden_rows_by_prefix = prefix_buckets
-
-            # Transform + upsert so Supabase stays in sync
-            hidden_data = self.sync_service._transform_for_hidden_table(hidden_rows)
-            if not hidden_data:
-                self.logger.warning("Hidden transform yielded no rows for prefixes: %s", prefixes)
-                return
-
-            updated = await self.sync_service._batch_upsert_hidden_items(hidden_data)
-            self.logger.info(
-                "Targeted hidden warm-up complete | prefixes=%d fetched=%d upserted=%d",
-                len(prefixes),
-                len(hidden_rows),
-                updated,
-            )
         except Exception as exc:
-            self.logger.error("Targeted hidden warm-up failed: %s", exc)
-            # Fall back to the full crawl so the run can still proceed
+            self.logger.error("Targeted hidden lookup failed: %s", exc)
+            # Only a failed Monday read falls back to the full crawl. A rejected
+            # database write would recur there after a ~20 minute board scan.
             await self._warm_hidden_cache(prefixes)
+            return
+
+        if not hidden_rows:
+            self.logger.warning("No hidden items found for prefixes: %s", prefixes)
+            return
+
+        # Build prefix buckets for later use in _rehydrate_batches
+        prefix_buckets: Dict[str, List[Dict]] = {}
+        for row in hidden_rows:
+            name = (row.get("name") or "").strip()
+            prefix = self._leading_digits(name)
+            if prefix:
+                prefix_buckets.setdefault(prefix, []).append(row)
+        self._hidden_rows_by_prefix = prefix_buckets
+
+        # Transform + upsert so Supabase stays in sync
+        hidden_data = self.sync_service._transform_for_hidden_table(hidden_rows)
+        if not hidden_data:
+            self.logger.warning("Hidden transform yielded no rows for prefixes: %s", prefixes)
+            return
+
+        updated = await self.sync_service._batch_upsert_hidden_items(hidden_data)
+        self.logger.info(
+            "Targeted hidden warm-up complete | prefixes=%d fetched=%d upserted=%d",
+            len(prefixes),
+            len(hidden_rows),
+            updated,
+        )
 
     async def run(self) -> None:
         self.logger.info("Starting delta rehydrate (since=%s)", self.since.date())
@@ -987,33 +989,34 @@ class RecentRehydrationManager:
                 column_ids=column_ids,
                 limit=50,
             )
-
-            if not hidden_rows:
-                self.logger.warning("No hidden items found for prefixes: %s", prefixes)
-                return
-
-            self.hidden_rows_fetched = len(hidden_rows)
-            self.logger.info("Fetched %d hidden items for prefixes", len(hidden_rows))
-
-            # Transform and populate caches
-            hidden_data = self.sync_service._transform_for_hidden_table(hidden_rows)
-            if hidden_data:
-                updated = await self.sync_service._batch_upsert_hidden_items(hidden_data)
-                self.hidden_rows_upserted = updated
-                self.logger.info(
-                    "Targeted hidden warm-up complete | prefixes=%d fetched=%d upserted=%d",
-                    len(prefixes),
-                    self.hidden_rows_fetched,
-                    updated,
-                )
-            else:
-                self.logger.warning("Hidden transform yielded no rows for prefixes: %s", prefixes)
-
         except Exception as exc:
-            self.logger.error("Targeted hidden warm-up failed: %s", exc)
-            # Fall back to full scan on error
+            self.logger.error("Targeted hidden lookup failed: %s", exc)
+            # Only a failed Monday read falls back to the full crawl. A rejected
+            # database write would recur there after a ~20 minute board scan.
             self.logger.info("Falling back to full hidden board scan")
             await self._warm_hidden_cache(prefixes)
+            return
+
+        if not hidden_rows:
+            self.logger.warning("No hidden items found for prefixes: %s", prefixes)
+            return
+
+        self.hidden_rows_fetched = len(hidden_rows)
+        self.logger.info("Fetched %d hidden items for prefixes", len(hidden_rows))
+
+        # Transform and populate caches
+        hidden_data = self.sync_service._transform_for_hidden_table(hidden_rows)
+        if hidden_data:
+            updated = await self.sync_service._batch_upsert_hidden_items(hidden_data)
+            self.hidden_rows_upserted = updated
+            self.logger.info(
+                "Targeted hidden warm-up complete | prefixes=%d fetched=%d upserted=%d",
+                len(prefixes),
+                self.hidden_rows_fetched,
+                updated,
+            )
+        else:
+            self.logger.warning("Hidden transform yielded no rows for prefixes: %s", prefixes)
 
     async def _collect_hidden_ids(self, prefixes: Set[str], log_id: Optional[str]) -> Dict[str, Any]:
 
