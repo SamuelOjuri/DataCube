@@ -480,7 +480,9 @@ missed deletions; the daily marker check covers already known deletions/restores
   about 20 seconds. Each retry reruns the whole transaction and its checks after a
   full rollback, so nothing is held or written between tries. A synchronous parent
   refresh that still fails returns its claimed job to `retry` rather than leaving
-  it `processing` until the lease expires.
+  it `processing` until the lease expires. Because a transaction timeout ends the
+  whole session, the lifecycle worker and parent refresh release failed claims on
+  a fresh connection when the original one has been closed.
 - A deleted project cascades to stored subitems only after **every affected child**
   is independently confirmed deleted in Monday. Moved or unreadable children stop
   the operation for review. Independently existing hidden sources are retained.

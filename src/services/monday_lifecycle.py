@@ -174,6 +174,24 @@ def finish(connection, job, status, result, *, error=None):
          job['event_key'], job['lease_token']))
 
 
+def release(connection, job, status, result, *, error=None):
+    """finish() a failed claim, on a fresh connection if a timeout terminated this one.
+
+    transaction_timeout ends the whole session; without this the claim would stay
+    'processing' until its lease expires. finish() matches the lease token, so a
+    claim that was already replaced is left unchanged.
+    """
+    if not connection.closed:
+        try:
+            finish(connection, job, status, result, error=error)
+            return
+        except psycopg.OperationalError:
+            if not connection.closed:
+                raise
+    with connect() as fresh:
+        finish(fresh, job, status, result, error=error)
+
+
 @contextmanager
 def locked_write_transaction(connection):
     with connection.transaction():
@@ -483,7 +501,7 @@ def run_once(connection=None, monday=None, *, event_prefixes=None):
             # exceptions may contain credential-bearing DSNs or URLs.
             message = str(exc)[:1500] if isinstance(exc, (ReviewRequired, ValueError)) else type(exc).__name__
             status = 'review' if isinstance(exc, ReviewRequired) or job['attempts'] >= MAX_ATTEMPTS else 'retry'
-            finish(connection, job, status, {'error_type': type(exc).__name__}, error=message)
+            release(connection, job, status, {'error_type': type(exc).__name__}, error=message)
             LOG.warning('Lifecycle %s for %s: %s', status, job['item_id'], message)
             monitor.update('lifecycle', 'degraded', error=exc)
         return True

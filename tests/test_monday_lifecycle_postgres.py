@@ -161,6 +161,23 @@ def test_worker_records_failure_without_losing_job(db):
     assert life.read_rows(c, 'subitems', 'monday_id', ['201'])
 
 
+def test_worker_releases_claim_when_transaction_timeout_ends_the_session(db, monkeypatch):
+    c, dsn = db
+    monkeypatch.setenv('SUPABASE_DB_URL', dsn)
+    life.enqueue(c, 'delete', life.SUBITEM_BOARD_ID, '201')
+
+    def slow_locked_write(connection, monday, job):
+        with connection.transaction():
+            connection.execute("SET LOCAL transaction_timeout='1s'")
+            connection.execute('SELECT pg_sleep(2)')
+    monkeypatch.setattr(life, 'process_job', slow_locked_write)
+    with psycopg.connect(dsn, autocommit=True, row_factory=dict_row) as worker:
+        assert life.run_once(worker, Monday({}))
+        assert worker.closed
+    row = c.execute('SELECT status,last_error,lease_until FROM monday_lifecycle_events').fetchone()
+    assert row == {'status': 'retry', 'last_error': 'TransactionTimeout', 'lease_until': None}
+
+
 def test_concurrent_stale_insert_waits_then_respects_tombstone(db):
     c, dsn = db
     j = job(c)

@@ -20,6 +20,7 @@ class FakeConnection:
 
     def __init__(self, lock_failures=0):
         self.lock_failures = lock_failures
+        self.closed = False
         self.statements, self.commits, self.rollbacks = [], 0, 0
         self.info = type('Info', (), {'transaction_status': IDLE})()
 
@@ -162,3 +163,70 @@ def test_parent_refresh_review_survives_lock_timeouts(refresh_one, monkeypatch, 
         archive.refresh_parents(['101'])
     assert finished == [('review', 'Current-value baseline changed')]
     assert len(no_sleep) == 1
+
+
+@pytest.fixture
+def finishes(monkeypatch):
+    fresh, calls = FakeConnection(), []
+
+    def finish(c, job, status, result, error=None):
+        calls.append((c, status, error))
+        if getattr(c, 'dies_on_finish', False):
+            c.closed = True
+            raise psycopg.OperationalError('server closed the connection unexpectedly')
+    monkeypatch.setattr(life, 'finish', finish)
+    monkeypatch.setattr(life, 'connect', lambda: fresh)
+    return fresh, calls
+
+
+def test_terminated_session_releases_its_claim_on_a_fresh_connection(finishes):
+    fresh, calls = finishes
+    dead = FakeConnection()
+    dead.closed = True
+    life.release(dead, {'event_key': 'k'}, 'retry', {}, error='TransactionTimeout')
+    assert calls == [(fresh, 'retry', 'TransactionTimeout')]
+
+
+def test_session_dying_during_release_falls_back_to_a_fresh_connection(finishes):
+    fresh, calls = finishes
+    dying = FakeConnection()
+    dying.dies_on_finish = True
+    life.release(dying, {'event_key': 'k'}, 'retry', {})
+    assert [c for c, _, _ in calls] == [dying, fresh]
+
+
+def test_release_errors_on_a_live_connection_are_not_hidden(finishes, monkeypatch):
+    def broken(*args, **kwargs):
+        raise psycopg.OperationalError('statement failed')
+    monkeypatch.setattr(life, 'finish', broken)
+    with pytest.raises(psycopg.OperationalError):
+        life.release(FakeConnection(), {'event_key': 'k'}, 'retry', {})
+
+
+def test_lifecycle_worker_releases_claims_after_a_transaction_timeout(finishes, monkeypatch):
+    fresh, calls = finishes
+    dead = FakeConnection()
+    job = {'event_key': 'k', 'item_id': '101', 'attempts': 1, 'lease_token': 't'}
+    monkeypatch.setattr(life, 'claim', lambda c, **kw: job)
+
+    def timed_out(connection, monday, job):
+        dead.closed = True
+        raise psycopg.errors.TransactionTimeout('terminating connection due to transaction timeout')
+    monkeypatch.setattr(life, 'process_job', timed_out)
+    assert life.run_once(dead, object()) is True
+    assert calls == [(fresh, 'retry', 'TransactionTimeout')]
+
+
+def test_parent_refresh_releases_claims_after_a_transaction_timeout(refresh_one, finishes, monkeypatch):
+    connection, _ = refresh_one
+    fresh, calls = finishes
+    connections = iter([connection, fresh])
+    monkeypatch.setattr(life, 'connect', lambda: next(connections))
+
+    def timed_out(*args):
+        connection.closed = True
+        raise psycopg.errors.TransactionTimeout('terminating connection due to transaction timeout')
+    monkeypatch.setattr(archive, 'refresh_current_values', timed_out)
+    with pytest.raises(psycopg.errors.TransactionTimeout):
+        archive.refresh_parents(['101'])
+    assert calls == [(fresh, 'retry', 'TransactionTimeout')]

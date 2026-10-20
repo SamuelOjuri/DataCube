@@ -304,8 +304,8 @@ def refresh_parents(parent_ids):
                 # Return transient failures, such as exhausted lock retries, to the durable
                 # queue now; otherwise the claim stays 'processing' until its lease expires.
                 try:
-                    life.finish(connection, job, 'retry', {'error_type': type(exc).__name__},
-                                error=type(exc).__name__)
+                    life.release(connection, job, 'retry', {'error_type': type(exc).__name__},
+                                 error=type(exc).__name__)
                 except psycopg.Error:
                     LOG.warning('Could not release refresh %s; its lease will expire', job['event_key'])
                 raise
