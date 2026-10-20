@@ -1380,13 +1380,15 @@ class RecentRehydrationManager:
                 projects_data, invoice_date_range_map
             )
 
-            subitems_written = await self.sync_service._batch_upsert_subitems(subitems_data)
-            self.subitem_batches += 1
-            self.subitem_rows_upserted += subitems_written
-
+            # Parents first: subitems reference projects, so a project missing
+            # from Supabase would otherwise fail its subitems' foreign key.
             projects_written = await self.sync_service._batch_upsert_projects(projects_data)
             self.project_batches += 1
             self.project_rows_upserted += projects_written
+
+            subitems_written = await self.sync_service._batch_upsert_subitems(subitems_data)
+            self.subitem_batches += 1
+            self.subitem_rows_upserted += subitems_written
 
             rollup_updates = await self.sync_service._refresh_project_order_invoice_rollups(
                 parent_ids_for_rollups

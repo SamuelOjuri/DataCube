@@ -271,6 +271,37 @@ def test_targeted_hidden_write_rejection_fails_fast_without_board_crawl(name):
     manager._warm_hidden_cache.assert_not_awaited()
 
 
+def test_recent_rehydrate_writes_parents_before_their_subitems():
+    # Subitems reference projects; a project missing from Supabase must be written first.
+    from unittest.mock import AsyncMock
+    from src.tasks import pipeline
+    manager = object.__new__(pipeline.RecentRehydrationManager)
+    manager.chunk_size, manager.logger = 100, Mock()
+    manager.RATE_LIMIT_DELAY = manager.BATCH_DELAY = 0
+    manager.BATCH_SIZE = 1000
+    manager.subitem_batches = manager.subitem_rows_upserted = 0
+    manager.project_batches = manager.project_rows_upserted = 0
+    manager._retry = AsyncMock(side_effect=lambda fn, *args: fn(*args))
+    manager.monday = Mock()
+    manager.monday.get_items_by_ids.return_value = [{'id': '3293909469', 'name': '18932'}]
+    manager.monday.get_subitems_for_parents.return_value = [{'id': '3294233765', 'parent_item': {'id': '3293909469'}}]
+    writes = []
+    service = Mock(_hidden_lookup_by_name={})
+    service._normalize_monday_item.side_effect = lambda item: item
+    service._process_and_resolve_mirrors.side_effect = lambda parents, subitems, hidden: {
+        'projects': parents, 'subitems': subitems}
+    service._transform_for_projects_table.side_effect = lambda rows: rows
+    service._transform_for_subitems_table.side_effect = lambda rows: rows
+    service._rollup_design_invoice_dates_from_subitems.return_value = ({}, {})
+    service._batch_upsert_projects = AsyncMock(side_effect=lambda rows: writes.append('projects') or len(rows))
+    service._batch_upsert_subitems = AsyncMock(side_effect=lambda rows: writes.append('subitems') or len(rows))
+    service._refresh_project_order_invoice_rollups = AsyncMock(return_value=0)
+    manager.sync_service = service
+    asyncio.run(manager._rehydrate_batches([pipeline.ProjectCandidate('3293909469', '18932', '18932')]))
+    assert writes == ['projects', 'subitems']
+    service._refresh_project_order_invoice_rollups.assert_awaited_once_with(['3293909469'])
+
+
 def test_missing_maintenance_function_is_a_failure(monkeypatch):
     from src.tasks import postgres_maintenance as maintenance
     from test_postgres_maintenance_phase5 import FakeConnection
