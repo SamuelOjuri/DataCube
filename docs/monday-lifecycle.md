@@ -539,8 +539,24 @@ then writes them from the stored subitems, before the verified money refresh:
   never replaced by a missing one. Projects without stored subitems, and projects
   recorded as archived or deleted, are left unchanged.
 - `gestation_period` follows the resulting dates: 0 when designed but not yet
-  invoiced, otherwise the days from first design to first invoice (never below 0).
-  Projects without a design date keep their stored value.
+  invoiced, otherwise the days from first design to first invoice. When the first
+  invoice is dated before the first design, gestation cannot be measured and is
+  left blank; the sync logs a warning naming the project so its dates can be
+  checked in Monday. Projects without a design date keep their stored value.
+
+Correcting the dates in Monday is enough: the next sync of the project recomputes
+its dates and gestation. Replace a wrong date rather than clearing it, because
+a project field is only changed when a live subitem supplies a value. The
+read-only preview (`python -m scripts.backfill_project_derived_dates`) ends with
+every project whose first invoice is dated before its first design; with
+`--project-id` it checks only those projects. The same list in SQL:
+
+```sql
+SELECT monday_id, item_name, first_date_designed, first_date_invoiced, gestation_period
+FROM public.projects
+WHERE first_date_invoiced < first_date_designed
+ORDER BY monday_id;
+```
 
 To restore values written before this step existed, run the backfill from the
 repository root. It uses the same SQL, makes no Monday API calls, previews by

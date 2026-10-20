@@ -80,6 +80,36 @@ def test_gestation_is_zero_until_invoiced_and_untouched_without_a_design_date(ro
                                  'date_order_received': date(2026, 9, 1), 'gestation_period': 0}
 
 
+def test_invoice_dated_before_design_leaves_gestation_blank_and_is_flagged(rollup_db, monkeypatch, capsys, caplog):
+    c, dsn = rollup_db
+    project(c, '7010', gestation_period=37)
+    child(c, '7110', '7010', invoice=date(2024, 7, 24))
+    child(c, '7111', '7010', design=date(2025, 8, 22), invoice=date(2025, 10, 9))
+    project(c, '7011')
+    child(c, '7112', '7011', design=date(2025, 1, 1), invoice=date(2025, 1, 31))
+
+    with caplog.at_level('WARNING', logger=rollups.__name__):
+        assert sorted(rollups.apply(c, ['7010', '7011'])) == ['7010', '7011']
+    assert stored(c, '7010')['first_date_invoiced'] == date(2024, 7, 24)
+    assert stored(c, '7010')['gestation_period'] is None
+    assert stored(c, '7011')['gestation_period'] == 30
+    assert '7010 (7010)' in caplog.text and '7011' not in caplog.text
+    caplog.clear()
+    assert rollups.apply(c, ['7010']) == [] and not caplog.text
+    assert [r['monday_id'] for r in rollups.invoice_before_design(c)] == ['7010']
+    assert rollups.invoice_before_design(c, ['7011']) == []
+
+    monkeypatch.setenv('SUPABASE_DB_URL', dsn)
+    assert backfill.main(['--project-id', '7010']) == 0
+    assert '7010 (7010): first design 2025-08-22, first invoice 2024-07-24' in capsys.readouterr().out
+
+    # Correcting the early invoice date in Monday restores a measurable gestation.
+    c.execute("UPDATE subitems SET invoice_date='2025-11-01' WHERE monday_id='7110'")
+    assert rollups.apply(c, ['7010']) == ['7010']
+    assert (stored(c, '7010')['first_date_invoiced'], stored(c, '7010')['gestation_period']) == (date(2025, 10, 9), 48)
+    assert rollups.invoice_before_design(c) == []
+
+
 def test_projects_without_children_or_archived_are_left_unchanged(rollup_db):
     c, _ = rollup_db
     project(c, '7005', first_date_designed=date(2024, 1, 1))

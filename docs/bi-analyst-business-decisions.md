@@ -62,3 +62,24 @@ This approval covers the rule and its implementation. It does not attest that th
 run. Values stored before 20 October keep their earlier source/fallback rules
 until it is, so the `gestation_fallback` finding and its source sample stay open
 until the backfill is applied and checked.
+
+### Amendment: first invoice dated before first design (20 October 2026)
+
+After the backfill preview, six invoiced projects had a first invoice dated
+before their first design, so the "never negative" clause stored 0, which reads
+as "not yet invoiced". Asked how such projects should be handled, Sam selected
+in the implementation conversation (recorded at 13:02 UTC, 14:02 Europe/London):
+
+> Recommended: store blank (not 0), flag these projects, update the analyst wording, and re-run the 6
+
+| Decision | Recorded value | Review status |
+|---|---|---|
+| Gestation when the first invoice is dated before the first design | Stored blank (NULL): it cannot be measured. 0 now only means designed but not yet invoiced. Replaces "never negative" in point 3; the rest of the rule is unchanged. | Approved |
+| Flagging | The sync logs a warning naming each such project, and the backfill preview lists them, so the dates can be corrected in Monday. Correcting a date there recomputes the project automatically. | Approved |
+| Analyst wording | `gestation_period`: 0 means designed but not yet invoiced; NULL means no design date, or first invoice dated before first design. | Approved |
+
+The gestation averages and medians are unchanged, because they already count only
+positive values. The backfill was applied at 12:51–12:52 UTC on 20 October, and
+all 22,608 previewed values were confirmed in production. The six projects need a
+re-run with the amended rule, and the `gestation_fallback` finding stays open until
+the owner confirms that result.

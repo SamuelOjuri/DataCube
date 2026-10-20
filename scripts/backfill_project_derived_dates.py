@@ -5,7 +5,8 @@ first/last design date, first/last invoice date and earliest order date come
 from each project's live subitems (children recorded as archived or deleted
 are ignored), a stored value is never replaced by a missing one, and gestation
 is derived from the resulting dates. Archived or deleted projects are skipped.
-No Monday API calls are made.
+Projects whose first invoice is dated before their first design are listed for
+a date check in Monday; their gestation is left blank. No Monday API calls are made.
 
 Usage (from the repository root):
     python -m scripts.backfill_project_derived_dates                 # read-only preview
@@ -82,6 +83,17 @@ def write_report(rows, path):
     print(f"Wrote per-field changes to {path}")
 
 
+def report_invoice_before_design(connection, only):
+    with connection.transaction():
+        connection.execute("SET TRANSACTION READ ONLY")
+        rows = rollups.invoice_before_design(connection, only or None)
+    print(f"Projects whose first invoice is dated before their first design: {len(rows)}"
+          + (" (gestation is left blank; check these dates in Monday)" if rows else ""))
+    for row in rows:
+        print(f"  {row['item_name']} ({row['monday_id']}): first design {row['first_date_designed']}, "
+              f"first invoice {row['first_date_invoiced']}")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true", help="write the changes (default is a read-only preview)")
@@ -109,9 +121,11 @@ def main(argv=None):
         if args.report:
             write_report(rows, args.report)
         if not args.apply:
+            report_invoice_before_design(connection, args.project_id)
             print("Read-only preview: nothing was written. Re-run with --apply to write these changes.")
             return 0
         if not rows:
+            report_invoice_before_design(connection, args.project_id)
             print("Nothing to apply.")
             return 0
         if not args.yes:
@@ -128,6 +142,7 @@ def main(argv=None):
         remaining = read_preview(connection, pending)
         print(f"Applied: {changed} projects updated. Still differing after the run: {len(remaining)}"
               + (" (live sync may have changed subitems meanwhile; re-run to pick them up)" if remaining else ""))
+        report_invoice_before_design(connection, args.project_id)
         return 0
 
 

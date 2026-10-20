@@ -11,12 +11,18 @@ subitems are saved and:
 - never replaces a stored value with a missing one: a field only changes when a
   live child supplies a value;
 - derives gestation from the resulting dates: designed but not invoiced is 0,
-  otherwise the days from first design to first invoice. Projects without a
-  design date keep their stored gestation.
+  otherwise the days from first design to first invoice. A first invoice dated
+  before the first design cannot be measured, so gestation is left blank and the
+  project is logged for a date check in Monday. Projects without a design date
+  keep their stored gestation.
 """
+import logging
+
 from psycopg.rows import dict_row
 
 from . import monday_lifecycle as life
+
+LOG = logging.getLogger(__name__)
 
 DERIVED_FIELDS = ('first_date_designed', 'last_date_designed', 'first_date_invoiced',
                   'last_date_invoiced', 'date_order_received', 'gestation_period')
@@ -53,7 +59,8 @@ derived AS (
            last_date_invoiced, date_order_received,
            CASE WHEN first_date_designed IS NULL THEN stored_gestation
                 WHEN first_date_invoiced IS NULL THEN 0
-                ELSE GREATEST(first_date_invoiced - first_date_designed, 0) END AS gestation_period
+                WHEN first_date_invoiced < first_date_designed THEN NULL
+                ELSE first_date_invoiced - first_date_designed END AS gestation_period
     FROM dates
 )
 """
@@ -61,11 +68,22 @@ _CHANGED = (f"({', '.join('p.' + f for f in DERIVED_FIELDS)}) IS DISTINCT FROM "
             f"({', '.join('d.' + f for f in DERIVED_FIELDS)})")
 UPDATE_SQL = (_DERIVED + "UPDATE public.projects p SET "
               + ', '.join(f'{f} = d.{f}' for f in DERIVED_FIELDS)
-              + f" FROM derived d WHERE p.monday_id = d.monday_id AND {_CHANGED} RETURNING p.monday_id")
+              + f" FROM derived d WHERE p.monday_id = d.monday_id AND {_CHANGED}"
+              " RETURNING p.monday_id, p.item_name,"
+              " d.first_date_invoiced < d.first_date_designed AS invoice_before_design")
 PREVIEW_SQL = (_DERIVED + "SELECT p.monday_id, "
                + ', '.join(f'p.{f} AS before_{f}, d.{f} AS after_{f}' for f in DERIVED_FIELDS)
                + f" FROM derived d JOIN public.projects p ON p.monday_id = d.monday_id WHERE {_CHANGED}"
                " ORDER BY p.monday_id")
+INVOICE_BEFORE_DESIGN_SQL = """
+SELECT p.monday_id, p.item_name, p.first_date_designed, p.first_date_invoiced, p.gestation_period
+FROM public.projects p
+LEFT JOIN public.monday_item_lifecycle pl ON pl.table_name = 'projects' AND pl.monday_id = p.monday_id
+WHERE p.first_date_invoiced < p.first_date_designed
+  AND COALESCE(pl.monday_state, 'active') = 'active' AND NOT COALESCE(pl.blocked, false)
+  AND (%(ids)s::text[] IS NULL OR p.monday_id = ANY(%(ids)s::text[]))
+ORDER BY p.monday_id
+"""
 
 
 def batches(project_ids, size=BATCH_SIZE):
@@ -85,16 +103,28 @@ def preview(connection, project_ids):
 
 def apply(connection, project_ids, *, batch_size=BATCH_SIZE):
     """Write derived values, one short transaction per batch; returns the changed project IDs."""
-    changed = []
+    changed, flagged = [], []
     for batch in batches(project_ids, batch_size):
         def write(batch=batch):
             with connection.transaction():
                 connection.execute("SET LOCAL lock_timeout='750ms'")
                 connection.execute("SET LOCAL statement_timeout='30s'")
                 with connection.cursor(row_factory=dict_row) as cursor:
-                    return [r['monday_id'] for r in cursor.execute(UPDATE_SQL, {'ids': batch}).fetchall()]
-        changed.extend(life.retry_lock_conflicts(connection, write))
+                    return cursor.execute(UPDATE_SQL, {'ids': batch}).fetchall()
+        rows = life.retry_lock_conflicts(connection, write)
+        changed.extend(r['monday_id'] for r in rows)
+        flagged.extend(f"{r['item_name']} ({r['monday_id']})" for r in rows if r['invoice_before_design'])
+    if flagged:
+        LOG.warning('First invoice dated before first design, so gestation is left blank. '
+                    'Check the dates in Monday for: %s', ', '.join(flagged))
     return changed
+
+
+def invoice_before_design(connection, project_ids=None):
+    """Live projects whose stored first invoice is dated before their first design."""
+    ids = None if project_ids is None else sorted({str(i).strip() for i in project_ids if str(i or '').strip()})
+    with connection.cursor(row_factory=dict_row) as cursor:
+        return cursor.execute(INVOICE_BEFORE_DESIGN_SQL, {'ids': ids}).fetchall()
 
 
 def refresh_projects(project_ids):

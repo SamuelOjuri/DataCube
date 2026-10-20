@@ -48,8 +48,9 @@ COLUMN_NOTES = {
         "first_date_designed": {"meaning": "First design completion date."},
         "first_date_invoiced": {"meaning": "First invoice date."},
         "gestation_period": {"meaning": (
-            "Days from first design completion to first invoice. 0 means not yet invoiced and NULL means no design "
-            "date. Recently created projects are mostly not yet invoiced: for gestation completed in a recent "
+            "Days from first design completion to first invoice. 0 means designed but not yet invoiced. NULL means "
+            "it cannot be measured: no design date, or the first invoice is dated before the first design. "
+            "Recently created projects are mostly not yet invoiced: for gestation completed in a recent "
             "period filter first_date_invoiced; otherwise add a caveat.")},
     },
     "children_v1": {

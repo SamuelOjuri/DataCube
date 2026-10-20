@@ -33,6 +33,7 @@ def test_context_carries_labels_meanings_and_definition_semantics():
     assert 'Refurbishment' not in projects['category']['values']
     assert {'Lost', 'Open Enquiry'} <= set(projects['pipeline_stage']['values'])
     assert 'not yet invoiced' in projects['gestation_period']['meaning']
+    assert 'first invoice is dated before the first design' in projects['gestation_period']['meaning']
     assert projects['monday_id'] == {'type': 'text'}
     assert views['conversion_cohorts_v1']['columns']['cohort_years']['values'] == [2, 5]
     assert {d['column'] for d in ctx['dimensions']} == {'category', 'type'}
