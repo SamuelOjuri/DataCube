@@ -221,6 +221,7 @@ class EnhancedMondayExtractor:
                             ... on MirrorValue {{
                                 display_value
                             }}
+                            ... on BoardRelationValue {{ linked_item_ids }}
                         }}
                     }}
                 }}

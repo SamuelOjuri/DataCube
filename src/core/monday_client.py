@@ -229,6 +229,7 @@ class MondayClient:
                             ... on MirrorValue {{
                                 display_value
                             }}
+                            ... on BoardRelationValue {{ linked_item_ids }}
                         }}
                     }}
                 }}
@@ -290,6 +291,7 @@ class MondayClient:
                             type
                             ... on FormulaValue {{ display_value }}
                             ... on MirrorValue {{ display_value }}
+                            ... on BoardRelationValue {{ linked_item_ids }}
                         }}
                     }}
                 }}
@@ -349,6 +351,7 @@ class MondayClient:
                         ... on MirrorValue {{
                             display_value
                         }}
+                        ... on BoardRelationValue {{ linked_item_ids }}
                     }}
                 }}
             }}
@@ -412,6 +415,7 @@ class MondayClient:
                             ... on MirrorValue {
                                 display_value
                             }
+                            ... on BoardRelationValue { linked_item_ids }
                         }
                     }
                 }
@@ -513,6 +517,7 @@ class MondayClient:
                         type
                         ... on FormulaValue {{ display_value }}
                         ... on MirrorValue {{ display_value }}
+                        ... on BoardRelationValue {{ linked_item_ids }}
                     }}
                 }}
             }}
@@ -626,6 +631,7 @@ class MondayClient:
                         ... on MirrorValue {{
                             display_value
                         }}
+                        ... on BoardRelationValue {{ linked_item_ids }}
                     }}
                 }}
             }}
@@ -725,6 +731,7 @@ class MondayClient:
                   value
                   ... on FormulaValue {{ display_value }}
                   ... on MirrorValue {{ display_value }}
+                  ... on BoardRelationValue {{ linked_item_ids }}
                 }}
               }}
             }}

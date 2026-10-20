@@ -140,6 +140,26 @@ def test_order_source_uses_explicit_hidden_id_instead_of_display_name(link):
     assert row["cust_additional_charges"] == 5
 
 
+@pytest.mark.parametrize("method, args", [
+    ("get_subitems_for_parents", (["1"], ["connect_boards8__1"])),
+    ("get_items_by_ids", (["1"], ["connect_boards8__1"])),
+    ("get_subitems_page", ("1", ["connect_boards8__1"])),
+    ("get_items_page", ("1", ["connect_boards8__1"])),
+    ("get_next_items_page", ("cursor", ["connect_boards8__1"])),
+])
+def test_monday_reads_request_board_relation_ids(method, args):
+    # From API 2025-07 board_relation value and text are null; only linked_item_ids carries the link.
+    from src.core.monday_client import MondayClient
+    client = object.__new__(MondayClient)
+    queries = []
+    client.execute_query = lambda query, variables=None: queries.append(query) or {"data": {}}
+    try:
+        getattr(client, method)(*args)
+    except (KeyError, TypeError, IndexError):
+        pass  # Only the outgoing query matters here.
+    assert queries and all("... on BoardRelationValue { linked_item_ids }" in " ".join(q.split()) for q in queries)
+
+
 @pytest.mark.parametrize("linked_ids", [[999], [123, 456]])
 def test_order_source_does_not_guess_when_explicit_link_is_unresolved(linked_ids):
     service = _make_sync_service()
