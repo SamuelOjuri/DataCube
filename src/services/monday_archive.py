@@ -152,6 +152,20 @@ def observation_values(table, item, source, previous, verified_at, *, restore=Fa
     return state, proof, before
 
 
+def superseded(table, previous, observed, verified_at):
+    """A later stored observation already records this child's same state and parent.
+
+    Writers read Monday seconds before they write under the lock, and periodic checks of
+    single children commit in between; that must not fail a whole project refresh or sync
+    batch. Project observations carry value verification, so they are never skipped.
+    """
+    return bool(table != 'projects' and previous and previous['state_verified_at']
+                and previous['state_verified_at'] > verified_at and not previous['blocked']
+                and previous['monday_state'] == observed.get('state')
+                and (previous['state_evidence'] or {}).get('parent_monday_id')
+                == (observed.get('parent_item') or {}).get('id'))
+
+
 def observe(connection, job, table, item, evidence, verified_at, *, restore=False):
     """Called inside the writer transaction, after a second matching API capture."""
     source = life.require_item(evidence, item, table)
@@ -176,13 +190,16 @@ def observe_source(connection, job, source, verified_at, *, restore=False):
     values, audits = [], []
     for table, item, evidence in active:
         observed = life.require_item({item: evidence}, item, table)
+        if superseded(table, previous.get((table, item)), observed, verified_at):
+            continue
         state, proof, before = observation_values(
             table, item, observed, previous.get((table, item)), verified_at, restore=restore)
         values.append((table, item, state, verified_at, job['event_key'], Jsonb(proof)))
         audits.append(('observe_monday_state', table, item, before,
                        {**proof, 'verified_at': verified_at.isoformat(), 'state': state}))
-    with connection.cursor() as cursor:
-        cursor.executemany(OBSERVATION_SQL, values)
+    if values:
+        with connection.cursor() as cursor:
+            cursor.executemany(OBSERVATION_SQL, values)
     life.audit_many(connection, job, audits)
 
 
@@ -438,6 +455,8 @@ def prepare_sync_rows(table, rows):
                     """observe(), with the write deferred to the batch below."""
                     observed = life.require_item(evidence, item, obs_table)
                     previous = states.get((obs_table, item))
+                    if superseded(obs_table, previous, observed, verified_at):
+                        return
                     state, proof, before = observation_values(obs_table, item, observed, previous, verified_at)
                     observations.append((obs_table, item, state, verified_at, operation['event_key'], Jsonb(proof)))
                     audits.append(('observe_monday_state', obs_table, item, before,

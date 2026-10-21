@@ -586,6 +586,65 @@ def test_periodic_check_retries_when_evidence_changes_during_the_check(archive_d
     assert not no_project_refresh
 
 
+@pytest.mark.parametrize('newer,agrees', [({}, True), ({'parent': '999'}, False), ({'state': 'archived'}, False)])
+def test_source_observation_batch_keeps_only_agreeing_newer_child_observations(archive_db, newer, agrees):
+    c, _ = archive_db
+    now = datetime.now(timezone.utc)
+    observe(c, 'subitems', '201', **{'parent': '101', 'verified_at': now + timedelta(hours=1), **newer})
+    later = archive.state_row(c, 'subitems', '201')
+    source = {'projects': {'101': still_active('101', 'projects')},
+              'subitems': {'201': still_active('201', 'subitems', '101')},
+              'hidden_items': {'301': still_active('301', 'hidden_items')}}
+    if agrees:
+        with c.transaction():
+            archive.observe_source(c, {'event_key': 'batch'}, source, now)
+        assert archive.state_row(c, 'projects', '101')['state_event_key'] == 'batch'
+        assert archive.state_row(c, 'hidden_items', '301')['state_event_key'] == 'batch'
+    else:
+        with pytest.raises(life.ReviewRequired, match='newer'):
+            with c.transaction():
+                archive.observe_source(c, {'event_key': 'batch'}, source, now)
+        assert archive.state_row(c, 'projects', '101') is None
+    assert archive.state_row(c, 'subitems', '201') == later
+
+
+def test_project_refresh_survives_a_concurrent_check_of_one_of_its_children(archive_db, monkeypatch):
+    # Production: a child's periodic check committed while its project's refresh was running.
+    c, _ = archive_db
+    source = full_source()
+    reads = []
+
+    def fetch(*args):
+        reads.append(1)
+        if len(reads) == 2:
+            observe(c, 'subitems', '201', parent='101')
+        return deepcopy(source)
+    monkeypatch.setattr(refresh, 'fetch_project', fetch)
+    j = job(c, life.PARENT_BOARD_ID, '101', 'refresh')
+
+    refresh.refresh_project(c, Monday({'101': item('101', 'projects', 'active')}), j)
+
+    assert c.execute('SELECT status FROM monday_lifecycle_events WHERE event_key=%s',
+                     (j['event_key'],)).fetchone()['status'] == 'processed'
+    assert archive.state_row(c, 'subitems', '201')['state_event_key'] == 'test-observation'
+    assert archive.state_row(c, 'projects', '101')['state_event_key'] == j['event_key']
+    assert archive.state_row(c, 'hidden_items', '301')['state_event_key'] == j['event_key']
+
+
+def test_sync_gate_keeps_a_newer_agreeing_child_observation(archive_db, monkeypatch):
+    c, dsn = archive_db
+    monkeypatch.setenv('SUPABASE_DB_URL', dsn)
+    observe(c, 'subitems', '201', parent='101', verified_at=datetime.now(timezone.utc) + timedelta(hours=1))
+    later = archive.state_row(c, 'subitems', '201')
+    monkeypatch.setattr(compare, 'ComparisonMondayClient', lambda: Monday({
+        '201': linked_subitem('201', '301'), '101': item('101', 'projects', 'active'),
+        '301': item('301', 'hidden_items', 'active')}))
+    rows = [{'monday_id': '201', 'parent_monday_id': '101', 'hidden_item_id': '301'}]
+
+    assert archive.prepare_sync_rows('subitems', rows) == rows
+    assert archive.state_row(c, 'subitems', '201') == later
+
+
 def test_incomplete_analysis_population_is_an_error_not_an_empty_dataset(monkeypatch):
     from types import SimpleNamespace
     from src.database.supabase_client import SupabaseClient

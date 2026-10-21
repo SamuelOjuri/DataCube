@@ -333,6 +333,11 @@ Operational guarantees:
   writing. Project rechecks keep the full project refresh, because a project's
   observation carries the value verification that reporting coverage requires.
   Moved, missing, blocked or archived items also keep the full path.
+- Writers read Monday seconds before writing under the lock, and checks of single
+  children can commit in between. A full project refresh or sync batch therefore
+  keeps a newer stored observation of a subitem or hidden item that records the
+  same state and parent, instead of failing for review. A newer observation that
+  disagrees, or any newer project observation, still stops the write.
 - Archive-enabled parent totals do **not** use sums of retained SQL children.
   New Enquiry Value uses current API-active children for Open parents; Won/Lost
   enquiry values are retained. The implemented order refresh reads the actual
