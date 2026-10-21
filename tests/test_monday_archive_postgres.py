@@ -445,6 +445,147 @@ def test_batched_sync_gate_keeps_each_rows_lifecycle_decision(archive_db, monkey
         ('reconcile', life.SUBITEM_BOARD_ID, '206', archive.POLICY)}
 
 
+def known_active(c):
+    """Project 101, subitem 201 under it, and its hidden source 301, all observed active."""
+    observe(c, 'projects', '101')
+    observe(c, 'subitems', '201', parent='101')
+    observe(c, 'hidden_items', '301')
+    c.execute("UPDATE monday_item_lifecycle SET recheck_after=now()+interval '1 day'")
+
+
+def periodic_check(c, table, ident):
+    c.execute("UPDATE monday_item_lifecycle SET recheck_after=now()-interval '1 second' "
+              'WHERE table_name=%s AND monday_id=%s', (table, ident))
+    assert life.schedule_rechecks(c) == 1
+    claimed = life.claim(c)
+    assert claimed['payload']['cause'] == 'periodic_lifecycle_check'
+    return claimed
+
+
+def still_active(ident, table, parent=None):
+    source = item(ident, table, 'active')
+    source['parent_item'] = {'id': parent} if parent else None
+    return source
+
+
+def business_rows(c):
+    return {t: c.execute(f'SELECT * FROM {t} ORDER BY monday_id').fetchall()
+            for t in ('projects', 'subitems', 'hidden_items')}
+
+
+@pytest.fixture
+def no_project_refresh(monkeypatch):
+    calls = []
+    monkeypatch.setattr(refresh, 'restore_item', lambda c, monday, j, observed: calls.append(j['item_id']))
+    return calls
+
+
+@pytest.mark.parametrize('table,ident,parent', [('subitems', '201', '101'), ('hidden_items', '301', None)])
+def test_periodic_check_of_an_active_child_records_only_the_observation(
+        archive_db, no_project_refresh, table, ident, parent):
+    c, _ = archive_db
+    known_active(c)
+    previous = archive.state_row(c, table, ident)
+    rows = business_rows(c)
+    j = periodic_check(c, table, ident)
+    monday = Monday({ident: still_active(ident, table, parent)})
+
+    life.process_job(c, monday, j)
+
+    assert not no_project_refresh and monday.calls == [[ident], [ident]]
+    event = c.execute('SELECT status,result FROM monday_lifecycle_events WHERE event_key=%s', (j['event_key'],)).fetchone()
+    assert event == {'status': 'processed', 'result': {'observed_active': ident, 'table': table, 'rows_written': 0}}
+    state = archive.state_row(c, table, ident)
+    assert state['monday_state'] == 'active' and not state['blocked']
+    assert state['state_event_key'] == j['event_key'] and state['state_verified_at'] > previous['state_verified_at']
+    assert state['state_evidence']['parent_monday_id'] == parent
+    assert c.execute("SELECT recheck_after > now()+interval '23 hours' AS later FROM monday_item_lifecycle "
+                     'WHERE table_name=%s AND monday_id=%s', (table, ident)).fetchone()['later']
+    assert [(r['action'], r['monday_id']) for r in c.execute(
+        'SELECT action,monday_id FROM monday_lifecycle_audit WHERE event_key=%s', (j['event_key'],))] == [
+        ('observe_monday_state', ident)]
+    # No business writes and no parent or owner refreshes queued.
+    assert business_rows(c) == rows
+    assert c.execute('SELECT count(*) AS n FROM monday_lifecycle_events WHERE event_key<>%s',
+                     (j['event_key'],)).fetchone()['n'] == 0
+
+
+@pytest.mark.parametrize('case', ['project', 'moved_subitem', 'unstored_subitem', 'blocked_source', 'operator_reconcile'])
+def test_other_active_checks_keep_the_full_refresh(archive_db, no_project_refresh, case):
+    c, _ = archive_db
+    known_active(c)
+    table, ident, parent = 'subitems', '201', '101'
+    if case == 'project':
+        table, ident, parent = 'projects', '101', None
+    elif case == 'moved_subitem':
+        parent = '999'
+    elif case == 'unstored_subitem':
+        ident = '202'
+        observe(c, 'subitems', '202', parent='101')
+    elif case == 'blocked_source':
+        table, ident, parent = 'hidden_items', '301', None
+        life.marker(c, 'hidden_items', '301', True, {'event_key': 'earlier-deletion'})
+    if case == 'operator_reconcile':
+        life.enqueue(c, 'reconcile', life.SUBITEM_BOARD_ID, ident)
+        j = life.claim(c)
+    else:
+        j = periodic_check(c, table, ident)
+    life.process_job(c, Monday({ident: still_active(ident, table, parent)}), j)
+    assert no_project_refresh == [ident]
+
+
+def test_periodic_check_superseded_by_a_later_observation_writes_nothing(archive_db, no_project_refresh):
+    c, _ = archive_db
+    known_active(c)
+    j = periodic_check(c, 'subitems', '201')
+    observe(c, 'subitems', '201', parent='101', verified_at=datetime.now(timezone.utc) + timedelta(hours=1))
+    later = archive.state_row(c, 'subitems', '201')
+
+    life.process_job(c, Monday({'201': still_active('201', 'subitems', '101')}), j)
+
+    assert archive.state_row(c, 'subitems', '201') == later
+    result = c.execute('SELECT status,result FROM monday_lifecycle_events WHERE event_key=%s', (j['event_key'],)).fetchone()
+    assert result['status'] == 'processed' and result['result']['superseded_by'] == 'test-observation'
+    assert not c.execute('SELECT 1 FROM monday_lifecycle_audit WHERE event_key=%s', (j['event_key'],)).fetchall()
+
+
+class ChangingMonday(Monday):
+    """Runs `change` during the check's second Monday read, after its pre-checks."""
+
+    def __init__(self, rows, change):
+        super().__init__(rows)
+        self.change = change
+
+    def execute_query(self, query, variables):
+        if self.calls:
+            self.change(self.rows)
+        return super().execute_query(query, variables)
+
+
+@pytest.mark.parametrize('change,error', [
+    (lambda c: lambda rows: rows['201'].update(updated_at='2026-10-06T00:00:00Z'), 'Monday changed'),
+    (lambda c: lambda rows: life.marker(c, 'subitems', '201', True, {'event_key': 'concurrent-deletion'}),
+     'lifecycle state changed'),
+    (lambda c: lambda rows: c.execute("UPDATE subitems SET parent_monday_id='999' WHERE monday_id='201'"),
+     'lifecycle state changed'),
+])
+def test_periodic_check_retries_when_evidence_changes_during_the_check(archive_db, no_project_refresh, change, error):
+    c, _ = archive_db
+    known_active(c)
+    previous = archive.state_row(c, 'subitems', '201')
+    j = periodic_check(c, 'subitems', '201')
+    c.execute("UPDATE monday_lifecycle_events SET status='pending',attempts=0,lease_token=NULL,lease_until=NULL "
+              'WHERE event_key=%s', (j['event_key'],))
+
+    assert life.run_once(c, ChangingMonday({'201': still_active('201', 'subitems', '101')}, change(c)))
+
+    event = c.execute('SELECT status,last_error FROM monday_lifecycle_events WHERE event_key=%s',
+                      (j['event_key'],)).fetchone()
+    assert event['status'] == 'retry' and error in event['last_error']
+    assert archive.state_row(c, 'subitems', '201')['state_event_key'] == previous['state_event_key']
+    assert not no_project_refresh
+
+
 def test_incomplete_analysis_population_is_an_error_not_an_empty_dataset(monkeypatch):
     from types import SimpleNamespace
     from src.database.supabase_client import SupabaseClient

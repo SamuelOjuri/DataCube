@@ -130,3 +130,26 @@ def test_sync_gate_round_trips_do_not_grow_with_rows(slow, monkeypatch):
     assert large <= small + 3, (small, large)
     assert c.execute("SELECT count(*) AS n FROM monday_item_lifecycle WHERE table_name='subitems' "
                      "AND monday_state='active'").fetchone()['n'] == 42
+
+
+@pytest.mark.parametrize('table,ident', [('subitems', '2005'), ('hidden_items', '3005')])
+def test_periodic_check_of_a_large_projects_child_costs_a_fixed_number_of_round_trips(slow, monkeypatch, table, ident):
+    # Each daily check of one of Sawyers Close's 66 children refreshed the whole project.
+    c, slow_dsn, proxy = slow
+    source = large_source(33)
+    monkeypatch.setattr(refresh, 'fetch_project', lambda *a: deepcopy(source))
+    refresh.refresh_project(c, Monday({'101': item('101', 'projects', 'active')}),
+                            job(c, life.PARENT_BOARD_ID, '101', 'refresh'))
+    c.execute("UPDATE monday_lifecycle_events SET next_attempt_at=now()+interval '1 day' WHERE status='pending'")
+    c.execute("UPDATE monday_item_lifecycle SET recheck_after=now()-interval '1 second' "
+              'WHERE table_name=%s AND monday_id=%s', (table, ident))
+    assert life.schedule_rechecks(c) == 1
+    j = life.claim(c)
+    monkeypatch.setattr(refresh, 'fetch_project', lambda *a: pytest.fail('A child check must not refresh its project'))
+    with psycopg.connect(slow_dsn, autocommit=True, row_factory=dict_row) as worker:
+        start = proxy.round_trips
+        life.process_job(worker, Monday({ident: source[table][ident]}), j)
+        round_trips = proxy.round_trips - start
+    assert c.execute('SELECT status FROM monday_lifecycle_events WHERE event_key=%s',
+                     (j['event_key'],)).fetchone()['status'] == 'processed'
+    assert round_trips < 25, round_trips

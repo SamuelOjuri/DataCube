@@ -483,6 +483,9 @@ def process_job(connection, monday, job):
             with write_transaction(connection, job):
                 finish(connection, job, 'ignored', {'reason': 'Active item has no deletion marker'})
             return
+        if (job['kind'] == 'reconcile' and job['payload'].get('cause') == 'periodic_lifecycle_check'
+                and archive.enabled() and archive.recheck_active(connection, monday, job, observed, before, archive_state)):
+            return
         # Active evidence is required even for a purported restoration webhook.
         # Refresh clears markers and inserts fresh data atomically; no unchecked
         # interval during which stale import jobs can recreate an empty record.

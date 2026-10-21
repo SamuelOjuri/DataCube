@@ -247,6 +247,48 @@ def archive_item(connection, monday, job, evidence):
     life.retry_lock_conflicts(connection, write)
 
 
+def recheck_active(connection, monday, job, observed, before, previous):
+    """Record a periodic check that finds a known active subitem or hidden item still active.
+
+    These checks used to refresh the whole parent project, and every owner of a hidden
+    item, holding the three-table lock for most of each day. Projects keep the full
+    refresh: their observation carries the value verification that reporting coverage
+    requires. Returns False when the item needs the full refresh path instead.
+    """
+    table, item = life.BOARDS[job['board_id']], job['item_id']
+    parent = (observed.get('parent_item') or {}).get('id')
+
+    def eligible(stored, state):
+        return bool(len(stored) == 1 and state and not state['blocked'] and state['monday_state'] == 'active'
+                    and (table != 'subitems' or (parent and stored[0].get('parent_monday_id') == parent)))
+
+    if table == 'projects' or not eligible(before[table], previous):
+        return False
+    verified_at = datetime.now(timezone.utc)
+    if life.read_items(monday, [item]).get(item) != observed:
+        raise ValueError('Monday changed during lifecycle check; retry with fresh evidence')
+
+    def write():
+        with life.write_transaction(connection, job):
+            current = state_row(connection, table, item)
+            if not eligible(life.read_rows(connection, table, 'monday_id', [item]), current):
+                raise ValueError('Stored row or lifecycle state changed during lifecycle check; retry')
+            result = {'observed_active': item, 'table': table, 'rows_written': 0}
+            if current['state_verified_at'] and current['state_verified_at'] > verified_at:
+                # A later observation of this still-active item already satisfies the check.
+                life.finish(connection, job, 'processed', {**result, 'superseded_by': current['state_event_key']})
+                return
+            state, proof, before_state = observation_values(table, item, observed, current, verified_at)
+            with connection.pipeline():
+                connection.execute(OBSERVATION_SQL, (table, item, state, verified_at, job['event_key'], Jsonb(proof)))
+                life.audit(connection, job, 'observe_monday_state', table, item, before_state,
+                           {**proof, 'verified_at': verified_at.isoformat(), 'state': state})
+                life.finish(connection, job, 'processed', result)
+
+    life.retry_lock_conflicts(connection, write)
+    return True
+
+
 def refresh_current_values(connection, monday, job):
     """Fresh parent mirror values and active-child enquiry/invoices, never stored-child sums."""
     from scripts import order_value_monday_compare as compare

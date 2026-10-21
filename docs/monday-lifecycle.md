@@ -325,6 +325,14 @@ Operational guarantees:
   parent are checked, the old link is audited, and affected parents are refreshed.
 - Confirmed active and archived IDs are periodically rechecked, ten per idle
   scheduling pass, so pagination absence is never used to infer lifecycle.
+  A recheck that finds a known active subitem or hidden item still active, with
+  its stored row present and a subitem still under its stored parent, records
+  only the new observation: it no longer refreshes the parent project, or every
+  project using a hidden item, which held the table lock for most of each day.
+  A recheck already superseded by a later active observation completes without
+  writing. Project rechecks keep the full project refresh, because a project's
+  observation carries the value verification that reporting coverage requires.
+  Moved, missing, blocked or archived items also keep the full path.
 - Archive-enabled parent totals do **not** use sums of retained SQL children.
   New Enquiry Value uses current API-active children for Open parents; Won/Lost
   enquiry values are retained. The implemented order refresh reads the actual
