@@ -32,6 +32,7 @@ CLEANUP_POLICY = 'enquiry_active_open_v1'
 # Gated writers hold the three-table lock for seconds while each waits only 750 ms,
 # so concurrent writers mostly time out. Retry for about 20 s before failing.
 LOCK_RETRY_DELAYS = (0.25, 0.5, 1, 1.5, 2, 3, 4, 5)
+DEFAULT_RECHECK_DAYS = 7
 
 
 class ReviewRequired(ValueError):
@@ -40,6 +41,33 @@ class ReviewRequired(ValueError):
 
 def enabled():
     return os.getenv('MONDAY_LIFECYCLE_ENABLED', 'false').lower() in {'true', '1', 'yes'}
+
+
+def recheck_days():
+    """Days between periodic Monday checks of each known item; 0 pauses them.
+
+    The checks are a safety net for missed Monday notifications, so an invalid
+    setting falls back to the default rather than stopping lifecycle writers.
+    """
+    raw = os.getenv('MONDAY_LIFECYCLE_RECHECK_DAYS', str(DEFAULT_RECHECK_DAYS)).strip()
+    try:
+        days = float(raw)
+    except ValueError:
+        days = -1
+    if not 0 <= days <= 90:
+        LOG.warning('Ignoring MONDAY_LIFECYCLE_RECHECK_DAYS=%r; using %s days', raw, DEFAULT_RECHECK_DAYS)
+        return DEFAULT_RECHECK_DAYS
+    return days
+
+
+def next_recheck_sql():
+    """SQL time of an item's next periodic check.
+
+    Spread over ±25% of the interval, so items checked together, such as a backlog,
+    do not all fall due together again. Pausing keeps the default spacing.
+    """
+    seconds = (recheck_days() or DEFAULT_RECHECK_DAYS) * 86400
+    return f'now()+make_interval(secs => {seconds:.0f}*(0.75+random()/2))'
 
 
 def event_from_payload(payload):
@@ -148,14 +176,20 @@ def claim(connection, *, event_prefixes=None):
     ''', params).fetchone()
 
 
-def schedule_rechecks(connection):
-    """Revisit at most ten known tombstones per idle pass, once per day each.
+def schedule_rechecks(connection, *, include_active=True):
+    """Queue a periodic check job for up to ten due known items per idle pass.
 
     Recovers missed restoration notifications, including subitem restorations.
     This queries the indexed marker queue, never all business tables or boards.
+    The idle worker passes include_active=False: archive mode checks due active
+    items in bulk (monday_archive.periodic_check), leaving tombstones and archives here.
     """
     from . import monday_archive as archive
-    condition = "(l.blocked OR l.monday_state IN ('active','archived'))" if archive.enabled() else 'l.blocked'
+    if archive.enabled():
+        condition = ("(l.blocked OR l.monday_state IN ('active','archived'))" if include_active
+                     else "(l.blocked OR l.monday_state='archived')")
+    else:
+        condition = 'l.blocked'
     with connection.transaction():
         rows = connection.execute("SELECT l.table_name,l.monday_id,l.former_parent_id, "
             "e.payload->'activity_recovery' AS activity_recovery "
@@ -168,7 +202,7 @@ def schedule_rechecks(connection):
             if row['activity_recovery']:
                 payload['activity_recovery'] = row['activity_recovery']
             enqueue(connection, 'reconcile', board, row['monday_id'], parent=row['former_parent_id'], payload=payload)
-            connection.execute("UPDATE public.monday_item_lifecycle SET recheck_after=now()+interval '1 day' "
+            connection.execute(f'UPDATE public.monday_item_lifecycle SET recheck_after={next_recheck_sql()} '
                 'WHERE table_name=%s AND monday_id=%s', (row['table_name'], row['monday_id']))
         return len(rows)
 
@@ -275,7 +309,8 @@ def read_items(monday, ids, *, parents=False):
     from scripts.order_value_monday_compare import fetch_items
     if len(ids) > MAX_ROWS:
         raise ReviewRequired('Too many lifecycle evidence IDs')
-    return fetch_items(monday, list(ids), [], parents=parents, mirror_depth=0)
+    # Metadata only, no column values, so the API's 100-ID maximum is safe here.
+    return fetch_items(monday, list(ids), [], parents=parents, mirror_depth=0, batch_size=100)
 
 
 def require_item(items, item, table, state=None):
@@ -495,7 +530,45 @@ def process_job(connection, monday, job):
         raise ReviewRequired(f'Monday API state {state!r}; archive is not a deletion or restoration')
 
 
+def bounded_monday():
+    """The lifecycle Monday client, limited to 200 requests and 10 minutes per pass."""
+    from .monday_lifecycle_activity import LifecycleMondayClient
+
+    class BoundedMonday(LifecycleMondayClient):
+        def __init__(self):
+            super().__init__()
+            self.deadline = time.monotonic() + 600
+            self.remaining = 200
+
+        def execute_query(self, query, variables=None):
+            self.remaining -= 1
+            if self.remaining < 0 or time.monotonic() > self.deadline:
+                raise ValueError('Lifecycle Monday request/time budget exhausted; retry later')
+            return super().execute_query(query, variables)
+    return BoundedMonday()
+
+
+def run_periodic_checks(connection, monday):
+    """Run due periodic checks on an idle pass; returns how many items were checked."""
+    from . import monday_archive as archive
+    if not recheck_days():
+        return 0
+    checked = 0
+    if archive.enabled():
+        monitor.update('lifecycle', 'busy', job='periodic_lifecycle_check')
+        try:
+            checked = archive.periodic_check(connection, monday)
+        except Exception as exc:
+            # Claimed items stay leased for an hour, then fall due again.
+            LOG.warning('Periodic lifecycle check failed: %s', type(exc).__name__)
+            monitor.update('lifecycle', 'degraded', error=exc)
+        else:
+            monitor.update('lifecycle', 'idle', success=checked > 0)
+    return checked + schedule_rechecks(connection, include_active=False)
+
+
 def run_once(connection=None, monday=None, *, event_prefixes=None):
+    from . import monday_archive as archive
     own = connection is None
     own_monday = monday is None
     connection = connection or connect()
@@ -504,26 +577,15 @@ def run_once(connection=None, monday=None, *, event_prefixes=None):
         if not job:
             if event_prefixes is not None:
                 return False
-            schedule_rechecks(connection)
+            if monday is None and archive.enabled() and recheck_days():
+                monday = bounded_monday()
+            checked = run_periodic_checks(connection, monday)
             job = claim(connection)
             if not job:
-                return False
+                return checked > 0
         monitor.update('lifecycle', 'busy', job=job['event_key'])
         try:
-            if monday is None:
-                from .monday_lifecycle_activity import LifecycleMondayClient
-                class BoundedMonday(LifecycleMondayClient):
-                    def __init__(self):
-                        super().__init__()
-                        self.deadline = time.monotonic() + 600
-                        self.remaining = 200
-
-                    def execute_query(self, query, variables=None):
-                        self.remaining -= 1
-                        if self.remaining < 0 or time.monotonic() > self.deadline:
-                            raise ValueError('Lifecycle Monday request/time budget exhausted; retry later')
-                        return super().execute_query(query, variables)
-                monday = BoundedMonday()
+            monday = monday or bounded_monday()
             process_job(connection, monday, job)
             monitor.update('lifecycle', 'idle', success=True)
         except Exception as exc:

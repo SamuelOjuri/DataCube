@@ -122,17 +122,22 @@ def verify_parent_values(connection, job, pid):
                 'fields': sorted(FINANCIAL_FIELDS)})
 
 
-OBSERVATION_SQL = '''
+OBSERVATION_SQL_TEMPLATE = '''
     INSERT INTO public.monday_item_lifecycle
-        (table_name,monday_id,monday_state,state_verified_at,state_event_key,state_evidence)
-    VALUES (%s,%s,%s,%s,%s,%s)
+        (table_name,monday_id,monday_state,state_verified_at,state_event_key,state_evidence,recheck_after)
+    VALUES (%s,%s,%s,%s,%s,%s,{next_recheck})
     ON CONFLICT(table_name,monday_id) DO UPDATE SET
         monday_state=EXCLUDED.monday_state,state_verified_at=EXCLUDED.state_verified_at,
         state_event_key=EXCLUDED.state_event_key,state_evidence=EXCLUDED.state_evidence,
         changed_at=CASE WHEN monday_item_lifecycle.monday_state IS DISTINCT FROM EXCLUDED.monday_state
             THEN now() ELSE monday_item_lifecycle.changed_at END,
-        recheck_after=now()+interval '1 day'
+        recheck_after=EXCLUDED.recheck_after
 '''
+
+
+def observation_sql():
+    """Record an observation; the item's next periodic check follows the configured interval."""
+    return OBSERVATION_SQL_TEMPLATE.format(next_recheck=life.next_recheck_sql())
 
 
 def observation_values(table, item, source, previous, verified_at, *, restore=False):
@@ -171,7 +176,7 @@ def observe(connection, job, table, item, evidence, verified_at, *, restore=Fals
     source = life.require_item(evidence, item, table)
     state, proof, before = observation_values(
         table, item, source, state_row(connection, table, item), verified_at, restore=restore)
-    connection.execute(OBSERVATION_SQL, (table, item, state, verified_at, job['event_key'], Jsonb(proof)))
+    connection.execute(observation_sql(), (table, item, state, verified_at, job['event_key'], Jsonb(proof)))
     life.audit(connection, job, 'observe_monday_state', table, item, before,
                {**proof, 'verified_at': verified_at.isoformat(), 'state': state})
 
@@ -199,7 +204,7 @@ def observe_source(connection, job, source, verified_at, *, restore=False):
                        {**proof, 'verified_at': verified_at.isoformat(), 'state': state}))
     if values:
         with connection.cursor() as cursor:
-            cursor.executemany(OBSERVATION_SQL, values)
+            cursor.executemany(observation_sql(), values)
     life.audit_many(connection, job, audits)
 
 
@@ -221,7 +226,7 @@ def observe_active_source_batch(connection, job, source, verified_at):
             audits.append(('observe_monday_state', table, item, before,
                            {**proof, 'verified_at': verified_at.isoformat(), 'state': state}))
     with connection.cursor() as cursor:
-        cursor.executemany(OBSERVATION_SQL, values)
+        cursor.executemany(observation_sql(), values)
     life.audit_many(connection, job, audits)
 
 
@@ -297,13 +302,156 @@ def recheck_active(connection, monday, job, observed, before, previous):
                 return
             state, proof, before_state = observation_values(table, item, observed, current, verified_at)
             with connection.pipeline():
-                connection.execute(OBSERVATION_SQL, (table, item, state, verified_at, job['event_key'], Jsonb(proof)))
+                connection.execute(observation_sql(), (table, item, state, verified_at, job['event_key'], Jsonb(proof)))
                 life.audit(connection, job, 'observe_monday_state', table, item, before_state,
                            {**proof, 'verified_at': verified_at.isoformat(), 'state': state})
                 life.finish(connection, job, 'processed', result)
 
     life.retry_lock_conflicts(connection, write)
     return True
+
+
+PERIODIC_BATCH = 200
+PERIODIC_TRACKED = ('monday_state', 'blocked', 'state_verified_at', 'state_event_key')
+
+
+def membership(subitems):
+    """A project's Monday subitems as comparable (id, state, board, parent) rows."""
+    if not isinstance(subitems, list):
+        return None
+    return sorted((s.get('id'), s.get('state'), (s.get('board') or {}).get('id'),
+                   (s.get('parent_item') or {}).get('id')) for s in subitems)
+
+
+def unchanged_active(table, observed, stored, state):
+    """Monday still shows this known active item as stored: row, parent and subitems unchanged.
+
+    A project also needs verified values, which a lifecycle read cannot re-establish.
+    """
+    board = next(b for b, t in life.BOARDS.items() if t == table)
+    if (not observed or observed.get('state') != 'active' or stored is None or not state
+            or state['blocked'] or state['monday_state'] != 'active'
+            or str((observed.get('board') or {}).get('id')) != board):
+        return False
+    parent = (observed.get('parent_item') or {}).get('id')
+    if table == 'subitems':
+        return bool(parent) and stored.get('parent_monday_id') == parent
+    if table == 'projects':
+        evidence = state['state_evidence'] or {}
+        known = membership((evidence.get('item') or {}).get('subitems'))
+        return (parent is None and evidence.get('transaction_values_verified') is True
+                and known is not None and known == membership(observed.get('subitems')))
+    return True
+
+
+def periodic_check(connection, monday, *, limit=PERIODIC_BATCH):
+    """Check up to `limit` due active items' Monday lifecycle in bulk; returns the number claimed.
+
+    Each item used to be its own queued job, with 2-8 Monday reads at 10 IDs per read and
+    a full refresh for every project: about 60,000 calls a day. This reads 100 items per
+    call, twice. Unchanged subitems and hidden items get a fresh observation. Unchanged
+    projects with verified values keep their stored observation, and the check is
+    audited. Anything else, such as a changed state, parent, subitem list or stored row,
+    or a project without verified values, is queued for the existing per-item check.
+    """
+    from scripts import order_value_monday_compare as compare
+
+    with connection.transaction():
+        claimed = connection.execute('''
+            SELECT l.*, e.payload->'activity_recovery' AS activity_recovery
+            FROM public.monday_item_lifecycle l
+            LEFT JOIN public.monday_lifecycle_events e ON e.event_key=l.last_event_key
+            WHERE l.monday_state='active' AND NOT l.blocked AND l.recheck_after<=now()
+            ORDER BY l.recheck_after FOR UPDATE OF l SKIP LOCKED LIMIT %s''', (limit,)).fetchall()
+        if not claimed:
+            return 0
+        # Lease them for an hour: other workers skip them and a failed pass retries soon.
+        connection.execute("UPDATE public.monday_item_lifecycle l SET recheck_after=now()+interval '1 hour' "
+                           'FROM unnest(%s::text[],%s::text[]) AS k(table_name,monday_id) '
+                           'WHERE l.table_name=k.table_name AND l.monday_id=k.monday_id',
+                           ([r['table_name'] for r in claimed], [r['monday_id'] for r in claimed]))
+    snapshot = {(r['table_name'], r['monday_id']): r for r in claimed}
+    keys = sorted(snapshot)
+
+    def stored_rows():
+        return {(table, r['monday_id']): r for table in life.BOARDS.values()
+                for r in life.read_rows(connection, table, 'monday_id', [i for t, i in keys if t == table])}
+
+    def read():
+        projects = [i for t, i in keys if t == 'projects']
+        others = [i for t, i in keys if t != 'projects']
+        return {'projects': compare.fetch_items(monday, projects, [], parents=True, mirror_depth=0, batch_size=100)
+                if projects else {},
+                'others': compare.fetch_items(monday, others, [], mirror_depth=0, batch_size=100) if others else {}}
+
+    stored = stored_rows()
+    first = read()
+    verified_at = datetime.now(timezone.utc)
+    second = read()
+    observed, unchanged, escalate = {}, [], []
+    for key in keys:
+        group = 'projects' if key[0] == 'projects' else 'others'
+        if first[group].get(key[1]) != second[group].get(key[1]):
+            continue  # Changed between the reads; checked again when the lease expires.
+        observed[key] = first[group].get(key[1])
+        (unchanged if unchanged_active(key[0], observed[key], stored.get(key), snapshot[key]) else escalate).append(key)
+    operation = {'event_key': f'periodic-check:{uuid4()}'}
+    boards = {t: b for b, t in life.BOARDS.items()}
+
+    def write():
+        with life.locked_write_transaction(connection):
+            current, now_stored = state_rows(connection, keys), stored_rows()
+            values, audits, events, rescheduled = [], [], [], []
+
+            def untouched(key):
+                # Another writer observed it meanwhile; that also set its next check.
+                state = current.get(key)
+                return state is not None and all(state[f] == snapshot[key][f] for f in PERIODIC_TRACKED)
+
+            for key in unchanged:
+                table, item = key
+                if not untouched(key) or not unchanged_active(table, observed[key], now_stored.get(key), current[key]):
+                    continue
+                if table == 'projects':
+                    audits.append(('recheck_monday_state', table, item, None, {
+                        'basis': 'exact_id_monday_api', 'item': observed[key], 'state': 'active',
+                        'verified_at': verified_at.isoformat(),
+                        'kept_observation': current[key]['state_event_key']}))
+                    rescheduled.append(key)
+                    continue
+                try:
+                    state, proof, before = observation_values(table, item, observed[key], current[key], verified_at)
+                except life.ReviewRequired:
+                    continue
+                values.append((table, item, state, verified_at, operation['event_key'], Jsonb(proof)))
+                audits.append(('observe_monday_state', table, item, before,
+                               {**proof, 'verified_at': verified_at.isoformat(), 'state': state}))
+            for key in escalate:
+                if not untouched(key):
+                    continue
+                payload = {'verification_only': True, 'cause': 'periodic_lifecycle_check'}
+                if snapshot[key]['activity_recovery']:
+                    payload['activity_recovery'] = snapshot[key]['activity_recovery']
+                events.append(life.event_values('reconcile', boards[key[0]], key[1],
+                                                parent=snapshot[key]['former_parent_id'], payload=payload))
+                rescheduled.append(key)
+            if values:
+                with connection.cursor() as cursor:
+                    cursor.executemany(observation_sql(), values)
+            life.audit_many(connection, operation, audits)
+            life.enqueue_many(connection, events)
+            if rescheduled:
+                connection.execute(
+                    f'UPDATE public.monday_item_lifecycle l SET recheck_after={life.next_recheck_sql()} '
+                    'FROM unnest(%s::text[],%s::text[]) AS k(table_name,monday_id) '
+                    'WHERE l.table_name=k.table_name AND l.monday_id=k.monday_id',
+                    ([t for t, _ in rescheduled], [i for _, i in rescheduled]))
+            return len(values), len(rescheduled) - len(events), len(events)
+
+    recorded, kept, queued = life.retry_lock_conflicts(connection, write)
+    LOG.info('Periodic lifecycle check of %d items: %d observed, %d projects kept, %d queued for a full check, '
+             '%d left for a later pass', len(keys), recorded, kept, queued, len(keys) - recorded - kept - queued)
+    return len(keys)
 
 
 def refresh_current_values(connection, monday, job):
@@ -420,7 +568,8 @@ def prepare_sync_rows(table, rows):
     with life.connect() as connection:
         require_runtime(connection)
         columns = [compare.SUBITEM_COLUMNS['hidden_item_id']] if table == 'subitems' else []
-        source = compare.fetch_items(monday, ids, columns, mirror_depth=0)
+        # A relation column and lifecycle metadata only, so the API's 100-ID maximum is safe.
+        source = compare.fetch_items(monday, ids, columns, mirror_depth=0, batch_size=100)
         for item in ids:
             life.require_item(source, item, table)
         parent_ids = {(v.get('parent_item') or {}).get('id') for v in source.values()} - {None, ''}
@@ -432,7 +581,7 @@ def prepare_sync_rows(table, rows):
         for hid in hidden_ids:
             life.require_item(hidden, hid, 'hidden_items')
         verified_at = datetime.now(timezone.utc)
-        if compare.fetch_items(monday, ids, columns, mirror_depth=0) != source or (
+        if compare.fetch_items(monday, ids, columns, mirror_depth=0, batch_size=100) != source or (
                 parents and life.read_items(monday, parent_ids) != parents) or (
                 hidden and life.read_items(monday, hidden_ids) != hidden):
             raise life.ReviewRequired('Monday changed while gating normal sync')
@@ -533,7 +682,7 @@ def prepare_sync_rows(table, rows):
                     accepted.append(clean)
                 if observations:
                     with connection.cursor() as cursor:
-                        cursor.executemany(OBSERVATION_SQL, observations)
+                        cursor.executemany(observation_sql(), observations)
                 life.audit_many(connection, operation, audits)
                 life.enqueue_many(connection, events)
             return accepted

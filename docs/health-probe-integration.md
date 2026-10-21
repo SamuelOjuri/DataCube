@@ -14,7 +14,10 @@ The API exposes two different kinds of health signal:
 - `GET /health/` (with a trailing slash) is the detailed diagnostic endpoint.
   Supabase and Monday client construction and SDK calls run in FastAPI's thread
   pool so they do not block the event loop. Dependency failures are logged and
-  reported as `degraded` in the response.
+  reported as `degraded` in the response. Each Monday probe counts toward the
+  account's daily API allowance, so each process reuses a successful result for
+  10 minutes and a failed one for 1 minute. **Never point an uptime monitor or
+  platform health check at `/health/`**; use `/health/live` or `/health/ready`.
 - `GET /health/workers` retains the protected worker snapshot endpoint; configure
   `WORKER_MONITOR_TOKEN` and send its value as a bearer token. Missing or invalid
   authorization returns HTTP 403.

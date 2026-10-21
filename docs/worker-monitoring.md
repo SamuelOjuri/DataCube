@@ -70,7 +70,9 @@ watchdog. See [Render background workers](https://render.com/docs/background-wor
    for readiness. For explicit downstream checks, use `/health/dependencies`
    (Supabase, HTTP 503 on failure) or `/health/` with the trailing slash (detailed
    Supabase and Monday diagnostics). Those SDK calls run in the thread pool and
-   must not be configured as the platform restart probe. See
+   must not be configured as the platform restart probe or an uptime monitor:
+   each Monday probe spends a call from the account's daily allowance, so it is
+   reused for 10 minutes per process. See
    [Health probe integration](health-probe-integration.md).
 5. Set a private `WORKER_MONITOR_TOKEN` to enable `GET /health/workers` with
    `Authorization: Bearer <token>`. Without a configured, matching token the

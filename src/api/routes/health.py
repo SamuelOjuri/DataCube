@@ -2,6 +2,7 @@
 import hmac
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -17,6 +18,13 @@ from ...services.worker_monitor import monitor
 router = APIRouter(prefix="/health", tags=["health"])
 logger = logging.getLogger(__name__)
 
+# Every Monday probe counts toward the account's daily API allowance, so the
+# detailed endpoint reuses a recent result. Monitors should poll /health/live.
+MONDAY_PROBE_TTL_SECONDS = 600
+MONDAY_PROBE_FAILURE_TTL_SECONDS = 60
+_monday_probe: Dict[str, Any] = {"result": None, "checked": 0.0}
+_monday_probe_lock = threading.Lock()
+
 
 def _check_supabase() -> None:
     """Run the blocking Supabase probe outside the application's event loop."""
@@ -25,8 +33,15 @@ def _check_supabase() -> None:
 
 
 def _check_monday() -> bool:
-    """Construct and call the blocking Monday client in a worker thread."""
-    return MondayClient().test_connection()
+    """Probe Monday authentication at most once per TTL per process, in a worker thread."""
+    with _monday_probe_lock:
+        result, age = _monday_probe["result"], time.monotonic() - _monday_probe["checked"]
+        ttl = MONDAY_PROBE_TTL_SECONDS if result else MONDAY_PROBE_FAILURE_TTL_SECONDS
+        if result is not None and age < ttl:
+            return result
+        result = MondayClient().test_connection()
+        _monday_probe.update(result=result, checked=time.monotonic())
+        return result
 
 
 @router.get("")

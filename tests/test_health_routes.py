@@ -15,6 +15,61 @@ from src.api.routes import health
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def fresh_monday_probe(monkeypatch):
+    monkeypatch.setattr(health, "_monday_probe", {"result": None, "checked": 0.0})
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(health.time, "monotonic", lambda: now[0])
+    return now
+
+
+def test_monday_probe_is_reused_within_its_ttl(clock):
+    # Each probe is a Monday API call; repeated diagnostics must not spend the daily allowance.
+    with patch.object(health, "MondayClient") as monday:
+        monday.return_value.test_connection.return_value = True
+        assert all(health._check_monday() for _ in range(5))
+        clock[0] += health.MONDAY_PROBE_TTL_SECONDS - 1
+        assert health._check_monday() is True
+        assert monday.return_value.test_connection.call_count == 1
+        clock[0] += 2
+        assert health._check_monday() is True
+        assert monday.return_value.test_connection.call_count == 2
+
+
+def test_failed_monday_probe_is_rechecked_sooner(clock):
+    with patch.object(health, "MondayClient") as monday:
+        monday.return_value.test_connection.side_effect = [False, True]
+        assert health._check_monday() is False
+        clock[0] += health.MONDAY_PROBE_FAILURE_TTL_SECONDS - 1
+        assert health._check_monday() is False
+        clock[0] += 2
+        assert health._check_monday() is True
+        assert monday.return_value.test_connection.call_count == 2
+
+
+def test_monday_client_errors_are_not_cached(clock):
+    with patch.object(health, "MondayClient", side_effect=[ValueError("no key"), Mock(
+            test_connection=Mock(return_value=True))]):
+        with pytest.raises(ValueError):
+            health._check_monday()
+        assert health._check_monday() is True
+
+
+def test_repeated_detailed_health_requests_probe_monday_once(clock):
+    app = FastAPI()
+    app.include_router(health.router)
+    client = TestClient(app)
+    with patch.object(health, "_check_supabase"), patch.object(health, "MondayClient") as monday:
+        monday.return_value.test_connection.return_value = True
+        for _ in range(3):
+            assert client.get("/health/").json()["services"]["monday_api"]["status"] == "healthy"
+    assert monday.return_value.test_connection.call_count == 1
+
+
 @pytest.mark.parametrize("relative_path", [
     ("src", "api", "app.py"),
     ("src", "api", "routes", "health.py"),

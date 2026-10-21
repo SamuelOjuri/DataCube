@@ -378,16 +378,29 @@ Operational guarantees:
 - Normal upserts use fresh, repeated exact-ID evidence. Archived rows are not
   upserted. Restored/reparented rows go through full rehydration; the old and new
   parent are checked, the old link is audited, and affected parents are refreshed.
-- Confirmed active and archived IDs are periodically rechecked, ten per idle
-  scheduling pass, so pagination absence is never used to infer lifecycle.
-  A recheck that finds a known active subitem or hidden item still active, with
-  its stored row present and a subitem still under its stored parent, records
-  only the new observation: it no longer refreshes the parent project, or every
-  project using a hidden item, which held the table lock for most of each day.
-  A recheck already superseded by a later active observation completes without
-  writing. Project rechecks keep the full project refresh, because a project's
-  observation carries the value verification that reporting coverage requires.
-  Moved, missing, blocked or archived items also keep the full path.
+- Known items are periodically rechecked by exact ID, so pagination absence is
+  never used to infer lifecycle. These checks are a safety net for missed Monday
+  notifications. Each item is checked about every `MONDAY_LIFECYCLE_RECHECK_DAYS`
+  days (default 7, spread ±25% so a backlog does not recur at once); `0` pauses
+  all periodic checks without stopping lifecycle events. Daily per-item checks,
+  each a queued job with 2-8 Monday reads and a full refresh for every project,
+  cost about 60,000 Monday API calls a day.
+- When idle, the worker checks up to 200 due **active** items at a time, reading
+  their lifecycle state (no column values) 100 IDs per call, twice. About 37,000
+  items need roughly 800 calls a week. An unchanged subitem or hidden item, with
+  its stored row present and a subitem still under its stored parent, gets a fresh
+  observation. An unchanged project with verified values keeps its observation
+  and value verification, which a lifecycle read cannot re-establish; the check is
+  recorded as `recheck_monday_state` in the audit log. Anything else, such as a
+  changed state, parent or subitem list, a missing row, a project without
+  verified values, or an item missing from Monday, is queued as the existing
+  per-item check and takes its full path: refresh, restoration, archive or review.
+  Items that change between the two reads are leased for an hour and checked again.
+- Archived items and tombstones keep per-item checks, ten per idle pass.
+  A per-item check that finds a known active subitem or hidden item still active
+  records only the new observation. A check already superseded by a later active
+  observation completes without writing. Moved, missing, blocked or archived
+  items keep the full path.
 - Writers read Monday seconds before writing under the lock, and checks of single
   children can commit in between. A full project refresh or sync batch therefore
   keeps a newer stored observation of a subitem or hidden item that records the
@@ -588,7 +601,8 @@ missed deletions; the daily marker check covers already known deletions/restores
   after 12 attempts. An interrupted claim can be reclaimed after its 20-minute
   lease. The worker checks the lease token before writing.
 - When idle, the worker schedules at most ten indexed tombstones for rechecking;
-  each marker is checked at most once per day. This recovers missed restoration
+  each marker is checked about every `MONDAY_LIFECYCLE_RECHECK_DAYS` days
+  (default 7; `0` pauses periodic checks). This recovers missed restoration
   events, including subitem restorations, without scanning business tables/boards.
 
 Monday and PostgreSQL cannot share one transaction. A Finance edit during the

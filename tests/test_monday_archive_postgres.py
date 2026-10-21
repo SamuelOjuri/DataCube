@@ -658,3 +658,226 @@ def test_incomplete_analysis_population_is_an_error_not_an_empty_dataset(monkeyp
     monkeypatch.setattr(archive, 'current_relation', incomplete)
     with pytest.raises(life.ReviewRequired, match='Unverified population'):
         client.get_projects_for_analysis()
+
+
+
+def verified_project(c, pid='101', children=('201',)):
+    """A project whose last full refresh recorded its subitems and verified its values."""
+    source = still_active(pid, 'projects')
+    source['subitems'] = [{'id': cid, 'state': 'active', 'board': {'id': life.SUBITEM_BOARD_ID},
+                           'parent_item': {'id': pid}} for cid in children]
+    with c.transaction():
+        archive.observe(c, {'event_key': 'verified-refresh'}, 'projects', pid, {pid: source},
+                        datetime.now(timezone.utc))
+        archive.verify_parent_values(c, {'event_key': 'verified-refresh'}, pid)
+    return source
+
+
+def due(c, *keys):
+    c.execute("UPDATE monday_item_lifecycle SET recheck_after=now()+interval '30 days'")
+    for key in keys:
+        c.execute("UPDATE monday_item_lifecycle SET recheck_after=now()-interval '1 second' "
+                  'WHERE table_name=%s AND monday_id=%s', key)
+
+
+def days_to_next_check(c, table, ident):
+    return float(c.execute('SELECT extract(epoch FROM recheck_after-now())/86400 AS d FROM monday_item_lifecycle '
+                           'WHERE table_name=%s AND monday_id=%s', (table, ident)).fetchone()['d'])
+
+
+def without_schedule(row):
+    return {k: v for k, v in row.items() if k != 'recheck_after'}
+
+
+def queued(c):
+    return [(r['kind'], r['item_id'], r['payload'].get('cause'), r['payload'].get('verification_only'))
+            for r in c.execute('SELECT kind,item_id,payload FROM monday_lifecycle_events ORDER BY item_id')]
+
+
+ACTIVE = (('projects', '101'), ('subitems', '201'), ('hidden_items', '301'))
+
+
+def active_monday(project):
+    return Monday({'101': project, '201': still_active('201', 'subitems', '101'),
+                   '301': still_active('301', 'hidden_items')})
+
+
+def test_periodic_check_records_unchanged_items_with_two_bulk_reads(archive_db, no_project_refresh):
+    c, _ = archive_db
+    known_active(c)
+    monday = active_monday(verified_project(c))
+    project = archive.state_row(c, 'projects', '101')
+    rows = business_rows(c)
+    due(c, *ACTIVE)
+
+    assert archive.periodic_check(c, monday) == 3
+
+    # Two reads: the project with its subitems, then children and sources together.
+    assert monday.calls == [['101'], ['201', '301'], ['101'], ['201', '301']]
+    for table, ident in ACTIVE[1:]:
+        assert archive.state_row(c, table, ident)['state_event_key'].startswith('periodic-check:')
+    # A lifecycle read cannot re-verify values: the project's verified observation is kept.
+    assert without_schedule(archive.state_row(c, 'projects', '101')) == without_schedule(project)
+    actions = c.execute("SELECT action,monday_id,evidence FROM monday_lifecycle_audit "
+                        "WHERE event_key LIKE 'periodic-check:%' ORDER BY monday_id").fetchall()
+    assert [(a['action'], a['monday_id']) for a in actions] == [
+        ('recheck_monday_state', '101'), ('observe_monday_state', '201'), ('observe_monday_state', '301')]
+    assert actions[0]['evidence']['kept_observation'] == 'verified-refresh'
+    assert all(5.2 < days_to_next_check(c, *key) < 8.8 for key in ACTIVE)
+    assert not queued(c) and not no_project_refresh and business_rows(c) == rows
+
+
+@pytest.mark.parametrize('case', ['project_subitems', 'project_unverified', 'moved_subitem',
+                                  'archived_subitem', 'missing_source', 'unstored_subitem'])
+def test_periodic_check_queues_the_full_check_for_anything_changed(archive_db, no_project_refresh, case):
+    c, _ = archive_db
+    known_active(c)
+    project = verified_project(c) if case != 'project_unverified' else {
+        **still_active('101', 'projects'), 'subitems': []}
+    monday = active_monday(project)
+    target = {'project_subitems': ('projects', '101'), 'project_unverified': ('projects', '101'),
+              'missing_source': ('hidden_items', '301')}.get(case, ('subitems', '201'))
+    if case == 'project_subitems':
+        monday.rows['101'] = {**project, 'subitems': project['subitems'] + [
+            {'id': '202', 'state': 'active', 'board': {'id': life.SUBITEM_BOARD_ID}, 'parent_item': {'id': '101'}}]}
+    elif case == 'moved_subitem':
+        monday.rows['201']['parent_item'] = {'id': '999'}
+    elif case == 'archived_subitem':
+        monday.rows['201']['state'] = 'archived'
+    elif case == 'missing_source':
+        del monday.rows['301']
+    elif case == 'unstored_subitem':
+        target = ('subitems', '202')
+        observe(c, 'subitems', '202', parent='101')
+        monday.rows['202'] = still_active('202', 'subitems', '101')
+    before = archive.state_row(c, *target)
+    due(c, *ACTIVE, target)
+
+    archive.periodic_check(c, monday)
+
+    assert queued(c) == [('reconcile', target[1], 'periodic_lifecycle_check', True)]
+    assert without_schedule(archive.state_row(c, *target)) == without_schedule(before)
+    assert 5.2 < days_to_next_check(c, *target) < 8.8
+    others = [key for key in ACTIVE if key != target and not (case == 'project_unverified' and key[0] == 'projects')]
+    assert all(5.2 < days_to_next_check(c, *key) < 8.8 for key in others)
+    if case in {'project_subitems', 'moved_subitem', 'unstored_subitem'}:
+        # The queued check takes the existing full path, as daily checks did.
+        life.process_job(c, monday, life.claim(c))
+        assert no_project_refresh == [target[1]]
+
+
+def test_periodic_check_leaves_items_that_changed_between_reads(archive_db):
+    c, _ = archive_db
+    known_active(c)
+    before = archive.state_row(c, 'subitems', '201')
+    due(c, ('subitems', '201'))
+    monday = ChangingMonday({'201': still_active('201', 'subitems', '101')},
+                            lambda rows: rows['201'].update(updated_at='2026-10-21T00:00:00Z'))
+
+    assert archive.periodic_check(c, monday) == 1
+
+    assert without_schedule(archive.state_row(c, 'subitems', '201')) == without_schedule(before)
+    assert not queued(c)
+    assert 0.03 < days_to_next_check(c, 'subitems', '201') < 0.05  # Leased for an hour, then retried.
+
+
+def test_periodic_check_skips_items_another_writer_observed_meanwhile(archive_db):
+    c, _ = archive_db
+    known_active(c)
+    due(c, ('subitems', '201'))
+    monday = ChangingMonday({'201': still_active('201', 'subitems', '101')},
+                            lambda rows: observe(c, 'subitems', '201', parent='101'))
+
+    archive.periodic_check(c, monday)
+
+    assert archive.state_row(c, 'subitems', '201')['state_event_key'] == 'test-observation'
+    assert not c.execute("SELECT 1 FROM monday_lifecycle_audit WHERE event_key LIKE 'periodic-check:%'").fetchall()
+
+
+def test_periodic_check_reads_one_hundred_items_per_call(archive_db):
+    c, _ = archive_db
+    ids = [str(n) for n in range(5000, 5150)]
+    c.execute("INSERT INTO subitems(monday_id,parent_monday_id) SELECT g::text,'101' FROM generate_series(5000,5149) g")
+    c.execute("""INSERT INTO monday_item_lifecycle
+        (table_name,monday_id,monday_state,state_verified_at,state_event_key,state_evidence,recheck_after)
+        SELECT 'subitems',g::text,'active',now()-interval '8 days','seed',
+               '{"basis":"test","parent_monday_id":"101"}'::jsonb,now()-interval '1 second'
+        FROM generate_series(5000,5149) g
+        ON CONFLICT (table_name,monday_id) DO UPDATE SET monday_state=EXCLUDED.monday_state,
+            state_verified_at=EXCLUDED.state_verified_at,state_event_key=EXCLUDED.state_event_key,
+            state_evidence=EXCLUDED.state_evidence,recheck_after=EXCLUDED.recheck_after""")
+    monday = Monday({i: still_active(i, 'subitems', '101') for i in ids})
+
+    assert archive.periodic_check(c, monday) == 150
+
+    # The old per-item checks needed at least two calls for each of the 150.
+    assert [len(call) for call in monday.calls] == [100, 50, 100, 50]
+    assert c.execute("SELECT count(*) AS n FROM monday_item_lifecycle "
+                     "WHERE state_event_key LIKE 'periodic-check:%'").fetchone()['n'] == 150
+
+
+def test_periodic_check_claims_due_items_once(archive_db):
+    c, _ = archive_db
+    known_active(c)
+    due(c, ('subitems', '201'), ('hidden_items', '301'))
+    monday = active_monday(still_active('101', 'projects'))
+    assert archive.periodic_check(c, monday, limit=1) == 1
+    assert archive.periodic_check(c, monday, limit=1) == 1
+    assert archive.periodic_check(c, monday, limit=1) == 0
+
+
+def test_idle_worker_checks_active_items_in_bulk_and_queues_only_archived_ones(archive_db):
+    c, _ = archive_db
+    known_active(c)
+    observe(c, 'hidden_items', '302', state='archived')
+    due(c, ('subitems', '201'), ('hidden_items', '302'))
+    monday = Monday({'201': still_active('201', 'subitems', '101'), '302': item('302', 'hidden_items', 'archived')})
+
+    assert life.run_once(c, monday) is True
+
+    assert archive.state_row(c, 'subitems', '201')['state_event_key'].startswith('periodic-check:')
+    assert [(kind, ident, cause) for kind, ident, cause, _ in queued(c)] == [
+        ('reconcile', '302', 'periodic_lifecycle_check')]
+
+
+def test_periodic_checks_can_be_paused(archive_db, monkeypatch):
+    c, _ = archive_db
+    known_active(c)
+    observe(c, 'hidden_items', '302', state='archived')
+    due(c, ('subitems', '201'), ('hidden_items', '302'))
+    monkeypatch.setenv('MONDAY_LIFECYCLE_RECHECK_DAYS', '0')
+    monday = Monday({})
+
+    assert life.run_once(c, monday) is False
+
+    assert monday.calls == [] and not queued(c)
+    assert days_to_next_check(c, 'subitems', '201') < 0
+
+
+@pytest.mark.parametrize('setting,low,high', [(None, 5.2, 8.8), ('2', 1.4, 2.6), ('not-a-number', 5.2, 8.8)])
+def test_next_check_follows_the_configured_interval(archive_db, monkeypatch, setting, low, high):
+    c, _ = archive_db
+    if setting is not None:
+        monkeypatch.setenv('MONDAY_LIFECYCLE_RECHECK_DAYS', setting)
+    observe(c, 'subitems', '201', parent='101')
+    observe(c, 'projects', '101', state='archived')
+    c.execute("UPDATE monday_item_lifecycle SET recheck_after=now()-interval '1 second' WHERE monday_id='101'")
+    assert life.schedule_rechecks(c) == 1
+    assert low < days_to_next_check(c, 'subitems', '201') < high
+    assert low < days_to_next_check(c, 'projects', '101') < high
+
+
+def test_sync_gate_reads_one_hundred_items_per_call(archive_db, monkeypatch):
+    c, dsn = archive_db
+    monkeypatch.setenv('SUPABASE_DB_URL', dsn)
+    links = {str(2000 + n): str(3000 + n) for n in range(40)}
+    monday = Monday({**{i: linked_subitem(i, h) for i, h in links.items()},
+                     **{h: item(h, 'hidden_items', 'active') for h in links.values()},
+                     '101': item('101', 'projects', 'active')})
+    monkeypatch.setattr(compare, 'ComparisonMondayClient', lambda: monday)
+    rows = [{'monday_id': i, 'parent_monday_id': '101', 'hidden_item_id': h} for i, h in links.items()]
+
+    assert archive.prepare_sync_rows('subitems', rows) == rows
+
+    # Subitems, parent and sources, read twice: 6 calls, where 10 IDs per call took 18.
+    assert sorted(len(call) for call in monday.calls) == [1, 1, 40, 40, 40, 40]
