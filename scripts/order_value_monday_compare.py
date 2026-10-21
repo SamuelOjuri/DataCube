@@ -289,8 +289,13 @@ def flat_value_selection():
     }'''
 
 
-def fetch_items(monday, ids, columns, *, parents=False, mirror_depth=None):
+def fetch_items(monday, ids, columns, *, parents=False, mirror_depth=None, batch_size=None):
     result = {}
+    # Monday's items query accepts at most 100 IDs; callers that read many projects
+    # at once pass a larger batch. Failed batches are still retried and split.
+    batch_size = batch_size or READ_BATCH_SIZE
+    if not 1 <= batch_size <= 100:
+        raise ValueError('Monday exact-ID reads accept 1-100 IDs per request')
     # The legacy mirror_depth=0 argument denotes direct hidden-source reads.
     # All other reads retrieve references only, never nested mirrored_value.
     references = mirror_depth != 0
@@ -313,8 +318,8 @@ def fetch_items(monday, ids, columns, *, parents=False, mirror_depth=None):
                               'column_values(ids: $columns) @skip(if: true)')
     ids = sorted(set(ids))
     label = 'parents' if parents else 'subitems' if references else 'hidden sources'
-    for offset in range(0, len(ids), READ_BATCH_SIZE):
-        batch = ids[offset:offset + READ_BATCH_SIZE]
+    for offset in range(0, len(ids), batch_size):
+        batch = ids[offset:offset + batch_size]
         LOG.info('Reading Monday %s: IDs %d-%d/%d, %d columns, direct values%s',
                  label, offset + 1, offset + len(batch), len(ids), len(set(columns)),
                  ' and mirror references' if references else '')

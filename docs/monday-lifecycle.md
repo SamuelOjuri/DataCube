@@ -314,6 +314,61 @@ Completion covers this approved scope only, not the 47 held reportable projects.
 Recheck global coverage and keep reporting disabled until its readiness checks
 pass and those remaining cases have their separate resolutions.
 
+### Remaining approved IDs: bulk runner (replaces `run`, 21 October 2026)
+
+The batch runner above stopped on 7 October with 4,756 projects verified, 250
+part-way and about 10,100 not started. Its own log shows why it was slow and
+fragile: it read each 25-project batch from Monday four times, 10 IDs per call
+(20,330 calls for 4,511 projects, about 4.5 per project), and 245 of its 252
+failures were 750 ms Supabase lock waits that were never retried. Monday
+throttling itself appeared only 8 times. The remaining projects would have
+needed about 46,700 calls, roughly two days of the account's daily allowance.
+
+[The bulk runner](../scripts/monday_archive_bulk_backfill.py) resolves the same
+approved projects differently:
+
+- It reads each chunk of projects (default 100) twice, 100 IDs per call, and
+  writes only projects whose two reads match. A 100-project production preview
+  used 14 calls (0.14 per project), so all remaining projects need about 1,450.
+- It paces itself from Monday's `RateLimit` headers, waits out throttling of
+  any length up to 15 minutes, and stops cleanly at `DAILY_LIMIT_EXCEEDED` or
+  at `--max-monday-calls` (default 2,000), leaving the account's allowance for
+  production. Rerun to resume: it selects approved projects not yet verified.
+- Each project is written in its own short locked transaction that retries lock
+  waits for about 20 seconds. It uses the lifecycle worker's full-refresh
+  projection, observations, read-back checks and value verification, so a
+  verified project meets the same standard as one verified by the worker.
+- Problems are isolated per project. Monday changes between the two reads, or
+  database changes before the write, are reported as `retry` and picked up by
+  the next run. Shared subitems or sources, placeholder names, recorded
+  archives/deletions, projection issues and unreadable items are reported as
+  `review`; nothing is guessed, restored or written to Monday.
+- Current Monday membership is used, not the 6 October child mapping; children
+  moved from another stored project still stop for review. When a project is
+  verified, its unfinished campaign receipt (if its scope is exactly that
+  project) is marked verified and audited, which clears it from coverage.
+
+Unlike the batch runner, there is no separate post-write Monday read. As in the
+worker's own refresh, two matching reads precede the write and the written rows
+are read back and checked inside the same transaction.
+
+Run from the repository root with production credentials and archive mode on:
+
+```powershell
+$env:MONDAY_ARCHIVE_ENABLED = 'true'
+python -m scripts.monday_archive_bulk_backfill --dry-run --limit 200   # read-only preview
+python -m scripts.monday_archive_bulk_backfill --limit 500             # first real batch
+python -m scripts.monday_archive_bulk_backfill                         # the rest, in reruns
+```
+
+`--dry-run` makes the database session read-only. Progress is written after
+every chunk to `outputs/archive_coverage/bulk_<mode>_<time>/result.json` and
+`outcomes.csv`, including Monday calls per project and an estimate for the
+rest. Exit code 0 means everything selected was verified, 1 that some projects
+need `retry` or `review`, and 2 that the run stopped early (daily limit, call
+budget or an ended database session). Do not run it alongside the old batch
+runner; each refuses to start while the other holds its lock.
+
 Operational guarantees:
 
 - Archiving retains business rows, their financial values and historical parent
