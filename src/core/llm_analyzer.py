@@ -1,6 +1,6 @@
 """
 Stage 4: LLM Integration for Reasoning
-Provides reasoning for pre-computed numeric baselines using OpenAI GPT-4o
+Provides reasoning for pre-computed numeric baselines using Google Gemini.
 """
 
 import json
@@ -10,11 +10,13 @@ from datetime import datetime
 import time
 from pathlib import Path
 import os
+import math
 from textwrap import dedent
 
 from google import genai
 from google.genai import types as genai_types
-from google.api_core import exceptions as google_exceptions
+from google.genai import errors as genai_errors
+import httpx
 from pydantic import ValidationError
 import pandas as pd
 
@@ -34,7 +36,11 @@ try:
         SegmentStatistics,
         get_backoff_priority_metadata,
     )
-    from src.config import ANALYSIS_DIR, CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
+    from src.config import (
+        ANALYSIS_DIR, CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL,
+        GEMINI_THINKING_LEVEL, GEMINI_MAX_OUTPUT_TOKENS, GEMINI_TIMEOUT_SECONDS,
+        GEMINI_INPUT_USD_PER_MILLION, GEMINI_OUTPUT_USD_PER_MILLION,
+    )
 
 except ImportError:
     from models import (
@@ -46,7 +52,11 @@ except ImportError:
         SegmentStatistics,
         get_backoff_priority_metadata,
     )
-    from config import ANALYSIS_DIR, CACHE_DIR
+    from config import (
+        ANALYSIS_DIR, CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL,
+        GEMINI_THINKING_LEVEL, GEMINI_MAX_OUTPUT_TOKENS, GEMINI_TIMEOUT_SECONDS,
+        GEMINI_INPUT_USD_PER_MILLION, GEMINI_OUTPUT_USD_PER_MILLION,
+    )
 
 LLM_RESPONSE_SCHEMA = genai_types.Schema(
     type=genai_types.Type.OBJECT,
@@ -103,22 +113,64 @@ class LLMAnalyzer:
         Args:
             api_key: Gemini API key. If None, pulled from environment.
             model: Gemini model to use (defaults to config GEMINI_MODEL).
-            max_token_retries: Number of retries when hitting token limit.
+            max_token_retries: Additional attempts for transient errors or truncated output.
         """
         self.api_key = api_key or GEMINI_API_KEY
         if not self.api_key:
             raise ValueError(
-                "Gemini API key not provided. Set GEMINI_API_KEY or GOOGLE_API_KEY."
+                "Gemini API key not provided. Set GEMINI_API_KEY."
             )
 
-        self.client = genai.Client(api_key=self.api_key)
         self.model = model or GEMINI_MODEL
+        if GEMINI_THINKING_LEVEL not in {"low", "medium", "high"}:
+            raise ValueError("GEMINI_THINKING_LEVEL must be low, medium or high")
+        if not 1 <= GEMINI_MAX_OUTPUT_TOKENS <= 65536:
+            raise ValueError("GEMINI_MAX_OUTPUT_TOKENS must be between 1 and 65536")
+        if not math.isfinite(GEMINI_TIMEOUT_SECONDS) or GEMINI_TIMEOUT_SECONDS <= 0:
+            raise ValueError("GEMINI_TIMEOUT_SECONDS must be finite and positive")
+        self.input_price = self._price(GEMINI_INPUT_USD_PER_MILLION)
+        self.output_price = self._price(GEMINI_OUTPUT_USD_PER_MILLION)
+        if self.model != GEMINI_MODEL:
+            # Configured rates describe the configured model, not comparison overrides.
+            self.input_price = self.output_price = None
+        self.client = genai.Client(
+            api_key=self.api_key,
+            http_options=genai_types.HttpOptions(
+                timeout=max(1, int(GEMINI_TIMEOUT_SECONDS * 1000)),
+                # The application owns retries so the attempt limit is predictable.
+                retry_options=genai_types.HttpRetryOptions(attempts=1),
+            ),
+        )
+        self.generation = genai_types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=LLM_RESPONSE_SCHEMA,
+            max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
+            # Keep the explicit model override usable for a Gemini 2.5 comparison.
+            thinking_config=(None if self.model.startswith("gemini-2.5-") else
+                             genai_types.ThinkingConfig(
+                                 thinking_level=GEMINI_THINKING_LEVEL.upper(),
+                                 include_thoughts=False,
+                             )),
+        )
         self.max_token_retries = max(0, max_token_retries)
 
         self.api_calls = 0
         self.total_tokens = 0
+        self.token_counts = {"input": 0, "output": 0, "thinking": 0}
 
         logger.info(f"LLM Analyzer initialized with model: {self.model}")
+
+    @staticmethod
+    def _price(value: Optional[str]) -> Optional[float]:
+        if value is None or value == "":
+            return None
+        price = float(value)
+        if not math.isfinite(price) or price < 0:
+            raise ValueError("Gemini token prices must be finite and nonnegative")
+        return price
+
+    def close(self) -> None:
+        self.client.close()
     
     def _create_analysis_prompt(
         self,
@@ -292,6 +344,8 @@ class LLMAnalyzer:
         return "".join(chunks)
 
     def _normalize_part(self, part: Any) -> Optional[str]:
+        if getattr(part, "thought", False):
+            return None
         part_text = getattr(part, "text", None)
         if part_text:
             return part_text
@@ -359,49 +413,33 @@ class LLMAnalyzer:
             # Parse JSON
             response_data = json.loads(response_text.strip())
 
-            # Ensure required fields exist
-            if "summary" not in response_data or not response_data.get("summary"):
-                response_data["summary"] = "Plain-English summary unavailable."
-            if "reasoning" not in response_data:
-                response_data["reasoning"] = {
-                    "gestation": "Unable to provide reasoning",
-                    "conversion": "Unable to provide reasoning",
-                    "rating": "Unable to provide reasoning"
-                }
-            
-            if "adjustments" not in response_data:
-                response_data["adjustments"] = {"rating_adjustment": 0}
-            
-            if "confidence_notes" not in response_data:
-                response_data["confidence_notes"] = response_data.get(
-                    "special_factors", 
-                    "Analysis based on available data"
-                )
+            # Missing fields are a failed model response, not successful reasoning.
+            if not isinstance(response_data, dict):
+                raise ValueError("model_invalid_output")
+            for field in ("summary", "confidence_notes"):
+                value = response_data.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError("model_invalid_output")
+            reasoning = response_data.get("reasoning")
+            if not isinstance(reasoning, dict) or any(
+                not isinstance(reasoning.get(key), str) or not reasoning[key].strip()
+                for key in ("gestation", "conversion", "rating")
+            ):
+                raise ValueError("model_invalid_output")
+            if not isinstance(response_data.get("adjustments"), dict) or "rating_adjustment" not in response_data["adjustments"]:
+                raise ValueError("model_invalid_output")
             
             # Validate rating adjustment is within bounds
             rating_adj = response_data["adjustments"].get("rating_adjustment", 0)
-            if not isinstance(rating_adj, int) or rating_adj < -5 or rating_adj > 5:
-                logger.warning(f"Invalid rating adjustment {rating_adj}, setting to 0")
+            if type(rating_adj) is not int or rating_adj < -5 or rating_adj > 5:
+                logger.warning("Invalid rating adjustment; using zero")
                 response_data["adjustments"]["rating_adjustment"] = 0
             
             # Create and validate output
             return ProjectAnalysisOutput(**response_data)
             
-        except (json.JSONDecodeError, ValidationError) as e:
-            logger.error(f"Failed to parse LLM response: {e}")
-            logger.debug(f"Raw response: {response_text}")
-            
-            # Return default output on parse failure
-            return ProjectAnalysisOutput(
-                summary="Plain-English summary unavailable.",
-                reasoning={
-                    "gestation": "Error parsing LLM response",
-                    "conversion": "Error parsing LLM response",
-                    "rating": "Error parsing LLM response"
-                },
-                adjustments={"rating_adjustment": 0},
-                confidence_notes="Failed to parse LLM response, using baseline predictions only"
-            )
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise ValueError("model_invalid_output") from exc
 
     def _build_confidence_notes(self, stats: Optional[SegmentStatistics], preds: NumericPredictions) -> str:
         n = stats.sample_size if stats else 0
@@ -429,6 +467,21 @@ class LLMAnalyzer:
         Analyze a project using LLM for reasoning.
         """
         start_time = time.time()
+        call_tokens = {"input": 0, "output": 0, "thinking": 0}
+        tokens_used = 0
+        attempts = 0
+        finish_reason = None
+
+        def metadata():
+            return {
+                "llm_model": self.model,
+                "api_calls": self.api_calls,
+                "attempts": attempts,
+                "response_time": time.time() - start_time,
+                "tokens_used": tokens_used,
+                "tokens": dict(call_tokens),
+                "finish_reason": finish_reason,
+            }
 
         prompt = self._create_analysis_prompt(
             project_features,
@@ -456,26 +509,22 @@ class LLMAnalyzer:
                 {prompt}
             """)
 
-            response = None
-            finish_reason = None
-
             for attempt in range(self.max_token_retries + 1):
+                attempts += 1
+                self.api_calls += 1
                 try:
                     response = self.client.models.generate_content(
                         model=self.model,
                         contents=[{"role": "user", "parts": [{"text": prompt_text}]}],
-                        config=genai_types.GenerateContentConfig(
-                            temperature=0.0,
-                            response_mime_type="application/json",
-                            response_schema=LLM_RESPONSE_SCHEMA,
-                        ),
+                        config=self.generation,
                     )
-                except google_exceptions.ServiceUnavailable as svc_err:
-                    if attempt == self.max_token_retries:
+                except (genai_errors.APIError, httpx.TransportError) as exc:
+                    retryable = isinstance(exc, httpx.TransportError) or exc.code in {408, 429, 500, 502, 503, 504}
+                    if not retryable or attempt == self.max_token_retries:
                         raise
                     sleep_for = 2 ** attempt
                     logger.warning(
-                        "Gemini 503 (attempt %s/%s); backing off %ss",
+                        "Gemini transient failure (attempt %s/%s); backing off %ss",
                         attempt + 1,
                         self.max_token_retries + 1,
                         sleep_for,
@@ -483,10 +532,24 @@ class LLMAnalyzer:
                     time.sleep(sleep_for)
                     continue
 
+                usage = getattr(response, "usage_metadata", None)
+                fields = {"input": "prompt_token_count", "output": "candidates_token_count",
+                          "thinking": "thoughts_token_count"}
+                for key, field in fields.items():
+                    count = getattr(usage, field, 0) or 0
+                    call_tokens[key] += count
+                    self.token_counts[key] += count
+                reported_total = getattr(usage, "total_token_count", None)
+                response_tokens = reported_total if reported_total is not None else sum(
+                    getattr(usage, field, 0) or 0 for field in fields.values())
+                tokens_used += response_tokens
+                self.total_tokens += response_tokens
                 finish_reason = getattr(
                     response.candidates[0], "finish_reason", None
                 ) if getattr(response, "candidates", None) else None
                 if finish_reason != genai_types.FinishReason.MAX_TOKENS:
+                    if finish_reason != genai_types.FinishReason.STOP:
+                        raise ValueError("model_incomplete_output")
                     break
                 logger.warning(
                     "LLM output truncated by service limit (attempt %s/%s); retrying",
@@ -494,45 +557,33 @@ class LLMAnalyzer:
                     self.max_token_retries + 1,
                 )
             else:
-                logger.error("LLM response still truncated after retries")
-
-            self.api_calls += 1
-            usage = getattr(response, "usage_metadata", None)
-            total_tokens_used = getattr(usage, "total_token_count", 0) if usage else 0
-            self.total_tokens += total_tokens_used
+                raise ValueError("model_output_budget")
 
             content_text = self._extract_response_content(response)
             llm_output = self._parse_llm_response(content_text)
 
-            metadata = {
-                "llm_model": self.model,
-                "api_calls": self.api_calls,
-                "response_time": time.time() - start_time,
-                "tokens_used": total_tokens_used,
-                "finish_reason": finish_reason,
-            }
+            result_metadata = metadata()
+            logger.info("LLM analysis completed model=%s attempts=%s tokens=%s in %.2fs",
+                        self.model, attempts, call_tokens, result_metadata["response_time"])
+            return llm_output, result_metadata
 
-            logger.info(f"LLM analysis completed in {metadata['response_time']:.2f}s")
-
-            return llm_output, metadata
-
-        except google_exceptions.ServiceUnavailable as svc_err:
-            logger.error("LLM analysis failed due to service overload: %s", svc_err)
-            return ProjectAnalysisOutput(
-                summary="Plain-English summary unavailable.",
-                reasoning={
-                    "gestation": "LLM temporarily unavailable",
-                    "conversion": "LLM temporarily unavailable",
-                    "rating": "LLM temporarily unavailable"
-                },
-                adjustments={"rating_adjustment": 0},
-                confidence_notes="LLM service overloaded; try again later."
-            ), {
-                "error": f"Service unavailable: {svc_err}",
-                "response_time": time.time() - start_time,
-            }
-        except Exception as e:
-            logger.error(f"LLM analysis failed: {e}")
+        except Exception as exc:
+            if isinstance(exc, genai_errors.APIError):
+                code = {400: "model_request_rejected", 401: "model_authentication_failed",
+                        403: "model_authentication_failed", 404: "model_not_found",
+                        429: "model_rate_limited"}.get(exc.code, "model_unavailable")
+            elif isinstance(exc, httpx.TimeoutException):
+                code = "model_timeout"
+            elif isinstance(exc, httpx.TransportError):
+                code = "model_unavailable"
+            elif isinstance(exc, ValueError) and str(exc) in {
+                "model_invalid_output", "model_incomplete_output", "model_output_budget"
+            }:
+                code = str(exc)
+            else:
+                code = "model_failed"
+            # Provider error strings can contain request data; log only stable codes.
+            logger.error("LLM analysis failed model=%s code=%s attempts=%s", self.model, code, attempts)
 
             return ProjectAnalysisOutput(
                 summary="Plain-English summary unavailable.",
@@ -542,11 +593,8 @@ class LLMAnalyzer:
                     "rating": "LLM analysis unavailable"
                 },
                 adjustments={"rating_adjustment": 0},
-                confidence_notes=f"LLM analysis failed: {str(e)}"
-            ), {
-                "error": str(e),
-                "response_time": time.time() - start_time
-            }
+                confidence_notes=f"LLM analysis unavailable ({code}); numeric baseline retained."
+            ), {**metadata(), "error": code}
     
     def create_final_analysis(
         self,
@@ -567,12 +615,15 @@ class LLMAnalyzer:
         Returns:
             Complete AnalysisResult
         """
+        if metadata.get("error"):
+            raise ValueError("Cannot finalize failed LLM analysis")
+
         # Apply LLM adjustments
         adjusted_rating = numeric_predictions.rating_score + llm_output.adjustments.get("rating_adjustment", 0)
         adjusted_rating = max(1, min(100, adjusted_rating))  # Ensure within bounds
         
         # Update predictions with adjustments
-        final_predictions = numeric_predictions.copy()
+        final_predictions = numeric_predictions.model_copy()
         if adjusted_rating != numeric_predictions.rating_score:
             final_predictions.rating_score = adjusted_rating
             logger.info(f"Rating adjusted from {numeric_predictions.rating_score} to {adjusted_rating}")
@@ -705,24 +756,16 @@ class LLMAnalyzer:
         return {
             "total_api_calls": self.api_calls,
             "total_tokens_used": self.total_tokens,
+            "tokens": dict(self.token_counts),
+            "cost_configured": self.input_price is not None and self.output_price is not None,
             "average_tokens_per_call": self.total_tokens / self.api_calls if self.api_calls > 0 else 0,
             "estimated_cost": self._estimate_cost()
         }
     
-    def _estimate_cost(self) -> float:
-        """
-        Estimate API cost based on token usage.
-        Prices aligned with Gemini 2.5 Flash (update when pricing changes).
-        """
-        # Approximate Gemini 2.5 Flash pricing (USD)
-        input_price_per_1k = 0.00018
-        output_price_per_1k = 0.00054
-        
-        # Rough estimate (assuming 70% input, 30% output)
-        estimated_input_tokens = self.total_tokens * 0.7
-        estimated_output_tokens = self.total_tokens * 0.3
-        
-        cost = (estimated_input_tokens / 1000 * input_price_per_1k + 
-                estimated_output_tokens / 1000 * output_price_per_1k)
-        
-        return round(cost, 4)
+    def _estimate_cost(self) -> Optional[float]:
+        """Estimate standard text usage reported by all attempts, including thinking."""
+        if self.input_price is None or self.output_price is None:
+            return None
+        cost = (self.token_counts["input"] * self.input_price +
+                (self.token_counts["output"] + self.token_counts["thinking"]) * self.output_price)
+        return round(cost / 1_000_000, 8)

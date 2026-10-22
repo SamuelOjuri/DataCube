@@ -10,5 +10,6 @@ svc = AnalysisService()
 def run_analysis(monday_id: str, with_llm: Optional[bool] = None):
     out = svc.analyze_and_store(monday_id, with_llm=with_llm)
     if not out.get('success'):
-        raise HTTPException(status_code=404, detail=out.get('error'))
+        raise HTTPException(status_code=404 if out.get('error') == 'project not found' else 503,
+                            detail=out.get('error'))
     return out

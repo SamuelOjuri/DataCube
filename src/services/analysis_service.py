@@ -328,24 +328,28 @@ class AnalysisService:
             return {'success': True, 'result': returned}
 
         if not with_llm or not self.llm_enabled:
+            if with_llm:
+                return {'success': False, 'error': 'model_not_configured'}
             return _persist_numeric_only()
 
         if self.llm_analyzer is None:
             try:
                 self.llm_analyzer = LLMAnalyzer()
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Gemini analyzer unavailable (%s). Falling back to numeric baseline.", exc)
-                self.llm_enabled = False
-                return _persist_numeric_only()
+                logger.warning("Gemini analyzer configuration failed (%s)", type(exc).__name__)
+                return {'success': False, 'error': 'model_configuration_error'}
 
         seg = self._build_segment_stats(proj)
         np = self._to_numeric_predictions(base, seg)
         llm = self.llm_analyzer
 
         if llm is None:
-            return _persist_numeric_only()
+            return {'success': False, 'error': 'model_not_configured'}
 
         llm_out, meta = llm.analyze_project(pf, np, seg)
+        if meta.get('error'):
+            # Leave prior successful results intact; callers can retry and must not push fallback text.
+            return {'success': False, 'error': meta['error'], 'llm_metadata': meta}
         final = llm.create_final_analysis(pf, np, llm_out, meta)
 
         stored = {
@@ -359,7 +363,7 @@ class AnalysisService:
             'confidence_notes': llm_out.confidence_notes,
             'special_factors': final.analysis_metadata.get('special_factors'),
             'llm_model': meta.get('llm_model', GEMINI_MODEL),
-            'analysis_version': 'v1.0-llm',
+            'analysis_version': 'v1.1-llm',
             'processing_time_ms': int(float(meta.get('response_time', 0)) * 1000),
         }
 
@@ -375,4 +379,4 @@ class AnalysisService:
             'value_band': pf.value_band,
             **stored,
         }
-        return {'success': True, 'result': returned}
+        return {'success': True, 'result': returned, 'llm_metadata': meta}

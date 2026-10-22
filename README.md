@@ -26,6 +26,7 @@ Run `python scripts/data_quality_checks.py` to see mirroring coverage and numeri
 
 ## Automation & Background Jobs
 
+- Project reasoning uses Gemini 3.8 Flash. See the [project analysis deployment guide](docs/project-analysis-gemini-3.8-deployment.md) for settings, qualification, rollout, and rollback.
 - Monday deletion/restoration uses a durable inbox and database write guards. Apply the migration and enable the worker as described in [the lifecycle deployment and recovery guide](docs/monday-lifecycle.md).
 - Webhook processing now enqueues long-running work (rehydrate, reanalyse, Monday sync) via the in-process queue at `src/services/queue_worker.py`.
 - Periodic catch-ups (hourly delta hydrate, nightly LLM backfill, 25-minute Monday sync) are scheduled through APScheduler in `src/api/app.py`.

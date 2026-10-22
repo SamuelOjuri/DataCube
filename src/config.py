@@ -21,7 +21,13 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # Default to GPT-4o
 
 # Gemini API Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "low").lower()
+GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
+GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "90"))
+# Optional, explicit prices: estimates remain unavailable until both are configured.
+GEMINI_INPUT_USD_PER_MILLION = os.getenv("GEMINI_INPUT_USD_PER_MILLION")
+GEMINI_OUTPUT_USD_PER_MILLION = os.getenv("GEMINI_OUTPUT_USD_PER_MILLION")
 
 # Board IDs
 PARENT_BOARD_ID = "1825117125"   # Tapered Enquiry Maintenance
