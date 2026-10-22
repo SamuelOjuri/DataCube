@@ -20,8 +20,10 @@ guesses links: anything needing judgment is reported for review.
 import argparse
 from collections import Counter
 from contextlib import contextmanager, nullcontext
+from copy import deepcopy
 import csv
 from datetime import datetime, timezone
+from decimal import InvalidOperation
 import json
 import logging
 import os
@@ -156,6 +158,34 @@ class PacedMondayClient(compare.ComparisonMondayClient):
 
 def only(item, columns):
     return {**item, 'column_values': [v for v in item['column_values'] if v['id'] in columns]}
+
+
+def source_digest(source, contract):
+    """Compare numeric parent formulas at their declared database precision.
+
+    Monday can alternate Project Value between e.g. 241502.0100000001 and
+    241502.01 without an item update. Keep the captured evidence untouched and
+    keep child/source formulas exact: their unrounded values feed parent sums.
+    Unmapped, unscaled or unreadable formulas retain strict comparison.
+    """
+    normalized = deepcopy(source)
+    fields = {cid: field for field, cid in PARENT_COLUMNS.items()
+              if contract['projects'].get(field, {}).get('type') == 'numeric'
+              and isinstance(contract['projects'][field].get('scale'), int)
+              and contract['projects'][field].get('generated', 'NEVER') == 'NEVER'}
+    for parent in (normalized or {}).get('projects', {}).values():
+        for column in parent['column_values']:
+            field = fields.get(column['id'])
+            if field is None or column.get('__typename') != 'FormulaValue':
+                continue
+            try:
+                amount = compare.numeric(column)
+                if amount is not None:
+                    column['display_value'] = reconcile.normalize_updates(
+                        {'projects': [{field: amount}]}, contract)['projects'][0][field]
+            except (ValueError, InvalidOperation):
+                pass  # Invalid source values must never become comparable amounts.
+    return cli.digest(normalized)
 
 
 def capture_chunk(monday, pids, batch_size):
@@ -387,7 +417,8 @@ def run(connection, monday, out_dir, *, approved, dry_run, limit=None, chunk_siz
                     if pid in problems:
                         record(pid, 'review', problems[pid])
                         continue
-                    if pid in changed or cli.digest(first[pid]) != cli.digest(second.get(pid)):
+                    if (pid in changed
+                            or source_digest(first[pid], contract) != source_digest(second.get(pid), contract)):
                         record(pid, 'retry', changed.get(pid, 'Monday changed between the two reads'))
                         continue
                     source = second[pid]

@@ -328,8 +328,13 @@ needed about 46,700 calls, roughly two days of the account's daily allowance.
 approved projects differently:
 
 - It reads each chunk of projects (default 100) twice, 100 IDs per call, and
-  writes only projects whose two reads match. A 100-project production preview
-  used 14 calls (0.14 per project), so all remaining projects need about 1,450.
+  writes only projects whose two reads match. Numeric parent formula displays
+  are compared at the mapped database column's declared precision, so Monday's
+  floating-point output (e.g. `241502.0100000001` versus `241502.01`) does not
+  cause endless retries. Raw evidence is retained; child/source formulas,
+  membership, timestamps and other fields still match exactly. A 100-project
+  production preview used 14 calls (0.14 per project), so all remaining projects
+  need about 1,450.
 - It paces itself from Monday's `RateLimit` headers, waits out throttling of
   any length up to 15 minutes, and stops cleanly at `DAILY_LIMIT_EXCEEDED` or
   at `--max-monday-calls` (default 2,000), leaving the account's allowance for

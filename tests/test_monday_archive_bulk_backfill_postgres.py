@@ -127,6 +127,30 @@ def test_monday_change_between_the_two_reads_writes_nothing(setup, monkeypatch):
     assert result['outcomes'] == {'retry': 1} and snapshot(setup.c) == before
 
 
+@pytest.mark.parametrize('second,outcome', [('241502.01', 'verified'), ('241502.02', 'retry')])
+def test_parent_formula_float_noise_is_verified_but_a_penny_change_is_retried(setup, monkeypatch, second, outcome):
+    setup.c.execute('ALTER TABLE projects ADD COLUMN project_value numeric(12,2)')
+    column = bulk.compare.col(setup.monday.rows['101'], bulk.PARENT_COLUMNS['project_value'])
+    column.update(__typename='FormulaValue', type='formula', text='', display_value='241502.0100000001')
+    original, reads = bulk.capture, []
+
+    def capture(monday, pids, batch_size):
+        if reads:
+            column['display_value'] = second
+        reads.append(pids)
+        return original(monday, pids, batch_size)
+    monkeypatch.setattr(bulk, 'capture', capture)
+    before = snapshot(setup.c)
+    result = go(setup)
+    assert result['outcomes'] == {outcome: 1}
+    if outcome == 'retry':
+        assert snapshot(setup.c) == before
+    else:
+        assert ready(setup.c, '101')
+        evidence = archive.state_row(setup.c, 'projects', '101')['state_evidence']['item']
+        assert bulk.compare.col(evidence, bulk.PARENT_COLUMNS['project_value'])['display_value'] == second
+
+
 def test_one_unreadable_project_does_not_stop_the_others(setup):
     setup.approved['999'] = {'299': '399'}
     result = go(setup)

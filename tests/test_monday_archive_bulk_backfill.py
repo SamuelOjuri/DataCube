@@ -1,4 +1,5 @@
-"""Offline checks for the bulk archive backfill's Monday transport and batch sizes."""
+"""Offline checks for the bulk backfill's transport, batches and source matching."""
+from copy import deepcopy
 import json
 
 import pytest
@@ -131,3 +132,70 @@ def test_fetch_items_keeps_ten_ids_by_default_and_accepts_up_to_one_hundred():
     assert [len(c) for c in large.calls] == [100, 100, 50]
     with pytest.raises(ValueError, match='1-100'):
         compare.fetch_items(Recorder(), ids, [], batch_size=101)
+
+
+def formula_source(amount, field='project_value'):
+    return {'projects': {'101': {'updated_at': 'unchanged', 'column_values': [{
+        'id': compare.PARENT_COLUMNS[field], '__typename': 'FormulaValue',
+        'display_value': amount}]}}}
+
+
+FORMULA_CONTRACT = {'projects': {'project_value': {'type': 'numeric', 'scale': 2}}}
+
+
+@pytest.mark.parametrize('first,second', [
+    ('241502.0100000001', '241502.01'),
+    ('877140.0599999999', '877140.06'),
+    ('12.345', '12.35'),  # Same half-up rounding as persisted numeric columns.
+])
+def test_parent_formula_float_noise_matches_without_changing_raw_evidence(first, second):
+    left, right = formula_source(first), formula_source(second)
+    before = deepcopy(left)
+    assert bulk.source_digest(left, FORMULA_CONTRACT) == bulk.source_digest(right, FORMULA_CONTRACT)
+    assert left == before and right == formula_source(second)
+
+
+@pytest.mark.parametrize('first,second', [
+    ('241502.01', '241502.02'), ('12.3449', '12.345'),
+    ('NaN', '0'), ('Infinity', '0'), ('#ERROR!', '0'), ('', '0'),
+    (None, '0'), ('1,000.00', '1000.00'),
+])
+def test_parent_formula_real_changes_and_unreadable_values_remain_different(first, second):
+    assert (bulk.source_digest(formula_source(first), FORMULA_CONTRACT)
+            != bulk.source_digest(formula_source(second), FORMULA_CONTRACT))
+
+
+@pytest.mark.parametrize('column', [
+    {}, {'type': 'numeric', 'scale': None}, {'type': 'text', 'scale': 2},
+    {'type': 'numeric', 'scale': 2, 'generated': 'ALWAYS'},
+])
+def test_formula_comparison_requires_a_stored_numeric_column_with_known_scale(column):
+    contract = {'projects': {'project_value': column}}
+    assert (bulk.source_digest(formula_source('12.0000000001'), contract)
+            != bulk.source_digest(formula_source('12'), contract))
+
+
+def test_parent_formula_comparison_uses_the_declared_scale():
+    contract = {'projects': {'project_value': {'type': 'numeric', 'scale': 4}}}
+    assert (bulk.source_digest(formula_source('12.0001'), contract)
+            != bulk.source_digest(formula_source('12.0002'), contract))
+
+
+@pytest.mark.parametrize('change', ['updated_at', 'unmapped_formula', 'mirror', 'subitems', 'hidden_items'])
+def test_other_evidence_and_contributing_formula_values_stay_exact(change):
+    left = formula_source('12')
+    if change in ('subitems', 'hidden_items'):
+        left[change] = {'201': {'column_values': [{
+            'id': 'formula', '__typename': 'FormulaValue', 'display_value': '12.0000000001'}]}}
+    right = deepcopy(left)
+    if change == 'updated_at':
+        right['projects']['101']['updated_at'] = 'changed'
+    elif change == 'unmapped_formula':
+        left['projects']['101']['column_values'][0]['id'] = 'unmapped'
+        right['projects']['101']['column_values'][0].update(id='unmapped', display_value='12.0000000001')
+    elif change == 'mirror':
+        left['projects']['101']['column_values'][0]['__typename'] = 'MirrorValue'
+        right['projects']['101']['column_values'][0].update(__typename='MirrorValue', display_value='12.0000000001')
+    else:
+        right[change]['201']['column_values'][0]['display_value'] = '12'
+    assert bulk.source_digest(left, FORMULA_CONTRACT) != bulk.source_digest(right, FORMULA_CONTRACT)
