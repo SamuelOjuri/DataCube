@@ -310,7 +310,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def workflow_run(run_id: UUID, request: Request, actor: Principal = Depends(principal)):
         workflow = request.app.state.workflow
         workflow.require_enabled()
-        return workflow.jobs.public(await workflow.jobs.get(actor,run_id,expire=True))
+        return await workflow.public(actor, await workflow.jobs.get(actor,run_id,expire=True))
 
     @app.get("/v1/runs/{run_id}/events")
     async def events(run_id: UUID, request: Request, after: int = Query(0,ge=0,le=128),
@@ -328,15 +328,18 @@ def create_app(settings: Settings) -> FastAPI:
                         if live_identity.subject != actor.subject or live_identity.permissions_version != actor.permissions_version:
                             raise HTTPException(403,'permissions_changed')
                     state, rows = await workflow.jobs.snapshot(actor,run_id,cursor)
+                    for event in rows:
+                        cursor = event['sequence']
+                        payload = event['payload']
+                        if event['kind'] == 'answer':
+                            payload = await workflow.present_answer(actor, payload, run_id)
+                        yield f"id: {cursor}\nevent: {event['kind']}\ndata: {json.dumps(payload,ensure_ascii=True)}\n\n"
                 except HTTPException:
                     yield 'event: terminal\ndata: {"status":"access_changed"}\n\n'
                     return
                 except Exception:
                     yield 'event: terminal\ndata: {"status":"stream_unavailable"}\n\n'
                     return
-                for event in rows:
-                    cursor = event['sequence']
-                    yield f"id: {cursor}\nevent: {event['kind']}\ndata: {json.dumps(event['payload'],ensure_ascii=True)}\n\n"
                 if state['status'] in TERMINAL or state['status'] == 'awaiting_clarification':
                     return
                 if time.monotonic()-heartbeat >= 10:

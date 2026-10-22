@@ -87,8 +87,11 @@ gzip); it is not needed for sign-in or table-only answers.
 
 ### Exploratory summaries (22 October 2026)
 
-New exploratory answers display a short server-generated summary before their
-chart and values. `exploration/semantics.py` derives additive measures, monthly
+Both certified metric and exploratory answers display a short server-generated
+summary before their main figure, chart and values. `workflow/summary.py` covers
+certified totals, inclusive and closed-only conversion, mean and median gestation,
+monthly trends, category/type breakdowns, comparisons, empty and incomplete data.
+`exploration/semantics.py` derives additive measures, monthly
 axes and matching ratio components from the executed SQL, including simple CTE
 projections. `exploration/summary.py` calculates facts over all stored rows using
 Decimal arithmetic and renders fixed templates. Every derived claim includes its
@@ -114,17 +117,25 @@ displayed as percentages using exact decimal-string rounding; certified-card
 wording and axes use the same presentation. Source details remain expandable.
 
 Deploy the BI Analyst API and frontend together. No database migration, new
-source view or environment setting is required. Existing saved answers remain
-readable; they acquire summaries only when a new question is executed. The
-exploration prompt is `bi-exploration-1.3.0` and graph version is `2.3.0`;
+source view or environment setting is required. Existing saved answers gain a
+summary during authenticated retrieval and event replay, calculated only from
+their owned stored results. This does not rerun source queries, invoke the model,
+or rewrite saved answers/events. Reference and permission checks still apply.
+Both dataset cards use `AnswerSummary.tsx`; it shows saved answer text immediately
+as a fallback when a summary is absent. All six explanation outcomes already show
+their answer text directly, and clarification/error states remain visible.
+The exploration prompt is `bi-exploration-1.3.0` and graph version is `2.4.0`;
 the existing version check requires a new question for follow-ups anchored to
 an answer from an older workflow version. This change does not alter the
 separate project-analysis deployment or refresh ingestion data.
 
-Regression coverage includes `test_exploration_summary.py`, real PostgreSQL
-execution/persistence/events/follow-ups in `test_exploration_postgres.py`, frontend
-formatting and chart validation, and a browser scenario for a complete monthly
-answer, values pagination, accessibility and retrieval after sign-in.
+Regression coverage includes every certified catalogue metric in
+`test_answer_summaries.py` and exploratory calculations in
+`test_exploration_summary.py`. Real PostgreSQL workflow tests check persisted
+summaries, clarification, follow-ups, idempotent submissions and legacy event
+replay without history writes. Browser scenarios check the certified conversion
+card on desktop/mobile, both saved-text fallbacks, clarification and follow-up
+summaries, all explanation reasons, and exploratory charts/values/accessibility.
 
 ### Tapered Plus visual theme
 

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 import psycopg
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 import pytest
 
 from bi_analyst.api import create_app
@@ -122,11 +123,13 @@ def test_golden_graph_answers(setup,metric,expected):
         row = settle(client,run_id)
         assert row['status'] == 'completed',row
         assert row['answer']['claims'][0]['value'] == expected
+        assert row['answer']['summary'] and any(c['id'] == 'summary_total' for c in row['answer']['claims'])
         assert row['model_calls'] == 1 and row['tool_calls'] == 1
         assert any('freshness is unknown' in text for text in row['answer']['notices'])
         events = client.get(f'/v1/runs/{run_id}/events')
         assert events.status_code == 200
         assert 'event: answer' in events.text and 'event: terminal' in events.text
+        assert '"summary":' in events.text
         assert 'systemInstruction' not in events.text and 'previous_plan' not in events.text
         assert admin.execute('SELECT count(*) AS n FROM analyst_state.checkpoints WHERE thread_id=%s',(run_id,)).fetchone()['n'] >= 3
         # Stored datasets are never embedded in checkpoint channels.
@@ -146,10 +149,37 @@ def test_clarification_survives_restart_and_resume_is_idempotent(setup):
     with start(provider) as client:
         response = client.post(f'/v1/runs/{run_id}/resume',json=reply)
         assert response.status_code == 200,response.text
-        assert settle(client,run_id)['status'] == 'completed'
+        completed = settle(client,run_id)
+        assert completed['status'] == 'completed' and completed['answer']['summary']
         assert client.post(f'/v1/runs/{run_id}/resume',json=reply).status_code == 200
         assert client.post(f'/v1/runs/{run_id}/resume',json={**reply,'answer':'Different'}).status_code == 409
         assert [stage for stage,_ in provider.calls] == ['plan']
+
+
+def test_legacy_answer_reads_and_event_replay_gain_summary_without_rewriting_history(setup):
+    admin, _, _, _, start = setup
+    provider = ScriptedProvider('conversion_closed_two_year')
+    with start(provider) as client:
+        thread = conversation(client)
+        key = str(uuid4())
+        run_id = submit(client, thread, idempotency_key=key)
+        completed = settle(client, run_id)
+        original = completed['answer']
+        old = {k:v for k,v in original.items() if k not in {'summary','summary_notices','exploratory_chart'}}
+        old['claims'] = [c for c in old['claims'] if not c['id'].startswith('summary_')]
+        admin.execute('UPDATE analyst_state.workflow_jobs SET answer=%s WHERE run_id=%s', (Jsonb(old),run_id))
+        admin.execute("UPDATE analyst_state.workflow_events SET payload=%s WHERE run_id=%s AND kind='answer'", (Jsonb(old),run_id))
+        recovered = client.get(f'/v1/runs/{run_id}/workflow').json()
+        assert recovered['answer']['summary'] == original['summary']
+        events = client.get(f'/v1/runs/{run_id}/events').text
+        payload = next(json.loads(block.split('data: ',1)[1]) for block in events.split('\n\n') if 'event: answer\n' in block)
+        assert payload['summary'] == original['summary']
+        # Replaying an idempotent submission uses the same saved-answer presentation.
+        response = client.post(f'/v1/conversations/{thread}/messages',json={
+            'question':'Show stored parent Order Value','idempotency_key':key})
+        assert response.status_code == 202 and response.json()['answer']['summary'] == original['summary']
+        stored = admin.execute('SELECT answer FROM analyst_state.workflow_jobs WHERE run_id=%s',(run_id,)).fetchone()['answer']
+        assert 'summary' not in stored and len(provider.calls) == 1
 
 
 def test_followup_patch_preserves_filters_and_exposes_changes(setup):
@@ -162,6 +192,7 @@ def test_followup_patch_preserves_filters_and_exposes_changes(setup):
         second = submit(client,thread,follow_up_to=first,question='Break that down by type')
         row = settle(client,second)
         assert row['status'] == 'completed',row
+        assert row['answer']['summary']
         assert row['answer']['scope_changes'] == {'dimensions':{'before':[],'after':['type']}}
         stored = client.get('/v1/results/'+row['answer']['result']['result_id']).json()
         assert stored['provenance']['request']['filters'][0]['values'] == ['A']

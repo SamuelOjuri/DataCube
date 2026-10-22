@@ -6,6 +6,7 @@ import {chartSpec, formatCell, unitLabel} from './presentation.mjs';
 import Chart from './Chart';
 import DataTable from './DataTable';
 import ExploratoryCard from './ExploratoryCard';
+import AnswerSummary from './AnswerSummary';
 
 export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAnswer}) {
   const [saved, setResult] = useState<SavedResult | null>(null);
@@ -64,6 +65,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
   const hasCounts = result.columns.some(name => ['source_rows', 'known_values'].includes(name));
   return <section className="result-card" aria-label={p.metric_label}>
     <div className="result-heading"><div><p className="eyebrow">{unitLabel(p.unit)}{p.evaluation_only ? ' · Evaluation data' : ''}</p><h3>{p.metric_label}</h3></div><span className="badge">Source freshness unknown</span></div>
+    <AnswerSummary answer={answer} />
     <p className="result-scope">{period} · {p.source_population === 'reportable' ? 'Reportable projects, including archived projects' : 'Independent hidden inventory'}
       {!!p.request.filters.length && <> · {filterLabel(p.request.filters)}</>}</p>
     {p.total && <div className="total"><strong>{formatCell(p.total.value, p.unit)}</strong><span>{p.unit === 'ratio' ? 'Overall conversion rate' : p.unit === 'days' ? 'Overall average' : p.total.known_values < p.total.source_rows ? 'Known subtotal for this scope' : 'Total for this scope'}</span></div>}

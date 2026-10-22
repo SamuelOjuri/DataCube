@@ -10,11 +10,17 @@ import psycopg
 
 from .checkpoints import ScopedPostgresSaver
 from .evidence import EvidenceError
+from .contracts import GroundedAnswer
+from .summary import summarize_metric
 from .graph import ConversationGraph
 from .provider import EXPLORE_PROMPT_VERSION, GENERATION, MODEL, PROMPT_VERSION, ProviderFailure
 from .store import WorkflowStore
 from ..exploration.policy import POLICY_VERSION
 from ..exploration.service import ExplorationService
+from ..exploration.contracts import ExploratoryResult
+from ..exploration.semantics import describe_columns
+from ..exploration.summary import summarize
+from ..metrics.contracts import MetricResult
 
 
 class WorkflowService:
@@ -25,7 +31,7 @@ class WorkflowService:
         self.tasks = {}
         self.cancellations = set()
         self.admission = asyncio.Lock()
-        self.versions = {'graph':'2.3.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
+        self.versions = {'graph':'2.4.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
                          'exploration':{'prompt':EXPLORE_PROMPT_VERSION,'policy':POLICY_VERSION},
                          'catalogue':metrics.compiler.catalogue.version,'catalogue_sha256':metrics.compiler.catalogue_hash,
                          'langgraph':version('langgraph'),'checkpointer':version('langgraph-checkpoint-postgres')}
@@ -49,7 +55,7 @@ class WorkflowService:
             if created:
                 token = await self.jobs.claim(actor,row['run_id'],self.versions)
                 self._schedule(actor,row['run_id'],token)
-        return self.jobs.public(await self.jobs.get(actor,row['run_id']))
+        return await self.public(actor, await self.jobs.get(actor,row['run_id']))
 
     async def resume(self, actor, run_id, reply):
         self.require_enabled()
@@ -61,7 +67,45 @@ class WorkflowService:
             token = await self.jobs.claim(actor,run_id,self.versions,reply)
             if token:
                 self._schedule(actor,run_id,token,reply.answer)
-        return self.jobs.public(await self.jobs.get(actor,run_id))
+        return await self.public(actor, await self.jobs.get(actor,run_id))
+
+    async def present_answer(self, actor, answer, run_id):
+        """Enrich old saved answers from owned stored evidence, without writes or source queries."""
+        if answer.get('kind') == 'explanation' or answer.get('summary'):
+            return answer
+        grounded = GroundedAnswer.model_validate(answer)
+        stored = await self.store.result(actor, grounded.result.result_id)
+        provenance = stored['provenance']
+        if (str(stored['run_id']) != str(run_id)
+                or provenance.get('query_reference') != grounded.result.query_reference
+                or provenance.get('catalogue_sha256') != grounded.result.catalogue_sha256):
+            raise HTTPException(409, 'result_evidence_changed')
+        if provenance.get('kind') == 'exploratory':
+            result = ExploratoryResult.model_validate(stored)
+            result.provenance.columns, limited = describe_columns(result.provenance.sql, result.provenance.columns)
+            result.provenance.query_limited = limited
+            summary, claims, notices, chart = summarize(result)
+            if chart and chart.kind == 'line' and not any(
+                    c.get('name') == chart.x and c.get('time_grain') == 'month' for c in provenance['columns']):
+                chart = None  # Older result metadata cannot validate a monthly chart on the client.
+            grounded.exploratory_chart = chart
+        else:
+            summary, claims, notices = summarize_metric(MetricResult.model_validate(stored))
+        grounded.summary = summary
+        if any('do not establish causes' in n for n in grounded.notices):
+            notices.append('These measured values and differences do not establish causes.')
+        grounded.summary_notices = list(dict.fromkeys(notices))
+        ids = {c.id for c in grounded.claims}
+        grounded.claims.extend(c for c in claims if c.id not in ids)
+        grounded.notices = list(dict.fromkeys([*grounded.notices, *notices]))
+        return grounded.model_dump(mode='json')
+
+    async def public(self, actor, row):
+        run = self.jobs.public(row)
+        if isinstance(run.answer, GroundedAnswer) and not run.answer.summary:
+            run.answer = GroundedAnswer.model_validate(await self.present_answer(
+                actor, run.answer.model_dump(mode='json'), run.run_id))
+        return run
 
     def _schedule(self, actor, run_id, token, reply=None):
         task = asyncio.create_task(self._drive(actor,run_id,token,reply))

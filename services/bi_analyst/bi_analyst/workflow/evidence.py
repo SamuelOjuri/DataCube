@@ -3,10 +3,8 @@ from decimal import Decimal
 
 from .contracts import ChartIntent, EvidenceClaim, GroundedAnswer, Presentation, ResultReference
 from ..metrics.contracts import MetricResult
-
-
-class EvidenceError(ValueError):
-    pass
+from .errors import EvidenceError
+from .summary import summarize_metric
 
 
 def candidates(result: MetricResult) -> list[EvidenceClaim]:
@@ -115,6 +113,10 @@ def ground(result: MetricResult, presentation: Presentation, scope_changes: dict
         label = claim.label if claim.kind in {"total", "contributor"} else claim.kind.replace("_", " ").capitalize()
         # Text is plain text, never interpreted as HTML/Markdown or executable config.
         lines.append(f"{label}: {formatted}.")
+    summary, summary_claims, summary_notices = summarize_metric(result)
+    if asks_for_cause:
+        summary_notices.append("These measured values and differences do not establish causes.")
     return GroundedAnswer(result=ResultReference(result_id=result.id, query_reference=p.query_reference,
-        catalogue_sha256=p.catalogue_sha256), claims=claims, text="\n".join(lines), chart=presentation.chart,
-        notices=list(dict.fromkeys(notices)), scope_changes=scope_changes)
+        catalogue_sha256=p.catalogue_sha256), claims=[*claims, *summary_claims], text="\n".join(lines), chart=presentation.chart,
+        notices=list(dict.fromkeys([*notices, *summary_notices])), scope_changes=scope_changes,
+        summary=summary, summary_notices=summary_notices)

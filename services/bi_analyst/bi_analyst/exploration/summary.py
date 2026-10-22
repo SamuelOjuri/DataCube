@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
 from ..workflow.contracts import EvidenceClaim, ExploratoryChartIntent
-from ..workflow.evidence import EvidenceError
+from ..workflow.errors import EvidenceError
 
 MATURITY = ("Recent creation cohorts have had less time to reach invoiced completion. "
             "These rates describe recorded outcomes so far, not final conversion performance; "
@@ -74,6 +74,8 @@ def summarize(result):
     for i, _ in measures:
         for row in rows:
             amount(row[i])
+    if any(row[i] is None for row in rows for i, _ in measures):
+        notices.append("Some returned values are unknown. They are not treated as zero, and summaries use known values only.")
     rates = [(i, c) for i, c in measures if c.unit in {"ratio", "percent"}]
     axis = monthly_axis(result)
     # Category results may return a supporting share next to revenue. The money
@@ -174,7 +176,8 @@ def summarize(result):
             label = str(rows[top][dimensions[0]])[:180] if rows[top][dimensions[0]] is not None else "Unclassified"
             value = amount(rows[top][i])
             claim("leader", value, c, kind="contributor", sources=[f"rows.{top}.{i}"])
-            text = f"Among the returned groups, {label} had the highest {c.label.lower()} at {display(value, c.unit)}."
+            qualifier = "Among the returned groups" + (" with known values" if len(known) < len(rows) else "")
+            text = f"{qualifier}, {label} had the highest {c.label.lower()} at {display(value, c.unit)}."
             total = sum(amount(rows[n][i]) for n in known)
             if c.additive and not limited and len(known) == len(rows) and total > 0 and all(amount(rows[n][i]) >= 0 for n in known):
                 share = value / total

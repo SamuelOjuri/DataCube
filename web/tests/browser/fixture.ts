@@ -36,8 +36,18 @@ export const monthlyResult = {id:resultId,run_id:runId,columns:['creation_month'
       {name:'eligible',label:'Eligible projects',role:'measure',unit:'count',type:'integer'},
       {name:'inclusive_conversion',label:'Inclusive conversion',role:'measure',unit:'ratio',type:'decimal'}]}};
 export const monthlySummary = 'Inclusive conversion was 50.0% in 2024-01-01 and 9.0% in 2025-12-01; overall for these months was 9.8%. The first 12 months had a combined rate of 50.0% versus 9.0% for the last 12 months (41.0 percentage points lower).';
+export const certifiedConversionResult = {id:resultId,run_id:runId,columns:['value','numerator','denominator'],
+  rows:[['0.582','405','696']],provenance:{...result.provenance,
+    metric_id:'conversion_closed_two_year',metric_label:'2-year Closed-only Conversion Rate',unit:'ratio',
+    request:{period:'two_year_cohort',filters:[],dimensions:[]},
+    resolved_period:{start_date:'2024-10-22',end_date_exclusive:null},
+    columns:[{name:'value',type:'decimal',unit:'ratio'},{name:'numerator',type:'decimal',unit:'count'},{name:'denominator',type:'decimal',unit:'count'}],
+    total:{value:'0.582',source_rows:1000,known_values:1000,numerator:'405',denominator:'696'},
+    coverage:{},limitations:[],returned_rows:1,matched_groups:1}};
+export const certifiedConversionSummary = 'For projects created from 2024-10-22 onward, 405 of the 696 closed projects were won and invoiced, giving a closed-only conversion rate of 58.2%.';
 
 export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false, explanation=false, monthly=false,
+  answerOverride=null as Record<string,unknown>|null,
   beforeConversationReply=async()=>{}, beforeMessageReply=async()=>{}, beforeResumeReply=async()=>{}}={}) {
   const state = {result:structuredClone(monthly ? monthlyResult as any : exploratory ? exploratoryResult as any : result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false, drilldowns:0, resultReads:0};
   const messageRuns = new Map<string,string>();
@@ -45,7 +55,8 @@ export async function fixture(page: Page, {clarify=false, hold=false, existing=f
     result:{result_id:resultId},chart:limited||exploratory?{kind:'table',x:null,y:'value'}:{kind:'bar',x:'category',y:'value'},notices:['Measured contributions do not establish cause.'],
     ...(monthly ? {summary:monthlySummary,summary_notices:['Recent creation cohorts have had less time to reach invoiced completion. These rates describe outcomes so far.'],
       exploratory_chart:{kind:'line',x:'creation_month',series:['inclusive_conversion']}} : {}),
-    scope_changes:id !== runId && state.submissions.at(-1)?.follow_up_to ? {filters:{before:[],after:['category: A']}} : {}});
+    scope_changes:id !== runId && state.submissions.at(-1)?.follow_up_to ? {filters:{before:[],after:['category: A']}} : {},
+    ...(answerOverride || {})});
   function create(question: string) {
     const id = state.runs.length ? `30000000-0000-4000-8000-${String(state.runs.length+1).padStart(12,'0')}` : runId;
     state.runs.unshift({id,conversation_id:thread,question,status:'running',created_at:'2026-10-08T12:00:00Z'});

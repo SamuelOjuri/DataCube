@@ -4,6 +4,7 @@ import {errorMessage, json, post} from './api';
 import {chartSpec, formatCell} from './presentation.mjs';
 import DataTable from './DataTable';
 import Chart from './Chart';
+import AnswerSummary from './AnswerSummary';
 
 export default function ExploratoryCard({auth, answer, result, signal}: {auth: Auth; answer: ResultAnswer; result: ExploratoryResult; signal: AbortSignal}) {
   const [error, setError] = useState('');
@@ -35,12 +36,10 @@ export default function ExploratoryCard({auth, answer, result, signal}: {auth: A
   const metadata = p.columns.map(c => ({name: c.name, label: c.label, type: c.type, unit: c.unit === 'none' ? null : c.unit}));
   const intent = answer.exploratory_chart || answer.chart;
   const hasChart = !!chartSpec(result, intent, answer.result.result_id).spec;
-  const caveats = [...new Set([...(p.caveats || []), ...(answer.summary_notices || [])])];
   return <section className="result-card" aria-label={p.title}>
     <div className="result-heading"><div><p className="eyebrow">Exploratory analysis · not a certified metric</p><h3>{p.title}</h3></div><span className="badge">Source freshness unknown</span></div>
-    {answer.summary && <p className="answer-summary" aria-label="Summary">{answer.summary}</p>}
+    <AnswerSummary answer={answer} caveats={p.caveats || []} />
     {single && <div className="total"><strong>{formatCell(result.rows[0][0], measures[0].unit)}</strong><span>{measures[0].label}</span></div>}
-    {!!caveats.length && <div className="data-warning" role="note" aria-label="What this answer leaves out"><ul className="caveats">{caveats.map(text => <li key={text}>{text}</li>)}</ul></div>}
     {!result.rows.length && <p className="data-warning">No matching records were found for this scope.</p>}
     {p.truncated && <p className="data-warning">Showing the first {p.returned_rows} rows. The query returned more; the table and CSV include only these rows.</p>}
     <Chart result={result} intent={intent} ownedId={answer.result.result_id} />

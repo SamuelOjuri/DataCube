@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import {fixture,signIn,thread,runId,monthlySummary} from './fixture';
+import {fixture,signIn,thread,runId,monthlySummary,certifiedConversionResult,certifiedConversionSummary} from './fixture';
 import {readFile,readdir} from 'node:fs/promises';
 
 function acknowledgementGate() {
@@ -620,6 +620,80 @@ test('monthly exploration opens with summary, maturity caveat and chart and reta
   await expect(card.getByLabel('Summary',{exact:true})).toHaveText(monthlySummary);
   expect(state.resultReads).toBeGreaterThan(1);
 });
+
+test('certified conversion shows the conversational summary and exclusions above the figure on desktop and mobile',async({page},testInfo)=>{
+  const state=await fixture(page,{existing:true,answerOverride:{summary:certifiedConversionSummary,
+    summary_notices:['Open projects are excluded from closed-only conversion.','Recent creation cohorts have had less time to reach invoiced completion.'],
+    chart:{kind:'number',x:null,y:'value'}}});
+  state.result=structuredClone(certifiedConversionResult);
+  await signIn(page,`/conversations/${thread}`);
+  const card=page.getByRole('region',{name:'2-year Closed-only Conversion Rate'}), summary=card.getByLabel('Summary',{exact:true});
+  await expect(summary).toHaveText(certifiedConversionSummary);
+  await expect(summary).toBeVisible();
+  expect((await summary.boundingBox())!.y).toBeLessThan((await card.locator('.total').boundingBox())!.y);
+  await expect(card.getByRole('note',{name:'What this answer leaves out'})).toContainText('Open projects are excluded');
+  await expect(card.locator('.answer-text')).toBeHidden();
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({path:testInfo.outputPath('certified-summary-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await summary.scrollIntoViewIfNeeded();
+  await expect(summary).toBeInViewport();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  await page.screenshot({path:testInfo.outputPath('certified-summary-mobile.png'),fullPage:true});
+  await page.reload();
+  await page.getByRole('button',{name:'Continue with Monday'}).click();
+  await expect(summary).toHaveText(certifiedConversionSummary);
+});
+
+test('certified summaries survive initial submission, clarification and follow-up answers',async({page})=>{
+  const state=await fixture(page,{clarify:true,answerOverride:{summary:certifiedConversionSummary,chart:{kind:'number',x:null,y:'value'}}});
+  state.result=structuredClone(certifiedConversionResult);
+  await signIn(page);
+  await page.getByLabel('Your question',{exact:true}).fill('What is the closed-only two-year conversion rate?');
+  await page.getByRole('button',{name:'Ask analyst'}).click();
+  await expect(page.getByRole('button',{name:'Send clarification'})).toBeVisible();
+  await expect(page.getByLabel('Summary',{exact:true})).toHaveCount(0);
+  await page.getByLabel('Which reporting period?').fill('Two-year creation cohort');
+  await page.getByRole('button',{name:'Send clarification'}).click();
+  await expect(page.getByLabel('Summary',{exact:true})).toHaveText(certifiedConversionSummary);
+  await page.getByLabel('Ask a follow-up or a new question',{exact:true}).fill('Keep the same scope and explain this rate');
+  await page.getByRole('button',{name:'Ask analyst'}).click();
+  await page.getByLabel('Which reporting period?').fill('Keep the two-year creation cohort');
+  await page.getByRole('button',{name:'Send clarification'}).click();
+  await expect(page.getByLabel('Summary',{exact:true})).toHaveCount(2);
+  expect(state.submissions[1].follow_up_to).toBe(runId);
+});
+
+for(const exploratory of [false,true]) {
+  test(`older ${exploratory?'exploratory':'certified'} saved answers show their text as a visible summary fallback`,async({page})=>{
+    const state=await fixture(page,{existing:true,exploratory});
+    const text=state.workflow[runId].answer.text;
+    await signIn(page,`/conversations/${thread}`);
+    await expect(page.getByLabel('Summary',{exact:true})).toHaveText(text);
+    await expect(page.getByLabel('Summary',{exact:true})).toBeVisible();
+    await expect(page.locator('.answer-text')).toBeHidden();
+  });
+}
+
+for(const [reason,title,text] of [
+  ['data_unavailable','The data for this is not available','The data needed to answer this is not available to me.'],
+  ['forecast','Forecasts are not available','I report recorded results only, so I cannot forecast future values.'],
+  ['not_analytical','This is outside the business data','This question is outside the business data I can read.'],
+  ['unsafe','I cannot do that','I can only read business data to answer analytical questions.'],
+  ['query_failed','I could not answer this reliably','I could not build a reliable query within the time and safety limits.'],
+  ['unsupported','This report is not enabled','This question needs a report that is not enabled yet.'],
+]) {
+  test(`${reason} explanations display their answer immediately without a dataset`,async({page})=>{
+    const state=await fixture(page,{existing:true,explanation:true});
+    state.workflow[runId].answer={kind:'explanation',reason,title,text,suggestions:[],notices:[]};
+    await signIn(page,`/conversations/${thread}`);
+    await expect(page.getByLabel('Summary',{exact:true})).toHaveText(text);
+    await expect(page.getByLabel('Summary',{exact:true})).toBeVisible();
+    await expect(page.getByText('Answer text',{exact:true})).toHaveCount(0);
+    expect(state.resultReads).toBe(0);
+  });
+}
 
 test('explanations answer in plain language and offer editable suggestions without loading a result',async({page})=>{
   const state=await fixture(page,{existing:true,explanation:true});

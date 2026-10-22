@@ -59,6 +59,8 @@ def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> Gr
         notices.append("These are measured values and differences; they do not establish causes.")
     numeric = single and len(measures) == 1 and p.columns[measures[0]].type in {"integer", "decimal"}
     summary, summary_claims, summary_notices, exploratory_chart = summarize(result)
+    if asks_for_cause:
+        summary_notices.append("These measured values and differences do not establish causes.")
     return GroundedAnswer(
         result=ResultReference(result_id=result.id, query_reference=p.query_reference,
                                catalogue_sha256=p.catalogue_sha256),
