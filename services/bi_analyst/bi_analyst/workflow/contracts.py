@@ -70,7 +70,10 @@ class EvidenceClaim(Contract):
     value: Decimal | None
     denominator: Decimal | None = None
     label: str
-    kind: Literal["total", "contributor", "absolute_change", "percentage_change", "percentage_point_change"]
+    kind: Literal["total", "contributor", "absolute_change", "percentage_change", "percentage_point_change",
+                  "first", "latest", "peak", "low", "average", "row_count", "share", "weighted_rate"]
+    operation: Literal["cell", "row_count", "sum", "difference", "mean", "ratio_of_sums", "share"] = "cell"
+    sources: list[str] = Field(default_factory=list)
 
 
 class ChartIntent(Contract):
@@ -84,6 +87,13 @@ class Presentation(Contract):
     chart: ChartIntent = Field(default_factory=ChartIntent)
 
 
+class ExploratoryChartIntent(Contract):
+    """Server-selected column references, never a model-supplied chart specification."""
+    kind: Literal["line", "bar"]
+    x: str
+    series: list[str] = Field(min_length=1, max_length=3)
+
+
 class GroundedAnswer(Contract):
     result: ResultReference
     claims: list[EvidenceClaim]
@@ -91,6 +101,9 @@ class GroundedAnswer(Contract):
     chart: ChartIntent
     notices: list[str]
     scope_changes: dict
+    summary: str | None = None
+    summary_notices: list[str] = Field(default_factory=list)
+    exploratory_chart: ExploratoryChartIntent | None = None
 
 
 class ExplanationAnswer(Contract):

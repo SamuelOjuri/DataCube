@@ -1,10 +1,10 @@
 import {useEffect, useRef, useState} from 'react';
 import type {View as VegaView} from 'vega';
 import type {TopLevelSpec} from 'vega-lite';
-import type {ChartIntent, MetricResult} from './types';
+import type {ChartIntent, ExploratoryChartIntent, SavedResult} from './types';
 import {chartSpec} from './presentation.mjs';
 
-export default function Chart({result, intent, ownedId}: {result: MetricResult; intent: ChartIntent; ownedId: string}) {
+export default function Chart({result, intent, ownedId}: {result: SavedResult; intent: ChartIntent | ExploratoryChartIntent; ownedId: string}) {
   const container = useRef<HTMLDivElement>(null);
   const [failure, setFailure] = useState('');
   const {spec, reason} = chartSpec(result, intent, ownedId);

@@ -26,13 +26,25 @@ export const exploratoryResult = {id:resultId,run_id:runId,columns:['account','r
 export const explanationAnswer = {kind:'explanation',reason:'forecast',title:"Forecasts aren't available",
   text:"I report recorded results only, so I can't forecast or predict future values.\nInvoices are recorded for completed months up to September 2026.",
   suggestions:['Show monthly invoiced revenue for the last 12 completed months.'],notices:[]};
+export const monthlyResult = {id:resultId,run_id:runId,columns:['creation_month','wins','eligible','inclusive_conversion'],
+  rows:Array.from({length:24},(_,i)=>[`${2024+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}-01`,i<12?1:9,i<12?2:100,i<12?'0.5':'0.09']),
+  provenance:{...exploratoryResult.provenance,title:'Monthly conversion for the completed two-year period',
+    relations:['conversion_cohorts_v1'],caveats:[],returned_rows:24,
+    sql:"SELECT date_trunc('month', date_created)::date AS creation_month, sum(win_count) AS wins, sum(eligible_count) AS eligible, round(sum(win_count)::numeric / nullif(sum(eligible_count), 0), 4) AS inclusive_conversion FROM analyst_query.conversion_cohorts_v1 GROUP BY 1 ORDER BY 1",
+    columns:[{name:'creation_month',label:'Creation month',role:'dimension',unit:'none',type:'date',time_grain:'month'},
+      {name:'wins',label:'Won invoiced projects',role:'measure',unit:'count',type:'integer'},
+      {name:'eligible',label:'Eligible projects',role:'measure',unit:'count',type:'integer'},
+      {name:'inclusive_conversion',label:'Inclusive conversion',role:'measure',unit:'ratio',type:'decimal'}]}};
+export const monthlySummary = 'Inclusive conversion was 50.0% in 2024-01-01 and 9.0% in 2025-12-01; overall for these months was 9.8%. The first 12 months had a combined rate of 50.0% versus 9.0% for the last 12 months (41.0 percentage points lower).';
 
-export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false, explanation=false,
+export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false, explanation=false, monthly=false,
   beforeConversationReply=async()=>{}, beforeMessageReply=async()=>{}, beforeResumeReply=async()=>{}}={}) {
-  const state = {result:structuredClone(exploratory ? exploratoryResult as any : result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false, drilldowns:0, resultReads:0};
+  const state = {result:structuredClone(monthly ? monthlyResult as any : exploratory ? exploratoryResult as any : result), runs: [] as any[], workflow: {} as Record<string,any>, submissions: [] as any[], replies: [] as any[], events: [] as string[], exports:0, feedback:[] as any[], expired:false, streams:0, failReply:false, failSubmission:false, drilldowns:0, resultReads:0};
   const messageRuns = new Map<string,string>();
   const answer = (id: string) => explanation ? structuredClone(explanationAnswer) : ({text:exploratory ? 'Invoiced revenue by account.\nAccount B — Revenue: GBP 300.50.' : 'Order Value is GBP 10,350.00. This is a complete filtered total.',
     result:{result_id:resultId},chart:limited||exploratory?{kind:'table',x:null,y:'value'}:{kind:'bar',x:'category',y:'value'},notices:['Measured contributions do not establish cause.'],
+    ...(monthly ? {summary:monthlySummary,summary_notices:['Recent creation cohorts have had less time to reach invoiced completion. These rates describe outcomes so far.'],
+      exploratory_chart:{kind:'line',x:'creation_month',series:['inclusive_conversion']}} : {}),
     scope_changes:id !== runId && state.submissions.at(-1)?.follow_up_to ? {filters:{before:[],after:['category: A']}} : {}});
   function create(question: string) {
     const id = state.runs.length ? `30000000-0000-4000-8000-${String(state.runs.length+1).padStart(12,'0')}` : runId;

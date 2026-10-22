@@ -553,6 +553,13 @@ details {
   padding-top:12px;
   font-size:.8rem;
 }
+.answer-summary {
+  font-size: 1rem;
+  line-height: 1.7;
+  margin: 1rem 0;
+  max-width: 85ch;
+}
+
 summary {
   cursor:pointer;
   font-weight:600;

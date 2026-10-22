@@ -37,6 +37,12 @@ class ExploratoryColumn(Contract):
     role: Literal["dimension", "measure"]
     unit: Unit
     type: Literal["text", "date", "integer", "decimal"]
+    # Derived by the server from the executed SQL, not supplied by the model.
+    additive: bool = False
+    grouped: bool = False
+    numerator: str | None = None
+    denominator: str | None = None
+    time_grain: Literal["month"] | None = None
 
 
 class ExploratoryProvenance(Contract):
@@ -60,6 +66,7 @@ class ExploratoryProvenance(Contract):
     truncation_reasons: list[Literal["row_limit", "byte_limit"]]
     returned_rows: int
     dataset_scope: Literal["complete", "limited"]
+    query_limited: bool = False
 
 
 class ExploratoryResult(Contract):

@@ -1,13 +1,13 @@
 import {useMemo, useState} from 'react';
 import {flexRender, getCoreRowModel, getPaginationRowModel, getSortedRowModel, useReactTable, type SortingState, type ColumnDef} from '@tanstack/react-table';
 import type {Cell, Column} from './types';
-import {compareDecimal, formatCell, unitLabel} from './presentation.mjs';
+import {columnHeading, compareDecimal, formatCell} from './presentation.mjs';
 
 export default function DataTable({columns, rows, caption, metadata = [], rowScope = 'rows'}: {columns: string[]; rows: Cell[][]; caption: string; metadata?: Column[]; rowScope?: string}) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const defs = useMemo<ColumnDef<Cell[]>[]>(() => columns.map((name, index) => {
     const column = metadata.find(c => c.name === name);
-    return {id: name, accessorFn: row => row[index], header: name.replaceAll('_', ' ') + (column?.unit ? ` (${unitLabel(column.unit)})` : ''),
+    return {id: name, accessorFn: row => row[index], header: columnHeading(name, column),
       cell: info => formatCell(info.getValue(), column?.unit),
       sortingFn: (a, b) => column?.type === 'decimal' || column?.type === 'integer'
         ? compareDecimal(a.original[index], b.original[index]) : String(a.original[index] ?? '').localeCompare(String(b.original[index] ?? ''))};

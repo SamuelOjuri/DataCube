@@ -19,6 +19,7 @@ from ..workflow.explanation import narrative
 from .context import approved_relations, build_context
 from .contracts import ExplorationDraft, ExploratoryColumn, ExploratoryProvenance, ExploratoryResult
 from .policy import POLICY_VERSION, UnsafeQuery, ValidatedQuery, validate
+from .semantics import describe_columns
 
 INTEGER_TYPES = {20, 21, 23}  # int8, int2, int4
 DECIMAL_TYPES = {700, 701, 1700}  # float4, float8, numeric
@@ -31,6 +32,12 @@ LIMITATIONS = [
     "Exploratory analysis: generated SQL over governed views, not a certified metric.",
     "Query time is not an ingestion, refresh, or historical business snapshot date.",
 ]
+LABELS = {
+    "creation_month": "Creation month", "won_invoiced_count": "Won invoiced projects",
+    "eligible_project_count": "Eligible projects", "closed_project_count": "Closed projects",
+    "inclusive_conversion_rate": "Inclusive conversion", "closed_conversion_rate": "Closed-only conversion",
+    "monthly_inclusive_conversion_rate": "Inclusive conversion", "monthly_closed_conversion_rate": "Closed-only conversion",
+}
 
 
 class ExplorationQueryError(RuntimeError):
@@ -142,9 +149,10 @@ class ExplorationService:
         if names != validated.columns:
             raise ExplorationQueryError("Output columns differ from the declared columns: " + ", ".join(names) + ".")
         declared = {c.name: c for c in draft.columns}
-        columns = [ExploratoryColumn(name=name, label=name.replace("_", " ").capitalize(), role=declared[name].role,
+        columns = [ExploratoryColumn(name=name, label=LABELS.get(name, name.replace("_", " ").capitalize()), role=declared[name].role,
                                      unit=declared[name].unit if kind in {"integer", "decimal"} else "none", type=kind)
                    for name, kind in zip(names, types)]
+        columns, query_limited = describe_columns(validated.sql, columns)
         title = " ".join(TITLE.sub("", draft.title).split())[:120] or "Exploratory analysis"
         reference = sha256(json.dumps([POLICY_VERSION, self.catalogue_hash, validated.sql]).encode()).hexdigest()
         provenance = ExploratoryProvenance(
@@ -153,6 +161,7 @@ class ExplorationService:
             columns=columns, business_timezone=timezone, freshness=Freshness(queried_at=now),
             limitations=list(LIMITATIONS), caveats=[c for c in (narrative(c, 240) for c in draft.caveats) if c],
             truncated=bool(reasons), truncation_reasons=reasons,
-            returned_rows=len(rows), dataset_scope="limited" if reasons else "complete")
+            returned_rows=len(rows), dataset_scope="limited" if reasons or query_limited else "complete",
+            query_limited=query_limited)
         return ExploratoryResult(id=uuid4(), run_id=run_id, permissions_version=principal.permissions_version,
                                  columns=list(names), rows=rows, provenance=provenance, created_at=now)

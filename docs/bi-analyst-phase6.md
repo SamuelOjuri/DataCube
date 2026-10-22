@@ -85,6 +85,47 @@ layouts and text/table alternatives for charts. Chart libraries load on demand.
 The Vega runtime remains a large separate bundle (approximately 517 KB before
 gzip); it is not needed for sign-in or table-only answers.
 
+### Exploratory summaries (22 October 2026)
+
+New exploratory answers display a short server-generated summary before their
+chart and values. `exploration/semantics.py` derives additive measures, monthly
+axes and matching ratio components from the executed SQL, including simple CTE
+projections. `exploration/summary.py` calculates facts over all stored rows using
+Decimal arithmetic and renders fixed templates. Every derived claim includes its
+operation and source cell/claim references; no additional model call is made.
+
+Monthly summaries include endpoints and extrema. Equal consecutive halves are
+compared only for complete even-length windows. Conversion uses summed wins
+divided by summed denominators, with changes in percentage points; monthly rates
+are never averaged. Creation-cohort maturity remains visible and no maturity
+cutoff is applied. Missing or invalid supporting counts suppress the overall
+rate. Missing monthly values remain unknown, and missing calendar buckets break
+chart lines. Category shares require complete, nonnegative additive values;
+record lists total only recognised additive measures. SQL LIMIT/OFFSET/FETCH,
+including inside CTEs, conservatively marks summary coverage as limited even
+when no transport truncation occurred.
+
+Exploratory charts use a separate server-selected mapping of stored columns:
+one monthly or category axis and up to three measures with the same unit. Client
+validation checks ownership, column roles/types, units, duplicate coordinates,
+size and numeric bounds. Charts contain only inline owned data. All values
+remain available through the values toggle and unchanged CSV export. Ratios are
+displayed as percentages using exact decimal-string rounding; certified-card
+wording and axes use the same presentation. Source details remain expandable.
+
+Deploy the BI Analyst API and frontend together. No database migration, new
+source view or environment setting is required. Existing saved answers remain
+readable; they acquire summaries only when a new question is executed. The
+exploration prompt is `bi-exploration-1.3.0` and graph version is `2.3.0`;
+the existing version check requires a new question for follow-ups anchored to
+an answer from an older workflow version. This change does not alter the
+separate project-analysis deployment or refresh ingestion data.
+
+Regression coverage includes `test_exploration_summary.py`, real PostgreSQL
+execution/persistence/events/follow-ups in `test_exploration_postgres.py`, frontend
+formatting and chart validation, and a browser scenario for a complete monthly
+answer, values pagination, accessibility and retrieval after sign-in.
+
 ### Tapered Plus visual theme
 
 The interface follows [the Tapered Plus website](https://taperedplus.co.uk/):

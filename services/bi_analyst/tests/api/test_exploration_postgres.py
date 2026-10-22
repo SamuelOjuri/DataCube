@@ -1,4 +1,5 @@
 """Exploratory SQL end to end: real gateways, restricted reader role, LangGraph and the API."""
+from decimal import Decimal
 from uuid import uuid4
 
 from psycopg.conninfo import make_conninfo
@@ -103,6 +104,59 @@ def test_follow_up_stays_exploratory_with_previous_sql(explore):
         assert [stage for stage, _ in provider.calls] == ['plan', 'explore', 'explore']
         previous = provider.calls[-1][1]['previous']
         assert previous['question'] == 'What was revenue last completed month?' and 'invoice_reporting_facts_v1' in previous['sql']
+
+
+@pytest.mark.parametrize('use_cte', [False, True])
+def test_monthly_conversion_summary_is_weighted_persisted_and_sent_in_events(explore, use_cte):
+    _, _, config, start = explore
+    sql = """SELECT date_trunc('month', p.date_created)::date AS creation_month,
+        sum(c.win_count) AS wins, sum(c.eligible_count) AS eligible,
+        round(sum(c.win_count)::numeric / nullif(sum(c.eligible_count), 0), 4) AS inclusive_conversion
+        FROM analyst_query.conversion_cohorts_v1 c JOIN analyst_query.projects_v1 p ON c.monday_id = p.monday_id
+        WHERE c.cohort_years = 5 GROUP BY 1 ORDER BY 1"""
+    if use_cte:
+        sql = f"WITH monthly AS ({sql}) SELECT creation_month, wins, eligible, inclusive_conversion FROM monthly ORDER BY 1"
+    monthly = draft(sql, (('creation_month', 'dimension', 'none'), ('wins', 'measure', 'count'),
+                          ('eligible', 'measure', 'count'), ('inclusive_conversion', 'measure', 'ratio')),
+                    'Monthly conversion for the five-year cohort')
+    provider = Explorer(monthly, monthly)
+    with start(provider, config_override=config) as client:
+        run_id = submit(client, question='Show conversion by creation month')
+        row = settle(client, run_id)
+        assert row['status'] == 'completed', row
+        answer = row['answer']
+        assert answer['summary'] and answer['exploratory_chart']['kind'] == 'line'
+        assert any('less time' in n for n in answer['summary_notices'])
+        overall = next(c for c in answer['claims'] if c['id'] == 'summary_overall')
+        assert overall['operation'] == 'ratio_of_sums' and overall['sources']
+        saved = client.get(f"/v1/results/{answer['result']['result_id']}").json()
+        columns = saved['provenance']['columns']
+        assert columns[0]['time_grain'] == 'month'
+        assert columns[3]['numerator'] == 'wins' and columns[3]['denominator'] == 'eligible'
+        assert Decimal(overall['value']) == sum(Decimal(str(r[1])) for r in saved['rows']) / sum(Decimal(str(r[2])) for r in saved['rows'])
+        assert 'summary_overall' in client.get(f'/v1/runs/{run_id}/events').text
+        assert client.get(f'/v1/runs/{run_id}/workflow').json()['answer']['summary'] == answer['summary']
+        follow = submit(client, row['conversation_id'], follow_up_to=run_id, question='Give me the overall trend')
+        assert settle(client, follow)['answer']['summary'] == answer['summary']
+        assert provider.calls[-1][1]['previous']['sql'] == saved['provenance']['sql']
+
+
+def test_sql_limit_is_not_mistaken_for_a_complete_population(explore):
+    _, _, config, start = explore
+    ranked = draft("SELECT category, sum(amount_invoiced) AS revenue "
+                   "FROM analyst_query.invoice_reporting_facts_v1 GROUP BY category ORDER BY revenue DESC LIMIT 1",
+                   (('category', 'dimension', 'none'), ('revenue', 'measure', 'source_currency')),
+                   'Leading category by invoiced revenue')
+    with start(Explorer(ranked), config_override=config) as client:
+        row = settle(client, submit(client, question='Which category has the most invoiced revenue?'))
+        assert row['status'] == 'completed', row
+        answer = row['answer']
+        saved = client.get(f"/v1/results/{answer['result']['result_id']}").json()
+        assert saved['provenance']['query_limited'] and saved['provenance']['dataset_scope'] == 'limited'
+        assert not saved['provenance']['truncated']
+        assert answer['exploratory_chart'] is None
+        assert any('only the returned rows' in n for n in answer['summary_notices'])
+        assert not any(c['kind'] == 'share' for c in answer['claims'])
 
 
 @pytest.mark.parametrize('broken,expected,private', [

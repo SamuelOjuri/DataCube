@@ -4,6 +4,7 @@ from decimal import Decimal
 from ..workflow.contracts import ChartIntent, EvidenceClaim, GroundedAnswer, ResultReference
 from ..workflow.evidence import EvidenceError
 from .contracts import ExploratoryResult
+from .summary import summarize
 
 MAX_ROWS_IN_TEXT = 8
 MAX_CLAIMS = 24
@@ -57,12 +58,14 @@ def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> Gr
     if asks_for_cause:
         notices.append("These are measured values and differences; they do not establish causes.")
     numeric = single and len(measures) == 1 and p.columns[measures[0]].type in {"integer", "decimal"}
+    summary, summary_claims, summary_notices, exploratory_chart = summarize(result)
     return GroundedAnswer(
         result=ResultReference(result_id=result.id, query_reference=p.query_reference,
                                catalogue_sha256=p.catalogue_sha256),
-        claims=claims, text="\n".join([p.title + ".", *lines, *partial]),
+        claims=[*claims, *summary_claims], text="\n".join([p.title + ".", *lines, *partial]),
         chart=ChartIntent(kind="number" if numeric else "table"),
-        notices=list(dict.fromkeys(notices)), scope_changes={})
+        notices=list(dict.fromkeys([*notices, *summary_notices])), scope_changes={},
+        summary=summary, summary_notices=summary_notices, exploratory_chart=exploratory_chart)
 
 
 def partial_answer(result: ExploratoryResult, measures) -> list[str]:

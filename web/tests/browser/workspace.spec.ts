@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import {fixture,signIn,thread,runId} from './fixture';
+import {fixture,signIn,thread,runId,monthlySummary} from './fixture';
 import {readFile,readdir} from 'node:fs/promises';
 
 function acknowledgementGate() {
@@ -567,14 +567,15 @@ test('exploratory answers are labelled uncertified and show their table, SQL and
   const card=page.getByRole('region',{name:'Invoiced revenue by account, 1 January 2026 to 31 January 2026'});
   await expect(card.getByRole('heading',{name:'Invoiced revenue by account, 1 January 2026 to 31 January 2026'})).toBeVisible();
   await expect(card.getByText('Exploratory analysis · not a certified metric',{exact:true})).toBeVisible();
-  await expect(card.getByText('Generated query over analyst_query.invoice_reporting_facts_v1, analyst_query.projects_v1 · Europe/London')).toBeVisible();
+  await expect(card.getByText('Generated query over analyst_query.invoice_reporting_facts_v1, analyst_query.projects_v1 · Europe/London')).toBeHidden();
   const table=card.getByRole('table',{name:'Invoiced revenue by account, 1 January 2026 to 31 January 2026 — values'});
   await expect(table).toContainText('=Untrusted account');
   await expect(table).toContainText('£1,200.00');
-  await expect(table.getByRole('button',{name:'revenue (GBP)'})).toBeVisible();
+  await expect(table.getByRole('button',{name:'Revenue (GBP)'})).toBeVisible();
   await expect(card.getByRole('button',{name:'Explore contributing projects'})).toHaveCount(0);
   await expect(card.getByRole('note',{name:'What this answer leaves out'})).toContainText('Invoices without a recorded account are grouped as an unknown account.');
   await card.getByText('How this answer was produced',{exact:true}).click();
+  await expect(card.getByText('Generated query over analyst_query.invoice_reporting_facts_v1, analyst_query.projects_v1 · Europe/London')).toBeVisible();
   await expect(card.locator('pre.sql')).toHaveText(state.result.provenance.sql);
   await expect(card.getByText('Exploratory analysis: generated SQL over governed views, not a certified metric.',{exact:true})).toBeVisible();
   const download=page.waitForEvent('download');await card.getByRole('button',{name:'Download CSV (3 rows)'}).click();
@@ -583,6 +584,41 @@ test('exploratory answers are labelled uncertified and show their table, SQL and
   expect(state.drilldowns).toBe(0);
   expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test('monthly exploration opens with summary, maturity caveat and chart and retains all exact values',async({page},testInfo)=>{
+  const state=await fixture(page,{existing:true,exploratory:true,monthly:true});
+  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await signIn(page,`/conversations/${thread}`);
+  const card=page.getByRole('region',{name:'Monthly conversion for the completed two-year period'});
+  await expect(card.getByLabel('Summary',{exact:true})).toHaveText(monthlySummary);
+  await expect(card.getByRole('note',{name:'What this answer leaves out'})).toContainText('less time to reach invoiced completion');
+  await expect(card.locator('.chart svg')).toBeVisible();
+  await card.getByLabel('Summary',{exact:true}).scrollIntoViewIfNeeded();
+  await expect(card.getByLabel('Summary',{exact:true})).toBeInViewport();
+  await page.screenshot({path:testInfo.outputPath('monthly-summary.png'),fullPage:true});
+  await expect(card.getByText('Generated query over',{exact:false})).toBeHidden();
+  await expect(card.getByRole('table')).toHaveCount(0);
+  await card.getByRole('button',{name:'View 24 values'}).click();
+  const table=card.getByRole('table');
+  await expect(table.getByRole('columnheader',{name:'Inclusive conversion (%)'})).toBeVisible();
+  await expect(table).toContainText('50.0%');
+  await expect(table.getByRole('columnheader',{name:'Won invoiced projects'})).toBeVisible();
+  await card.getByRole('button',{name:'Next rows'}).click();
+  await card.getByRole('button',{name:'Next rows'}).click();
+  await expect(table).toContainText('2025-12-01');
+  await expect(table).toContainText('9.0%');
+  await expect(card.getByRole('button',{name:'Download CSV (24 rows)'})).toBeVisible();
+  await card.getByRole('button',{name:'Hide values'}).click();
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  expect(errors).toEqual([]);
+  await page.reload();
+  // The fixture requires a fresh login after reload; production restoration is
+  // covered independently by the session tests.
+  await page.getByRole('button',{name:'Continue with Monday'}).click();
+  await expect(page.getByRole('button',{name:'Sign out'})).toBeVisible();
+  await expect(card.getByLabel('Summary',{exact:true})).toHaveText(monthlySummary);
+  expect(state.resultReads).toBeGreaterThan(1);
 });
 
 test('explanations answer in plain language and offer editable suggestions without loading a result',async({page})=>{
