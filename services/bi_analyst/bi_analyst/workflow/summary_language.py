@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 
-SUMMARY_VERSION = "2"
+SUMMARY_VERSION = "4"
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
           "September", "October", "November", "December")
 # Copy is separate from the signed business catalogue. Never infer a metric's
@@ -30,7 +30,7 @@ def display(value, unit):
         return f"{value.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP):,}{suffix}"
     if unit == "source_currency":
         return f"£{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,}"
-    return f"{value.normalize():,f}" + (" days" if unit == "days" else "")
+    return f"{value.normalize():,f}" + ((" day" if abs(value) == 1 else " days") if unit == "days" else "")
 
 
 def month_text(value):

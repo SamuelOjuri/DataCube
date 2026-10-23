@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import Field
 
 from ..contracts import Contract
+from ..exploration.contracts import AnalysisKind, MonthlyComparison, PeriodComparison, TimeGrain
 from ..metrics.contracts import Comparison, Dimension, Identifier, MetricFilter, Ordering, PeriodName
 
 
@@ -71,13 +72,13 @@ class EvidenceClaim(Contract):
     denominator: Decimal | None = None
     label: str
     kind: Literal["total", "contributor", "absolute_change", "percentage_change", "percentage_point_change",
-                  "first", "latest", "peak", "low", "average", "row_count", "share", "weighted_rate"]
-    operation: Literal["cell", "row_count", "sum", "difference", "mean", "ratio_of_sums", "share"] = "cell"
+                  "first", "latest", "peak", "low", "average", "row_count", "share", "weighted_rate", "median", "correlation"]
+    operation: Literal["cell", "row_count", "sum", "difference", "mean", "ratio_of_sums", "share", "relative_change", "median", "pearson"] = "cell"
     sources: list[str] = Field(default_factory=list)
 
 
 class ChartIntent(Contract):
-    kind: Literal["table", "bar", "line", "number"] = "table"
+    kind: Literal["table", "bar", "line", "number", "comparison"] = "table"
     x: Literal["month", "category", "type"] | None = None
     y: Literal["value"] = "value"
 
@@ -89,9 +90,13 @@ class Presentation(Contract):
 
 class ExploratoryChartIntent(Contract):
     """Server-selected column references, never a model-supplied chart specification."""
-    kind: Literal["line", "bar"]
+    kind: Literal["line", "bar", "histogram", "scatter", "comparison"]
     x: str
     series: list[str] = Field(min_length=1, max_length=3)
+    comparison: MonthlyComparison | None = None
+    period_comparison: PeriodComparison | None = None
+    time_grain: TimeGrain | None = None
+    sort: Literal["ascending", "descending"] | None = None
 
 
 class GroundedAnswer(Contract):
@@ -105,6 +110,8 @@ class GroundedAnswer(Contract):
     summary_version: str | None = None
     summary_notices: list[str] = Field(default_factory=list)
     exploratory_chart: ExploratoryChartIntent | None = None
+    summary_kind: AnalysisKind | Literal["empty", "unknown"] | None = None
+    chart_reason: str | None = None
 
 
 class ExplanationAnswer(Contract):
@@ -115,6 +122,8 @@ class ExplanationAnswer(Contract):
     text: str
     suggestions: list[str] = Field(default_factory=list, max_length=3)
     notices: list[str] = Field(default_factory=list)
+    summary: str | None = None
+    summary_version: str | None = None
 
 
 class WorkflowRun(Contract):

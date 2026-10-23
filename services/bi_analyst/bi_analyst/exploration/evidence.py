@@ -5,7 +5,7 @@ from ..workflow.contracts import ChartIntent, EvidenceClaim, GroundedAnswer, Res
 from ..workflow.evidence import EvidenceError
 from ..workflow.summary_language import SUMMARY_VERSION
 from .contracts import ExploratoryResult
-from .summary import summarize
+from ..answer_presentation.service import present_result
 
 MAX_ROWS_IN_TEXT = 8
 MAX_CLAIMS = 24
@@ -59,7 +59,8 @@ def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> Gr
     if asks_for_cause:
         notices.append("These are measured values and differences; they do not establish causes.")
     numeric = single and len(measures) == 1 and p.columns[measures[0]].type in {"integer", "decimal"}
-    summary, summary_claims, summary_notices, exploratory_chart = summarize(result)
+    rendered = present_result(result)
+    summary, summary_claims, summary_notices, exploratory_chart = rendered.summary, rendered.claims, rendered.notices, rendered.chart
     if asks_for_cause:
         summary_notices.append("These measured values and differences do not establish causes.")
     return GroundedAnswer(
@@ -68,7 +69,8 @@ def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> Gr
         claims=[*claims, *summary_claims], text="\n".join([p.title + ".", *lines, *partial]),
         chart=ChartIntent(kind="number" if numeric else "table"),
         notices=list(dict.fromkeys([*notices, *summary_notices])), scope_changes={},
-        summary=summary, summary_version=SUMMARY_VERSION, summary_notices=summary_notices, exploratory_chart=exploratory_chart)
+        summary=summary, summary_version=SUMMARY_VERSION, summary_notices=summary_notices, exploratory_chart=exploratory_chart,
+        summary_kind=rendered.kind, chart_reason=rendered.chart_reason)
 
 
 def partial_answer(result: ExploratoryResult, measures) -> list[str]:

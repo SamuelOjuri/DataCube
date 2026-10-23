@@ -1,3 +1,7 @@
+import {periodComparisonData} from './periodComparison.mjs';
+import {advance, bucket, bucketLabel, grains, iso} from './calendar.mjs';
+import {analyticalChart, metricComparisonChart} from './analyticalCharts.mjs';
+
 export const unitLabel = unit => ({source_currency: 'GBP', ratio: '%', percent: '%', days: 'days', count: 'count', none: ''}[unit] ?? unit ?? '');
 // Display copy stays separate from the fingerprinted catalogue and saved evidence.
 export function metricPresentation(provenance) {
@@ -73,6 +77,10 @@ export function chartSpec(result, intent, ownedId) {
   const no = reason => ({spec: null, reason});
   if (result.id !== ownedId || !intent || Object.keys(intent).some(k => !['kind', 'x', 'y'].includes(k))) return no('Chart intent is not valid for this result.');
   if (['table', 'number'].includes(intent.kind)) return no('');
+  if (intent.kind === 'comparison') {
+    if (intent.x || intent.y !== 'value' || result.provenance.truncated || result.provenance.dataset_scope === 'limited') return no('The table preserves this limited comparison.');
+    return metricComparisonChart(result, chartTheme, unitLabel, periodLabel);
+  }
   if (!['bar', 'line'].includes(intent.kind) || !['month', 'category', 'type'].includes(intent.x) || intent.y !== 'value') return no('Unsupported chart fields.');
   const p = result.provenance;
   if (p.truncated || p.dataset_scope === 'limited') return no('Limited results are shown in the table to avoid an incomplete chart.');
@@ -100,7 +108,8 @@ export function chartSpec(result, intent, ownedId) {
   if (series.size > 8) return no('Use the table for more than eight series.');
   if (intent.x === 'month') values.sort((a, b) => a.label.localeCompare(b.label));
   const horizontal = intent.kind === 'bar' && intent.x !== 'month';
-  const categoryAxis = {field: 'label', type: 'ordinal', title: null, sort: horizontal && seriesIndex < 0 ? '-x' : null,
+  const lowest = p.request?.ordering?.find(o => o.column === 'value')?.direction === 'asc';
+  const categoryAxis = {field: 'label', type: 'ordinal', title: null, sort: horizontal && seriesIndex < 0 ? (lowest ? 'x' : '-x') : null,
     axis: {labelAngle: horizontal ? 0 : -35, labelLimit: 180}};
   const valueAxis = {field: 'value', type: 'quantitative', title: unitLabel(p.unit), scale: {zero: true}, stack: null,
     axis: {format: p.unit === 'source_currency' ? '~s' : p.unit === 'ratio' ? '.0%' : undefined, tickCount: 5}};
@@ -122,21 +131,28 @@ export function exploratoryChartSpec(result, intent, ownedId) {
   const no = reason => ({spec: null, reason});
   if (result.id !== ownedId || !intent) return no('Chart intent is not valid for this result.');
   if (['table', 'number'].includes(intent.kind)) return no('');
-  if (Object.keys(intent).some(k => !['kind', 'x', 'series'].includes(k)) || !['line', 'bar'].includes(intent.kind)
+  if (Object.keys(intent).some(k => !['kind', 'x', 'series', 'comparison', 'period_comparison', 'time_grain', 'sort'].includes(k))
+      || !['line', 'bar', 'histogram', 'scatter', 'comparison'].includes(intent.kind)
+      || intent.sort != null && !['ascending', 'descending'].includes(intent.sort)
+      || intent.time_grain != null && !grains.includes(intent.time_grain)
       || !Array.isArray(intent.series) || !intent.series.length || intent.series.length > 3
       || new Set(intent.series).size !== intent.series.length) return no('Unsupported chart fields.');
   const p = result.provenance;
+  if (p.columns.map(c => c.name).join('\0') !== result.columns.join('\0') || result.rows.some(row => row.length !== result.columns.length)) return no('Chart fields do not match.');
   if (p.truncated || p.query_limited || p.dataset_scope === 'limited') return no('Limited results are shown in the table.');
+  if (intent.comparison || intent.period_comparison) return comparisonChartSpec(result, intent);
+  if (['histogram', 'scatter', 'comparison'].includes(intent.kind)) return analyticalChart(result, intent, chartTheme, unitLabel);
   const dimensions = p.columns.filter(c => c.role === 'dimension');
   const x = result.columns.indexOf(intent.x), axis = p.columns.find(c => c.name === intent.x);
   if (dimensions.length !== 1 || x < 0 || axis?.role !== 'dimension') return no('Chart fields do not match.');
-  if (intent.kind === 'line' && (axis.type !== 'date' || axis.time_grain !== 'month')) return no('A line chart requires a monthly time axis.');
+  const grain = axis?.time_grain || intent.time_grain;
+  if (intent.kind === 'line' && (axis.type !== 'date' || !grains.includes(grain) || intent.time_grain && intent.time_grain !== grain)) return no('A line chart requires a verified calendar time axis.');
   if (intent.kind === 'bar' && axis.type !== 'text') return no('A bar chart requires a category axis.');
   const columns = intent.series.map(name => p.columns.find(c => c.name === name));
   const unit = columns[0]?.unit;
-  if (!['source_currency', 'ratio', 'percent', 'days', 'count'].includes(unit)
+  if (!['source_currency', 'ratio', 'percent', 'days', 'count', 'none'].includes(unit)
       || columns.some(c => !c || c.role !== 'measure' || !['integer', 'decimal'].includes(c.type) || c.unit !== unit)
-      || intent.series.some(name => !result.columns.includes(name))) return no('Chart fields or units do not match.');
+      || intent.series.some(name => !result.columns.includes(name)) || new Set(columns.map(c => c.label)).size !== columns.length) return no('Chart fields or units do not match.');
   if (!result.rows.length || result.rows.length > (intent.kind === 'bar' ? 30 : 200)) return no('Use the table for this dataset size.');
   const labels = new Set(), values = [];
   for (const row of result.rows) {
@@ -144,23 +160,23 @@ export function exploratoryChartSpec(result, intent, ownedId) {
     if (labels.has(label)) return no('Use the table for repeated chart coordinates.');
     labels.add(label);
     if (intent.kind === 'line') {
-      const parsed = new Date(label + 'T00:00:00Z');
-      if (!/^\d{4}-\d{2}-01$/.test(label) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== label) return no('Invalid monthly axis.');
+      if (!bucket(label, grain)) return no('Invalid calendar axis.');
     }
     for (const column of columns) {
       const raw = row[result.columns.indexOf(column.name)];
       if (raw !== null && (!/^-?\d+(\.\d+)?$/.test(String(raw)) || !Number.isFinite(Number(raw)) || Math.abs(Number(raw)) > Number.MAX_SAFE_INTEGER)) return no('Use the table to retain numerical precision.');
-      values.push({label, value: raw === null ? null : Number(raw), series: column.label});
+      values.push({label, period: intent.kind === 'line' ? bucketLabel(label, grain) : label, value: raw === null ? null : Number(raw), series: column.label});
     }
   }
   if (values.every(v => v.value === null)) return no('All values are unknown.');
   if (intent.kind === 'line') {
     const ordered = [...labels].sort();
-    const month = new Date(ordered[0] + 'T00:00:00Z'), last = ordered.at(-1);
+    let month = new Date(ordered[0] + 'T00:00:00Z');
+    const last = ordered.at(-1);
     // Missing calendar buckets must break the path just like explicit NULLs.
-    for (; month.toISOString().slice(0, 10) <= last; month.setUTCMonth(month.getUTCMonth() + 1)) {
+    for (; iso(month) <= last; month = advance(month, grain)) {
       const label = month.toISOString().slice(0, 10);
-      if (!labels.has(label)) for (const column of columns) values.push({label, value: null, series: column.label});
+      if (!labels.has(label)) for (const column of columns) values.push({label, period: bucketLabel(label, grain), value: null, series: column.label});
       if (values.length > 600) return no('Use the table for this time range.');
     }
   }
@@ -168,7 +184,8 @@ export function exploratoryChartSpec(result, intent, ownedId) {
   // Reuse the certified theme, but build a closed specification with only owned
   // inline values. No field names from the query enter Vega expressions.
   const format = unit === 'ratio' ? '.1%' : unit === 'source_currency' ? ',.2f' : ',.1f';
-  const category = {field: 'label', type: 'ordinal', title: null, sort: intent.kind === 'line' ? 'ascending' : null,
+  const category = {field: intent.kind === 'line' ? 'period' : 'label', type: 'ordinal', title: null,
+    sort: intent.kind === 'line' ? [...new Set(values.map(v => v.period))] : intent.sort === 'descending' ? '-x' : intent.sort === 'ascending' ? 'x' : null,
     axis: {labelAngle: intent.kind === 'line' ? -35 : 0, labelLimit: 180}};
   const value = {field: 'value', type: 'quantitative', title: unitLabel(unit), stack: null,
     scale: {zero: true}, axis: {format: unit === 'ratio' ? '.0%' : unit === 'source_currency' ? '~s' : undefined}};
@@ -179,7 +196,32 @@ export function exploratoryChartSpec(result, intent, ownedId) {
     encoding: {x: intent.kind === 'line' ? category : value, y: intent.kind === 'line' ? value : category,
       color: {field: 'series', type: 'nominal', title: null},
       ...(intent.kind === 'bar' && columns.length > 1 ? {yOffset: {field: 'series'}} : {}),
-      tooltip: [{field: 'label', title: axis.label}, {field: 'series', title: 'Measure'}, {field: 'value', title: unitLabel(unit), format}]},
+      tooltip: [{field: 'period', title: axis.label}, {field: 'series', title: 'Measure'}, {field: 'value', title: unitLabel(unit), format}]},
     config: chartTheme,
+  }};
+}
+
+function comparisonChartSpec(result, intent) {
+  const data = periodComparisonData(result, intent);
+  if (data.reason) return {spec: null, reason: data.reason};
+  const {values, series, unit, rate, title, grain} = data;
+  for (const value of values) value.period = bucketLabel(value.label, grain);
+  const format = unit === 'ratio' ? '.1%' : unit === 'source_currency' ? ',.2f' : ',.1f';
+  return {reason: '', spec: {
+    data: {values}, width: 560, height: 300,
+    description: `${title}: ${series[0]} compared with ${series[1]}. Equivalent ${grain}s are aligned. Missing values are unknown.`,
+    mark: {type: 'line', point: true, invalid: 'break-paths-show-domains'},
+    encoding: {
+      x: {field: 'period', type: 'ordinal', sort: [...new Set(values.map(v => v.period))], title: `Aligned ${grain}s`,
+        axis: {labelAngle: -35}},
+      y: {field: 'value', type: 'quantitative', title: unitLabel(unit), scale: {zero: true},
+        axis: {format: unit === 'ratio' ? '.0%' : unit === 'source_currency' ? '~s' : undefined}},
+      color: {field: 'series', type: 'nominal', title: null, scale: {domain: series, range: ['#931f1f', '#737373']}, legend: {orient: 'bottom'}},
+      strokeDash: {field: 'series', type: 'nominal', scale: {domain: series, range: [[1, 0], [6, 4]]}, legend: null},
+      tooltip: [{field: 'label', title: `Current ${grain}`}, {field: 'baselineMonth', title: `Baseline ${grain}`},
+        {field: 'current', title: `Current (${unitLabel(unit)})`, format}, {field: 'baseline', title: `Baseline (${unitLabel(unit)})`, format},
+        {field: 'difference', title: rate ? 'Difference (percentage points)' : `Difference (${unitLabel(unit)})`, format: ',.2f'},
+        ...(!rate ? [{field: 'relative', title: 'Change', format: '.1%'}] : [])],
+    }, config: chartTheme,
   }};
 }

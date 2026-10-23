@@ -3,11 +3,22 @@ export type Session = {subject: string; expires_at?: string; permissions_version
   absolute_expires_at?: string; idle_expires_at?: string; absoluteDeadline: number; idleDeadline: number; warning_seconds?: number} | null;
 export type Conversation = {id: string; title: string; created_at: string};
 export type Run = {id: string; conversation_id: string; question: string; status: string; created_at: string};
-export type ChartIntent = {kind: 'table' | 'number' | 'bar' | 'line'; x?: 'month' | 'category' | 'type' | null; y: 'value'};
-export type ExploratoryChartIntent = {kind: 'bar' | 'line'; x: string; series: string[]};
+export type ChartIntent = {kind: 'table' | 'number' | 'bar' | 'line' | 'comparison'; x?: 'month' | 'category' | 'type' | null; y: 'value'};
+export type TimeGrain = 'day' | 'week' | 'month' | 'quarter' | 'year';
+export type AnalysisKind = 'total' | 'comparison' | 'trend' | 'ranking' | 'breakdown' | 'distribution' | 'relationship' | 'records';
+export type MonthlyComparison = {current_month: string; baseline_month: string; current_value: string; baseline_value: string;
+  kind: 'year_over_year' | 'previous_period'; completed_months_only: boolean};
+export type PeriodComparison = {current_axis: string; baseline_axis: string; current_value: string; baseline_value: string;
+  time_grain: TimeGrain; kind: 'year_over_year' | 'previous_period'; completed_periods_only: boolean};
+export type AnalysisIntent = {kind: AnalysisKind; primary_measure?: string | null; secondary_measure?: string | null;
+  axis?: string | null; direction?: 'highest' | 'lowest'; period_comparison?: PeriodComparison | null};
+export type ExploratoryChartIntent = {kind: 'bar' | 'line' | 'histogram' | 'scatter' | 'comparison'; x: string; series: string[];
+  comparison?: MonthlyComparison | null; period_comparison?: PeriodComparison | null; time_grain?: TimeGrain | null; sort?: 'ascending' | 'descending' | null};
 export type ResultAnswer = {kind?: 'result'; text: string; result: {result_id: string}; chart: ChartIntent; notices: string[]; scope_changes: Record<string, unknown>;
-  summary?: string | null; summary_version?: string | null; summary_notices?: string[]; exploratory_chart?: ExploratoryChartIntent | null};
-export type ExplanationAnswer = {kind: 'explanation'; reason: string; title: string; text: string; suggestions: string[]; notices: string[]};
+  summary?: string | null; summary_version?: string | null; summary_kind?: AnalysisKind | 'empty' | 'unknown' | null;
+  chart_reason?: string | null; summary_notices?: string[]; exploratory_chart?: ExploratoryChartIntent | null};
+export type ExplanationAnswer = {kind: 'explanation'; reason: string; title: string; text: string; suggestions: string[]; notices: string[];
+  summary?: string | null; summary_version?: string | null};
 export type Workflow = {run_id: string; conversation_id: string; status: string; error_code: string | null;
   clarification: null | {id: string; question: string; options: string[]};
   answer: null | ResultAnswer | ExplanationAnswer};
@@ -17,6 +28,7 @@ export type MetricResult = {id: string; run_id: string; columns: string[]; rows:
   metric_id: string; metric_version: string; metric_label: string; unit: string; source_population: string;
   source_relation: string; source_grain: string; catalogue_version: string; catalogue_sha256: string; query_reference: string;
   request: {period: string; filters: {dimension: string; operator: string; values: string[]}[]; dimensions: string[];
+    ordering?: {column: string; direction: 'asc' | 'desc'}[];
     comparison?: null | {period: string; filters: null | {dimension: string; operator: string; values: string[]}[]}};
   resolved_period: null | {start_date: string; end_date_exclusive: string | null}; business_timezone: string;
   columns: Column[]; total: null | {value: Cell; source_rows: number; known_values: number; numerator?: Cell; denominator?: Cell}; total_scope: string;
@@ -29,11 +41,13 @@ export type MetricResult = {id: string; run_id: string; columns: string[]; rows:
 }};
 export type ProjectPage = {columns: string[]; rows: Cell[][]; has_more: boolean; offset: number; queried_at: string; limitation: string};
 export type ExploratoryColumn = {name: string; label: string; role: 'dimension' | 'measure'; unit: string; type: string;
-  time_grain?: 'month' | null; additive?: boolean; grouped?: boolean};
+  time_grain?: TimeGrain | null; additive?: boolean; grouped?: boolean};
 export type ExploratoryResult = {id: string; run_id: string; columns: string[]; rows: Cell[][]; provenance: {
   kind: 'exploratory'; title: string; sql: string; relations: string[]; columns: ExploratoryColumn[]; business_timezone: string;
   catalogue_version: string; query_reference: string; freshness: {status: string; queried_at: string; limitation: string};
   limitations: string[]; truncated: boolean; returned_rows: number; dataset_scope: string; caveats?: string[]; query_limited?: boolean;
+  monthly_comparison?: MonthlyComparison | null;
+  analysis_intent?: AnalysisIntent | null;
 }};
 export type SavedResult = MetricResult | ExploratoryResult;
 export const isExploratory = (result: SavedResult): result is ExploratoryResult =>

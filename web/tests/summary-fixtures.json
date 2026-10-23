@@ -1,0 +1,1319 @@
+{
+  "total": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "revenue"
+      ],
+      "rows": [
+        [
+          "1234.56"
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Total revenue",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 1,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "total",
+          "primary_measure": null,
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Total revenue.\nRevenue: GBP 1234.56.",
+      "chart": {
+        "kind": "number",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified."
+      ],
+      "scope_changes": {},
+      "summary": "Revenue totalled £1,234.56.",
+      "summary_version": "4",
+      "summary_notices": [],
+      "exploratory_chart": null,
+      "summary_kind": "total",
+      "chart_reason": null
+    }
+  },
+  "ranking": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "account",
+        "revenue"
+      ],
+      "rows": [
+        [
+          "A",
+          10
+        ],
+        [
+          "B",
+          30
+        ],
+        [
+          "C",
+          5
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Lowest revenue by account",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "account",
+            "label": "Account",
+            "role": "dimension",
+            "unit": "none",
+            "type": "text",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          },
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 3,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "ranking",
+          "primary_measure": "revenue",
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "lowest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Lowest revenue by account.\nA — Revenue: GBP 10.\nB — Revenue: GBP 30.\nC — Revenue: GBP 5.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified."
+      ],
+      "scope_changes": {},
+      "summary": "Among the returned groups, C had the lowest revenue at £5.00. This represents 11.1% of the returned total.",
+      "summary_version": "4",
+      "summary_notices": [],
+      "exploratory_chart": {
+        "kind": "bar",
+        "x": "account",
+        "series": [
+          "revenue"
+        ],
+        "comparison": null,
+        "period_comparison": null,
+        "time_grain": null,
+        "sort": "ascending"
+      },
+      "summary_kind": "ranking",
+      "chart_reason": null
+    }
+  },
+  "comparison": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "current_rate",
+        "baseline_rate"
+      ],
+      "rows": [
+        [
+          "0.6",
+          "0.4"
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Conversion comparison",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "current_rate",
+            "label": "Current rate",
+            "role": "measure",
+            "unit": "ratio",
+            "type": "decimal",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          },
+          {
+            "name": "baseline_rate",
+            "label": "Baseline rate",
+            "role": "measure",
+            "unit": "ratio",
+            "type": "decimal",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 1,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "comparison",
+          "primary_measure": "current_rate",
+          "secondary_measure": "baseline_rate",
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Conversion comparison.\nCurrent rate: 60.0%.\nBaseline rate: 40.0%.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time."
+      ],
+      "scope_changes": {},
+      "summary": "Current rate was 60.0%, 20.0 percentage points higher compared with Baseline rate at 40.0%.",
+      "summary_version": "4",
+      "summary_notices": [],
+      "exploratory_chart": {
+        "kind": "comparison",
+        "x": "current_rate",
+        "series": [
+          "current_rate",
+          "baseline_rate"
+        ],
+        "comparison": null,
+        "period_comparison": null,
+        "time_grain": null,
+        "sort": null
+      },
+      "summary_kind": "comparison",
+      "chart_reason": null
+    }
+  },
+  "daily": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "day",
+        "revenue"
+      ],
+      "rows": [
+        [
+          "2026-10-20",
+          20
+        ],
+        [
+          "2026-10-21",
+          null
+        ],
+        [
+          "2026-10-23",
+          50
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Daily revenue",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "day",
+            "label": "Day",
+            "role": "dimension",
+            "unit": "none",
+            "type": "date",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": "day"
+          },
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 3,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "trend",
+          "primary_measure": null,
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Daily revenue.\n2026-10-20 — Revenue: GBP 20.\n2026-10-21 — Revenue: unknown.\n2026-10-23 — Revenue: GBP 50.\n1 of 3 values are unknown because no records matched or the matching records have no value.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "1 of 3 values are unknown because no records matched or the matching records have no value.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified.",
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
+        "Some periods have unknown values. The trend uses known values and leaves gaps in the chart.",
+        "Some periods are missing. The chart leaves gaps rather than treating those values as zero."
+      ],
+      "scope_changes": {},
+      "summary": "Revenue was £50.00 in 23 October 2026, £30.00 higher (150.0%) compared with £20.00 in 20 October 2026.",
+      "summary_version": "4",
+      "summary_notices": [
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
+        "Some periods have unknown values. The trend uses known values and leaves gaps in the chart.",
+        "Some periods are missing. The chart leaves gaps rather than treating those values as zero."
+      ],
+      "exploratory_chart": {
+        "kind": "line",
+        "x": "day",
+        "series": [
+          "revenue"
+        ],
+        "comparison": null,
+        "period_comparison": null,
+        "time_grain": "day",
+        "sort": null
+      },
+      "summary_kind": "trend",
+      "chart_reason": null
+    }
+  },
+  "quarterly": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "quarter",
+        "revenue"
+      ],
+      "rows": [
+        [
+          "2026-01-01",
+          20
+        ],
+        [
+          "2026-04-01",
+          30
+        ],
+        [
+          "2026-07-01",
+          50
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Quarterly revenue",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "quarter",
+            "label": "Quarter",
+            "role": "dimension",
+            "unit": "none",
+            "type": "date",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": "quarter"
+          },
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 3,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "trend",
+          "primary_measure": null,
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Quarterly revenue.\n2026-01-01 — Revenue: GBP 20.\n2026-04-01 — Revenue: GBP 30.\n2026-07-01 — Revenue: GBP 50.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified."
+      ],
+      "scope_changes": {},
+      "summary": "Revenue was £50.00 in Q3 2026, £30.00 higher (150.0%) compared with £20.00 in Q1 2026.",
+      "summary_version": "4",
+      "summary_notices": [],
+      "exploratory_chart": {
+        "kind": "line",
+        "x": "quarter",
+        "series": [
+          "revenue"
+        ],
+        "comparison": null,
+        "period_comparison": null,
+        "time_grain": "quarter",
+        "sort": null
+      },
+      "summary_kind": "trend",
+      "chart_reason": null
+    }
+  },
+  "distribution": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "delivery_time"
+      ],
+      "rows": [
+        [
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ],
+        [
+          4
+        ],
+        [
+          null
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Delivery time distribution",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "delivery_time",
+            "label": "Delivery time",
+            "role": "measure",
+            "unit": "days",
+            "type": "decimal",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 5,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "distribution",
+          "primary_measure": "delivery_time",
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Delivery time distribution.\nDelivery time: 1 days.\nDelivery time: 2 days.\nDelivery time: 3 days.\nDelivery time: 4 days.\nDelivery time: unknown.\n1 of 5 values are unknown because no records matched or the matching records have no value.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "1 of 5 values are unknown because no records matched or the matching records have no value.",
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
+      ],
+      "scope_changes": {},
+      "summary": "Among the returned values, delivery time ranged from 1 day to 4 days, with a median of 2.5 days.",
+      "summary_version": "4",
+      "summary_notices": [
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
+      ],
+      "exploratory_chart": {
+        "kind": "histogram",
+        "x": "delivery_time",
+        "series": [
+          "delivery_time"
+        ],
+        "comparison": null,
+        "period_comparison": null,
+        "time_grain": null,
+        "sort": null
+      },
+      "summary_kind": "distribution",
+      "chart_reason": null
+    }
+  },
+  "relationship": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "revenue",
+        "delivery_time"
+      ],
+      "rows": [
+        [
+          10,
+          1
+        ],
+        [
+          20,
+          2
+        ],
+        [
+          30,
+          3
+        ],
+        [
+          null,
+          4
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Revenue and delivery time",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          },
+          {
+            "name": "delivery_time",
+            "label": "Delivery time",
+            "role": "measure",
+            "unit": "days",
+            "type": "decimal",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 4,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "relationship",
+          "primary_measure": "revenue",
+          "secondary_measure": "delivery_time",
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Revenue and delivery time.\nRevenue: GBP 10.\nDelivery time: 1 days.\nRevenue: GBP 20.\nDelivery time: 2 days.\nRevenue: GBP 30.\nDelivery time: 3 days.\nRevenue: unknown.\nDelivery time: 4 days.\n1 of 8 values are unknown because no records matched or the matching records have no value.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "1 of 8 values are unknown because no records matched or the matching records have no value.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified.",
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
+        "Only records with known values for both measures are compared."
+      ],
+      "scope_changes": {},
+      "summary": "Among the returned pairs, revenue and delivery time had a positive linear correlation (r = 1.00). This describes an association, not a cause.",
+      "summary_version": "4",
+      "summary_notices": [
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
+        "Only records with known values for both measures are compared."
+      ],
+      "exploratory_chart": {
+        "kind": "scatter",
+        "x": "revenue",
+        "series": [
+          "delivery_time"
+        ],
+        "comparison": null,
+        "period_comparison": null,
+        "time_grain": null,
+        "sort": null
+      },
+      "summary_kind": "relationship",
+      "chart_reason": null
+    }
+  },
+  "fallback": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "account",
+        "revenue"
+      ],
+      "rows": [
+        [
+          "A",
+          10
+        ],
+        [
+          "B",
+          30
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Revenue details",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "account",
+            "label": "Account",
+            "role": "dimension",
+            "unit": "none",
+            "type": "text",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          },
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 2,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "trend",
+          "primary_measure": null,
+          "secondary_measure": null,
+          "axis": "account",
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Revenue details.\nA — Revenue: GBP 10.\nB — Revenue: GBP 30.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified."
+      ],
+      "scope_changes": {},
+      "summary": "I can show the available figures, but they do not form a clear sequence of distinct reporting periods. I found 2 matching records. The table shows Account, Revenue. Revenue totalled £40.00 across these records.",
+      "summary_version": "4",
+      "summary_notices": [],
+      "exploratory_chart": null,
+      "summary_kind": "records",
+      "chart_reason": "I can show the available figures, but they do not form a clear sequence of distinct reporting periods."
+    }
+  },
+  "records": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "account"
+      ],
+      "rows": [
+        [
+          "A"
+        ],
+        [
+          "B"
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Matching accounts",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "account",
+            "label": "Account",
+            "role": "dimension",
+            "unit": "none",
+            "type": "text",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 2,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "records",
+          "primary_measure": null,
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Matching accounts.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time."
+      ],
+      "scope_changes": {},
+      "summary": "I found 2 matching records. The table shows Account.",
+      "summary_version": "4",
+      "summary_notices": [],
+      "exploratory_chart": null,
+      "summary_kind": "records",
+      "chart_reason": "There is no numerical measure to plot; the matching entries are listed in the table."
+    }
+  },
+  "empty": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "account",
+        "revenue"
+      ],
+      "rows": [],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "No matching accounts",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "account",
+            "label": "Account",
+            "role": "dimension",
+            "unit": "none",
+            "type": "text",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          },
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 0,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "breakdown",
+          "primary_measure": null,
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "No matching accounts.\nNo matching records were found for this scope.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified."
+      ],
+      "scope_changes": {},
+      "summary": "No matching records were found for this scope. Try a different period or broader filters.",
+      "summary_version": "4",
+      "summary_notices": [],
+      "exploratory_chart": null,
+      "summary_kind": "empty",
+      "chart_reason": "There are no matching values to plot."
+    }
+  },
+  "unknown": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "revenue"
+      ],
+      "rows": [
+        [
+          null
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Revenue unavailable",
+        "sql": "SELECT 1",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "revenue",
+            "label": "Revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": true,
+            "grouped": true,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 1,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "total",
+          "primary_measure": null,
+          "secondary_measure": null,
+          "axis": null,
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Revenue unavailable.\nRevenue: unknown.\n1 of 1 values are unknown because no records matched or the matching records have no value.",
+      "chart": {
+        "kind": "number",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "1 of 1 values are unknown because no records matched or the matching records have no value.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified.",
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
+      ],
+      "scope_changes": {},
+      "summary": "The returned records do not contain known values for Revenue, so I can't calculate a reliable finding from them.",
+      "summary_version": "4",
+      "summary_notices": [
+        "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
+      ],
+      "exploratory_chart": null,
+      "summary_kind": "unknown",
+      "chart_reason": "The table retains the unknown values; they are not plotted as zero."
+    }
+  }
+}

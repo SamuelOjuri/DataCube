@@ -162,6 +162,7 @@ class ExplorationService:
             limitations=list(LIMITATIONS), caveats=[c for c in (narrative(c, 240) for c in draft.caveats) if c],
             truncated=bool(reasons), truncation_reasons=reasons,
             returned_rows=len(rows), dataset_scope="limited" if reasons or query_limited else "complete",
-            query_limited=query_limited)
+            query_limited=query_limited, monthly_comparison=draft.monthly_comparison,
+            analysis_intent=draft.analysis_intent)
         return ExploratoryResult(id=uuid4(), run_id=run_id, permissions_version=principal.permissions_version,
                                  columns=list(names), rows=rows, provenance=provenance, created_at=now)

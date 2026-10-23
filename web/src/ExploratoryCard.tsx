@@ -36,8 +36,13 @@ export default function ExploratoryCard({auth, answer, result, signal}: {auth: A
   const metadata = p.columns.map(c => ({name: c.name, label: c.label, type: c.type, unit: c.unit === 'none' ? null : c.unit}));
   const intent = answer.exploratory_chart || answer.chart;
   const hasChart = !!chartSpec(result, intent, answer.result.result_id).spec;
+  const comparison = 'series' in intent ? intent.period_comparison || intent.comparison : null;
+  const comparisonTitle = comparison && hasChart
+    ? `${p.columns.find(c => c.name === comparison.current_value)?.label.replace(/^(current(?: period| year)?|this year)\s+/i, '') || 'Monthly values'} comparison`
+    : p.title;
+  const title = comparisonTitle.charAt(0).toUpperCase() + comparisonTitle.slice(1);
   return <section className="result-card" aria-label={p.title}>
-    <div className="result-heading"><div><p className="eyebrow">Exploratory analysis · not a certified metric</p><h3>{p.title}</h3></div><span className="badge">Source freshness unknown</span></div>
+    <div className="result-heading"><div><p className="eyebrow">Exploratory analysis · not a certified metric</p><h3>{title}</h3></div><span className="badge">Source freshness unknown</span></div>
     <AnswerSummary answer={answer} caveats={p.caveats || []} />
     {single && <div className="total"><strong>{formatCell(result.rows[0][0], measures[0].unit)}</strong><span>{measures[0].label}</span></div>}
     {!result.rows.length && <p className="data-warning">No matching records were found for this scope.</p>}

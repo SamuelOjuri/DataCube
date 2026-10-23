@@ -9,6 +9,8 @@ from ..contracts import Contract
 from ..metrics.contracts import Cell, Freshness
 
 Unit = Literal["source_currency", "count", "ratio", "percent", "days", "none"]
+TimeGrain = Literal["day", "week", "month", "quarter", "year"]
+AnalysisKind = Literal["total", "comparison", "trend", "ranking", "breakdown", "distribution", "relationship", "records"]
 
 
 class DraftColumn(Contract):
@@ -18,12 +20,44 @@ class DraftColumn(Contract):
     unit: Unit
 
 
+class MonthlyComparison(Contract):
+    """Proposed column pairing, validated against owned rows before presentation."""
+    current_month: str = Field(min_length=1, max_length=63)
+    baseline_month: str = Field(min_length=1, max_length=63)
+    current_value: str = Field(min_length=1, max_length=63)
+    baseline_value: str = Field(min_length=1, max_length=63)
+    kind: Literal["year_over_year", "previous_period"] = "year_over_year"
+    completed_months_only: bool = True
+
+
+class PeriodComparison(Contract):
+    current_axis: str = Field(min_length=1, max_length=63)
+    baseline_axis: str = Field(min_length=1, max_length=63)
+    current_value: str = Field(min_length=1, max_length=63)
+    baseline_value: str = Field(min_length=1, max_length=63)
+    time_grain: TimeGrain
+    kind: Literal["year_over_year", "previous_period"] = "previous_period"
+    completed_periods_only: bool = True
+
+
+class AnalysisIntent(Contract):
+    """A proposed analytical task, not permission to infer unsupported findings."""
+    kind: AnalysisKind
+    primary_measure: str | None = Field(default=None, min_length=1, max_length=63)
+    secondary_measure: str | None = Field(default=None, min_length=1, max_length=63)
+    axis: str | None = Field(default=None, min_length=1, max_length=63)
+    direction: Literal["highest", "lowest"] = "highest"
+    period_comparison: PeriodComparison | None = None
+
+
 class ExplorationDraft(Contract):
     action: Literal["query", "decline"]
     reason: Literal["none", "not_analytical", "data_unavailable", "forecast", "unsafe"] = "none"
     title: str = Field(default="", max_length=160)
     sql: str = Field(default="", max_length=8000)
     columns: list[DraftColumn] = Field(default_factory=list, max_length=20)
+    monthly_comparison: MonthlyComparison | None = None
+    analysis_intent: AnalysisIntent | None = None
     asks_for_cause: bool = False
     # Free text is length-bounded here and checked for figures before display.
     explanation: str = Field(default="", max_length=1000)
@@ -42,7 +76,7 @@ class ExploratoryColumn(Contract):
     grouped: bool = False
     numerator: str | None = None
     denominator: str | None = None
-    time_grain: Literal["month"] | None = None
+    time_grain: TimeGrain | None = None
 
 
 class ExploratoryProvenance(Contract):
@@ -67,6 +101,8 @@ class ExploratoryProvenance(Contract):
     returned_rows: int
     dataset_scope: Literal["complete", "limited"]
     query_limited: bool = False
+    monthly_comparison: MonthlyComparison | None = None
+    analysis_intent: AnalysisIntent | None = None
 
 
 class ExploratoryResult(Contract):

@@ -4,7 +4,8 @@ from decimal import Decimal
 from .contracts import ChartIntent, EvidenceClaim, GroundedAnswer, Presentation, ResultReference
 from ..metrics.contracts import MetricResult
 from .errors import EvidenceError
-from .summary import summarize_metric
+from ..answer_presentation.service import present_result
+from ..answer_presentation.metric_chart import select_metric_chart
 from .summary_language import SUMMARY_VERSION
 
 
@@ -43,6 +44,9 @@ def validate_chart(intent: ChartIntent, result: MetricResult):
     p = result.provenance
     if intent.kind == "number" and (p.total is None or intent.x is not None):
         raise EvidenceError("invalid_number_chart")
+    if intent.kind == "comparison" and (intent.x is not None or p.total is None or p.comparison is None
+            or p.total.value is None or p.comparison.baseline.value is None):
+        raise EvidenceError("invalid_comparison_chart")
     if intent.kind in {"bar", "line"}:
         if (intent.x not in result.columns or not result.rows or len(result.rows) > 100
                 or p.truncated or len(p.request.dimensions) + (p.request.grain == "month") != 1):
@@ -59,19 +63,7 @@ def select_presentation(result: MetricResult) -> Presentation:
     if not claims:
         raise EvidenceError("no_evidence")
     claim_ids = [claim.id for claim in claims[:12]]
-    p = result.provenance
-    axes = (["month"] if p.request.grain == "month" else []) + list(p.request.dimensions)
-    value_index = result.columns.index("value") if "value" in result.columns else None
-    unsuitable = (p.truncated or not result.rows or len(result.rows) > 100 or len(axes) != 1
-                  or value_index is None
-                  or any(row[value_index] is None for row in result.rows))
-    if not axes and p.total is not None and p.comparison is None:
-        chart = ChartIntent(kind="number")
-    elif unsuitable:
-        chart = ChartIntent(kind="table")
-    else:
-        x = axes[0]
-        chart = ChartIntent(kind="line" if x == "month" else "bar", x=x)
+    chart = select_metric_chart(result)
     presentation = Presentation(claim_ids=claim_ids, chart=chart)
     validate_chart(presentation.chart, result)
     return presentation
@@ -114,10 +106,12 @@ def ground(result: MetricResult, presentation: Presentation, scope_changes: dict
         label = claim.label if claim.kind in {"total", "contributor"} else claim.kind.replace("_", " ").capitalize()
         # Text is plain text, never interpreted as HTML/Markdown or executable config.
         lines.append(f"{label}: {formatted}.")
-    summary, summary_claims, summary_notices = summarize_metric(result)
+    rendered = present_result(result)
+    summary, summary_claims, summary_notices = rendered.summary, rendered.claims, rendered.notices
     if asks_for_cause:
         summary_notices.append("These measured values and differences do not establish causes.")
     return GroundedAnswer(result=ResultReference(result_id=result.id, query_reference=p.query_reference,
-        catalogue_sha256=p.catalogue_sha256), claims=[*claims, *summary_claims], text="\n".join(lines), chart=presentation.chart,
+        catalogue_sha256=p.catalogue_sha256), claims=[*claims, *summary_claims], text="\n".join(lines), chart=rendered.chart,
         notices=list(dict.fromkeys([*notices, *summary_notices])), scope_changes=scope_changes,
-        summary=summary, summary_version=SUMMARY_VERSION, summary_notices=summary_notices)
+        summary=summary, summary_version=SUMMARY_VERSION, summary_notices=summary_notices,
+        summary_kind=rendered.kind, chart_reason=rendered.chart_reason)

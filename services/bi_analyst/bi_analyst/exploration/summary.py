@@ -5,6 +5,7 @@ from decimal import Decimal
 from ..workflow.contracts import EvidenceClaim, ExploratoryChartIntent
 from ..workflow.errors import EvidenceError
 from ..workflow.summary_language import display, month_text
+from .comparison import infer_comparison, summarize_comparison
 
 MATURITY = ("Recent creation cohorts have had less time to reach invoiced completion. "
             "These rates describe recorded outcomes so far, not final conversion performance; "
@@ -38,6 +39,13 @@ def monthly_axis(result):
 
 
 def summarize(result):
+    """Compatibility adapter; all public answers use the shared presentation layer."""
+    from ..answer_presentation.service import present_exploration
+    answer = present_exploration(result)
+    return answer.summary, answer.claims, answer.notices, answer.chart
+
+
+def _summarize_known_shape(result, primary=None):
     p, rows = result.provenance, result.rows
     claims, notices = [], []
     limited = p.truncated or p.query_limited or p.dataset_scope == "limited"
@@ -65,12 +73,18 @@ def summarize(result):
             amount(row[i])
     if any(row[i] is None for row in rows for i, _ in measures):
         notices.append("Some returned values are unknown. They are not treated as zero, and summaries use known values only.")
+    pairing = p.monthly_comparison or infer_comparison(result)
+    if pairing:
+        text, comparison_notices, chart = summarize_comparison(result, pairing, claim)
+        return text, claims, [*notices, *comparison_notices], chart
     rates = [(i, c) for i, c in measures if c.unit in {"ratio", "percent"}]
     axis = monthly_axis(result)
     # Category results may return a supporting share next to revenue. The money
     # is the primary measure there; conversion rates take priority on time axes.
     additive = [(i, c) for i, c in measures if c.additive]
     chosen = (rates or measures) if axis is not None else (additive or rates or measures)
+    if primary is not None:
+        chosen = [(i, c) for i, c in measures if i == primary]
     chart = None
     dimensions = [i for i, c in enumerate(p.columns) if c.role == "dimension"]
     if not limited and chosen and len(dimensions) == 1:

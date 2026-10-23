@@ -378,6 +378,39 @@ Implement the work in the following phases. Owners below are responsibilities; o
 
    **Explanation answers (graph 2.2.0, prompt `bi-exploration-1.1.0`):** questions the data cannot answer no longer end as failed runs with internal codes. Declines (`forecast`, `data_unavailable`, `not_analytical`, `unsafe`), exhausted repairs (`query_failed`) and planner-unsupported questions while exploration is off (`unsupported`) complete with an `explanation` answer: a server-owned title and lead sentence, optional model wording and up to three suggested questions. Model wording is kept only if it contains no amounts, currency, percentages, links or numbers other than years and one- or two-digit counts; unsafe requests never repeat model text or suggestions. Exploratory results add checked `caveats` and plain-language partial-answer sentences (unknown values, row limit, empty scope). Explanations store no result or plan, so they cannot anchor follow-ups. The web app shows an explanation card whose suggestions fill the question box without submitting, and lists caveats on exploratory cards. Monitor declines through the answer `reason`; `exploration_query_failed` remains only for operation logs.
 
+   **Shared answer presentation (23 October 2026, summary version 4):**
+   `answer_presentation/service.py` is the common entry point for certified and
+   exploratory results. The exploratory planner proposes a bounded `analysis_intent`
+   identifying the task and output columns. The server validates those references,
+   SQL-derived measure semantics and returned coordinates before calculating any
+   findings. When intent is absent, result shape selects a conservative handler.
+   Intent never supplies numerical claims or executable chart specifications.
+
+   Supported handlers cover totals, scalar and paired-period comparisons,
+   highest/lowest rankings, category breakdowns, distributions (range and median),
+   relationships (complete-pair Pearson correlation) and record lists. Trends and
+   paired comparisons support day, Monday-start week, month, calendar quarter and
+   year buckets when the source supports that grain. Monthly weighted-rate logic
+   and certified metric definitions are retained. Rates and averages are never
+   summed; unknowns remain unknown; limited results describe only returned rows;
+   correlations do not establish causes. Every derived number records its operation
+   and owned source cells or aggregate fields in evidence claims.
+
+   The shared result includes conversational text, analytical kind, notices, chart
+   intent and a table-fallback reason. Both answer types display a summary, including
+   empty/unknown results and explanations without data. The UI places the finding
+   first, selects line/bar/histogram/scatter templates from validated intent, and
+   keeps exact values behind “View values” when a chart is available. Uninterpretable
+   results retain descriptive findings and a visible table with an explanation.
+   Existing versioned answers refresh from authorised saved results on API reads and
+   event replay without querying source data again or rewriting historical evidence.
+
+   Backend-generated synthetic cases in `web/tests/summary-fixtures.json` are checked
+   by Python and consumed by frontend/browser tests. To intentionally regenerate
+   them, run `tests/api/test_shared_presentation.py` with the service on `PYTHONPATH`.
+   The existing `presentation.py` remains the result access/feedback API module.
+   This change requires backend and frontend deployment, with no database migration.
+
 Work after Phase 8 should follow measured demand. Candidate extensions include richer saved analyses, a durable analyst worker for long reports/exports, additional certified forecasting outputs, metadata/example embeddings, or broader tool integration. The initial small catalogue does not require a vector database. Existing forecast calculations remain in SQL, and existing predictive model outputs retain their definitions.
 
 The release evidence must cover these cases:

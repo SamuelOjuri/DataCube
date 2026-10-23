@@ -302,5 +302,7 @@ class ConversationGraph:
         return {}
 
     async def finish_explanation(self, answer):
+        from ..answer_presentation.service import present_explanation
+        answer = present_explanation(answer)
         await self.stage('explaining')
         await self.jobs.finish(self.actor,self.run_id,self.token,'completed',answer=answer.model_dump(mode='json'))

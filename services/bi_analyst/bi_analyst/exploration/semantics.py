@@ -68,11 +68,13 @@ def describe_columns(sql, columns):
         identifier = isinstance(node, exp.Column) and (node.name == "id" or node.name.endswith("_id"))
         additive = (isinstance(node, (exp.Sum, exp.Count)) and not node.find(exp.Window)
                     and not node.find(exp.Distinct)) or (raw_rows and isinstance(node, exp.Column) and not identifier)
-        monthly = isinstance(node, (exp.DateTrunc, exp.TimestampTrunc)) and str(node.args.get("unit", "")).strip("'").lower() == "month"
+        grain = str(node.args.get("unit", "")).strip("'").lower() if isinstance(node, (exp.DateTrunc, exp.TimestampTrunc)) else None
+        if grain not in {"day", "week", "month", "quarter", "year"}:
+            grain = None
         updates[column.name] = column.model_copy(update={
             "grouped": grouped,
             "additive": bool(additive and column.role == "measure" and column.unit in {"count", "source_currency"}),
-            "time_grain": "month" if monthly and column.role == "dimension" and column.type == "date" else None})
+            "time_grain": grain if column.role == "dimension" and column.type == "date" else None})
     for name, column in list(updates.items()):
         node = expressions[name]
         if column.unit != "ratio" or not isinstance(node, exp.Div):

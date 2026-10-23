@@ -115,7 +115,9 @@ def summarize_metric(result):
         index = result.columns.index("value")
         known = [n for n, row in enumerate(rows) if row[index] is not None]
         if known:
-            top = max(known, key=lambda n: amount(rows[n][index]))
+            ordering = next((o for o in p.request.ordering if o.column == "value"), None)
+            lowest = ordering is not None and ordering.direction == "asc"
+            top = (min if lowest else max)(known, key=lambda n: amount(rows[n][index]))
             value = amount(rows[top][index])
             keys = (["month"] if p.request.grain == "month" else []) + list(p.request.dimensions)
             labels = [str(rows[top][result.columns.index(d)])[:180] if rows[top][result.columns.index(d)] is not None
@@ -127,7 +129,13 @@ def summarize_metric(result):
             qualifier = "Among the returned groups" if limited else "Among the groups"
             if len(known) < len(rows):
                 qualifier += " with known values"
-            sentences.append(f"{qualifier}, {label} had the highest value at {display(value, p.unit)}.")
+            direction = "lowest" if lowest else "highest"
+            tied = sum(amount(rows[n][index]) == value for n in known) > 1
+            finding = f"{qualifier}, {label} {'was tied for' if tied else 'had'} the {direction} value at {display(value, p.unit)}."
+            if ordering:
+                sentences.insert(0, finding)
+            else:
+                sentences.append(finding)
         else:
             notices.append("All returned group values are unknown; no leading group can be identified.")
 

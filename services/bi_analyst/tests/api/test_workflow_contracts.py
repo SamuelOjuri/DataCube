@@ -40,7 +40,7 @@ def test_no_arbitrary_tools_narratives_or_chart_configuration(schema,payload):
 
 @pytest.mark.parametrize('grain,dimensions,truncated,missing,has_comparison,expected', [
     ('total', [], False, False, False, ('number', None)),
-    ('total', [], False, False, True, ('table', None)),
+    ('total', [], False, False, True, ('comparison', None)),
     ('total', ['category'], False, False, False, ('bar', 'category')),
     ('month', [], False, False, False, ('line', 'month')),
     ('total', ['category'], True, False, False, ('table', None)),

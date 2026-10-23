@@ -159,6 +159,35 @@ def test_sql_limit_is_not_mistaken_for_a_complete_population(explore):
         assert not any(c['kind'] == 'share' for c in answer['claims'])
 
 
+@pytest.mark.parametrize('kind,sql,columns,chart', [
+    ('trend', "SELECT date_trunc('quarter', invoice_date)::date AS period, sum(amount_invoiced) AS value "
+        "FROM analyst_query.invoice_reporting_facts_v1 GROUP BY 1 ORDER BY 1",
+        (('period', 'dimension', 'none'), ('value', 'measure', 'source_currency')), 'line'),
+    ('distribution', "SELECT total_order_value AS value FROM analyst_query.projects_v1",
+        (('value', 'measure', 'source_currency'),), 'histogram'),
+])
+def test_shared_intent_is_persisted_and_summary_survives_api_and_event_replay(explore, kind, sql, columns, chart):
+    _, _, config, start = explore
+    proposal = draft(sql, columns, 'Shared presentation integration')
+    proposal['analysis_intent'] = {'kind': kind, 'primary_measure': 'value'}
+    with start(Explorer(proposal), config_override=config) as client:
+        run_id = submit(client, question='Describe these recorded values')
+        row = settle(client, run_id)
+        assert row['status'] == 'completed', row
+        answer = row['answer']
+        assert answer['summary_kind'] == kind and answer['summary_version'] == '4'
+        assert answer['exploratory_chart']['kind'] == chart
+        saved = client.get(f"/v1/results/{answer['result']['result_id']}").json()
+        assert saved['provenance']['analysis_intent']['kind'] == kind
+        if kind == 'trend':
+            assert saved['provenance']['columns'][0]['time_grain'] == 'quarter'
+        else:
+            assert any(c['operation'] == 'median' for c in answer['claims'])
+        events = client.get(f'/v1/runs/{run_id}/events').text
+        assert 'summary_kind' in events and f'"{kind}"' in events
+        assert client.get(f'/v1/runs/{run_id}/workflow').json()['answer']['summary'] == answer['summary']
+
+
 @pytest.mark.parametrize('broken,expected,private', [
     ("SELECT sum(amount_invoicd) AS revenue FROM analyst_query.invoice_reporting_facts_v1", '42703', None),
     ("SELECT sum(account::numeric) AS revenue FROM analyst_query.projects_v1", '22P02', 'A, B'),

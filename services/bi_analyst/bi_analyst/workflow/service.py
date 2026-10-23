@@ -10,8 +10,8 @@ import psycopg
 
 from .checkpoints import ScopedPostgresSaver
 from .evidence import EvidenceError
-from .contracts import GroundedAnswer
-from .summary import summarize_metric
+from .contracts import ExplanationAnswer, GroundedAnswer
+from ..answer_presentation.service import present_explanation, present_result
 from .summary_language import SUMMARY_VERSION
 from .graph import ConversationGraph
 from .provider import EXPLORE_PROMPT_VERSION, GENERATION, MODEL, PROMPT_VERSION, ProviderFailure
@@ -20,7 +20,6 @@ from ..exploration.policy import POLICY_VERSION
 from ..exploration.service import ExplorationService
 from ..exploration.contracts import ExploratoryResult
 from ..exploration.semantics import describe_columns
-from ..exploration.summary import summarize
 from ..metrics.contracts import MetricResult
 
 
@@ -72,7 +71,9 @@ class WorkflowService:
 
     async def present_answer(self, actor, answer, run_id):
         """Enrich old saved answers from owned stored evidence, without writes or source queries."""
-        if answer.get('kind') == 'explanation' or (answer.get('summary') and answer.get('summary_version') == SUMMARY_VERSION):
+        if answer.get('kind') == 'explanation':
+            return present_explanation(ExplanationAnswer.model_validate(answer)).model_dump(mode='json')
+        if (answer.get('summary') or '').strip() and answer.get('summary_version') == SUMMARY_VERSION:
             return answer
         grounded = GroundedAnswer.model_validate(answer)
         stored = await self.store.result(actor, grounded.result.result_id)
@@ -85,14 +86,17 @@ class WorkflowService:
             result = ExploratoryResult.model_validate(stored)
             result.provenance.columns, limited = describe_columns(result.provenance.sql, result.provenance.columns)
             result.provenance.query_limited = limited
-            summary, claims, notices, chart = summarize(result)
-            if chart and chart.kind == 'line' and not any(
-                    c.get('name') == chart.x and c.get('time_grain') == 'month' for c in provenance['columns']):
-                chart = None  # Older result metadata cannot validate a monthly chart on the client.
-            grounded.exploratory_chart = chart
         else:
-            summary, claims, notices = summarize_metric(MetricResult.model_validate(stored))
-        grounded.summary = summary
+            result = MetricResult.model_validate(stored)
+        rendered = present_result(result)
+        notices, claims = rendered.notices, rendered.claims
+        if provenance.get('kind') == 'exploratory':
+            grounded.exploratory_chart = rendered.chart
+        else:
+            grounded.chart = rendered.chart
+        grounded.summary = rendered.summary
+        grounded.summary_kind = rendered.kind
+        grounded.chart_reason = rendered.chart_reason
         grounded.summary_version = SUMMARY_VERSION
         if any('do not establish causes' in n for n in grounded.notices):
             notices.append('These measured values and differences do not establish causes.')
@@ -109,6 +113,8 @@ class WorkflowService:
         if isinstance(run.answer, GroundedAnswer):
             run.answer = GroundedAnswer.model_validate(await self.present_answer(
                 actor, run.answer.model_dump(mode='json'), run.run_id))
+        elif isinstance(run.answer, ExplanationAnswer):
+            run.answer = present_explanation(run.answer)
         return run
 
     def _schedule(self, actor, run_id, token, reply=None):
