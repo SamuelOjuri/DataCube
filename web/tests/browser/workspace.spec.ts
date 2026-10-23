@@ -546,9 +546,24 @@ test('mobile layout and keyboard navigation remain accessible',async({page})=>{
   await page.screenshot({path:'../outputs/phase6-mobile.png',fullPage:true});
 });
 
+test('comparison rounds repeating percentage changes and retains exact currency amounts',async({page})=>{
+  const state=await fixture(page,{existing:true,answerOverride:{chart:{kind:'number',y:'value'}}});
+  state.result.provenance.total.value='857588.52';
+  state.result.provenance.comparison_period={start_date:'2026-08-01',end_date_exclusive:'2026-09-01'};
+  state.result.provenance.comparison={baseline:{value:'293732.20'},absolute_change:'563856.32',
+    percentage_change:'191.96271978353071266956772189089245237668869807260',percentage_point_change:null,zero_denominator:false};
+  await signIn(page,`/conversations/${thread}`);
+  const comparison=page.getByRole('region',{name:'Comparison'});
+  await expect(comparison.locator('div').filter({has:page.locator('dt',{hasText:'Percentage change'})}).locator('dd')).toHaveText('192.0%');
+  await expect(comparison).toContainText('£293,732.20');
+  await expect(comparison).toContainText('£563,856.32');
+  await expect(page.locator('.total strong')).toHaveText('£857,588.52');
+});
+
 test('comparison shows its baseline scope and undefined percentage change',async({page})=>{
   await fixture(page,{existing:true,comparison:true});await signIn(page,`/conversations/${thread}`);
   await expect(page.getByRole('region',{name:'Comparison'})).toContainText('August 2026');
+  await expect(page.getByRole('region',{name:'Comparison'}).locator('dd')).toContainText(['Undefined']);
   await expect(page.getByRole('region',{name:'Comparison'})).toContainText('Percentage change is undefined because the baseline is zero or unknown.');
 });
 

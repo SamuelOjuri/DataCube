@@ -77,7 +77,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
       <div><dt>Baseline filters</dt><dd>{filterLabel(p.request.comparison?.filters ?? p.request.filters)}</dd></div>
       <div><dt>Baseline value</dt><dd>{formatCell(p.comparison.baseline.value, p.unit)}</dd></div>
       <div><dt>Absolute change</dt><dd>{formatCell(p.comparison.absolute_change, p.unit)}</dd></div>
-      <div><dt>Percentage change</dt><dd>{p.comparison.percentage_change === null ? 'Undefined' : `${formatCell(p.comparison.percentage_change)}%`}</dd></div>
+      <div><dt>Percentage change</dt><dd>{p.comparison.percentage_change === null ? 'Undefined' : formatCell(p.comparison.percentage_change, 'percent')}</dd></div>
       {p.unit === 'ratio' && <div><dt>Percentage-point change</dt><dd>{p.comparison.percentage_point_change === null ? 'Unknown' : `${formatCell(p.comparison.percentage_point_change)} percentage points`}</dd></div>}
     </dl>{p.comparison.zero_denominator && <p className="note">Percentage change is undefined because the baseline is zero or unknown.</p>}</section>}
     {Object.keys(answer.scope_changes).length > 0 && <details className="scope-change"><summary>Scope changed from the previous answer</summary><pre>{JSON.stringify(answer.scope_changes, null, 2)}</pre></details>}

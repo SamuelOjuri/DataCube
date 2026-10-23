@@ -73,6 +73,17 @@ test('rates use exact decimal percentage formatting and headers avoid repeated u
   assert.equal(columnHeading('inclusive_conversion',{label:'Inclusive conversion',unit:'ratio'}),'Inclusive conversion (%)');
 });
 
+test('percentage changes round long decimal strings without rescaling or losing precision', () => {
+  for (const [value, expected] of [
+    ['191.96271978353071266956772189089245237668869807260', '192.0%'],
+    ['-191.96271978353071266956772189089245237668869807260', '-192.0%'],
+    ['1.0499999999999999999999999999999999999999999999999', '1.0%'],
+    ['1.05', '1.1%'],
+    ['-0.00000000000000000000000000000000000000000000001', '0.0%'],
+    ['0', '0.0%'],
+  ]) assert.equal(formatCell(value, 'percent'), expected);
+});
+
 const exploration = () => ({id:'owned',columns:['creation_month','inclusive','closed','wins'],
   rows:[['2026-09-01','0.2',null,2],['2026-08-01','0.1','0.5',1]],
   provenance:{kind:'exploratory',title:'Conversion by creation month',columns:[
