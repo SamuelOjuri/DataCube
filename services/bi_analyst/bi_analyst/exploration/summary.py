@@ -1,9 +1,10 @@
 """Small, deterministic summaries over stored rows, with reproducible evidence."""
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from ..workflow.contracts import EvidenceClaim, ExploratoryChartIntent
 from ..workflow.errors import EvidenceError
+from ..workflow.summary_language import display, month_text
 
 MATURITY = ("Recent creation cohorts have had less time to reach invoiced completion. "
             "These rates describe recorded outcomes so far, not final conversion performance; "
@@ -17,18 +18,6 @@ def amount(value):
     if not result.is_finite():
         raise EvidenceError("nonfinite_value")
     return result
-
-
-def display(value, unit):
-    if value is None:
-        return "unknown"
-    if unit in {"ratio", "percent", "percentage_points"}:
-        value = value * 100 if unit == "ratio" else value
-        suffix = " percentage points" if unit == "percentage_points" else "%"
-        return f"{value.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP):,}{suffix}"
-    if unit == "source_currency":
-        return f"GBP {value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,}"
-    return f"{value.normalize():,f}" + (" days" if unit == "days" else "")
 
 
 def monthly_axis(result):
@@ -110,8 +99,8 @@ def summarize(result):
             operation="difference", sources=[f"rows.{first}.{index}", f"rows.{last}.{index}"],
             unit="percentage_points" if rate else column.unit)
         scope = "Among the returned months, " if limited else ""
-        sentences = [f"{scope}{column.label} was {display(values[first], column.unit)} in {rows[first][axis]} "
-                     f"and {display(values[last], column.unit)} in {rows[last][axis]}."]
+        sentences = [f"{scope}{column.label} was {display(values[first], column.unit)} in {month_text(rows[first][axis])}"
+                     + (f" and {display(values[last], column.unit)} in {month_text(rows[last][axis])}." if first != last else ".")]
 
         def aggregate(indices, key):
             if column.unit == "ratio":
@@ -132,10 +121,10 @@ def summarize(result):
                 kind="average", operation="mean", sources=[f"rows.{n}.{index}" for n in indices])
 
         overall = aggregate(ordered, "overall")
-        if overall:
+        if overall and len(rows) > 1:
             label = "Overall" if column.unit == "ratio" else "The monthly average"
             sentences[0] = sentences[0][:-1] + f"; {label.lower()} for these months was {display(overall.value, column.unit)}."
-        elif column.unit == "ratio":
+        elif overall is None and column.unit == "ratio":
             notices.append("An overall rate is unavailable because its supporting counts are missing, invalid or zero.")
         # Compare equal, consecutive halves. Gaps, partial results and odd windows
         # are described with endpoints instead of implying equivalent periods.
@@ -153,17 +142,20 @@ def summarize(result):
                     operation="difference", sources=[f"claims.{before.id}.value", f"claims.{after.id}.value"], unit=unit)
                 verb = "higher" if delta > 0 else "lower" if delta < 0 else "unchanged"
                 comparison = "had a combined rate of" if column.unit == "ratio" else "averaged"
+                difference = f"{display(abs(delta), unit)} {verb}" if delta else "unchanged"
                 sentences.append(f"The first {half} months {comparison} {display(before.value, column.unit)} versus "
                     f"{display(after.value, column.unit)} for the last {half} months "
-                    f"({display(abs(delta), unit)} {verb}).")
-        sentences.append(f"The highest monthly value was {display(values[peak], column.unit)} in {rows[peak][axis]}; "
-                         f"the lowest was {display(values[low], column.unit)} in {rows[low][axis]}.")
+                    f"({difference}).")
+        if len(known) > 1:
+            sentences.append(f"The highest monthly value was {display(values[peak], column.unit)} in {month_text(rows[peak][axis])}; "
+                             f"the lowest was {display(values[low], column.unit)} in {month_text(rows[low][axis])}.")
         return " ".join(sentences), claims, notices, chart
 
     if len(rows) == 1 and not dimensions and chosen:
         i, c = chosen[0]
         claim("value", amount(rows[0][i]), c, sources=[f"rows.0.{i}"])
-        return f"{c.label}: {display(amount(rows[0][i]), c.unit)}.", claims, notices, None
+        verb = "totalled" if c.additive else "was"
+        return f"{c.label} {verb} {display(amount(rows[0][i]), c.unit)}.", claims, notices, None
     # Rank a single grouped dimension, never sum rates or use a top-N subtotal as
     # the denominator for a company-wide share.
     if (len(dimensions) == 1 and chosen and chosen[0][1].grouped
@@ -185,13 +177,13 @@ def summarize(result):
                     sources=[f"rows.{top}.{i}", *[f"rows.{n}.{i}" for n in known]])
                 text += f" This represents {display(share, 'ratio')} of the returned total."
             return text, claims, notices, chart
-    text = f"The result contains {display(count.value, 'count')} records" + (" from a limited result." if limited else ".")
+    text = f"There {'is' if count.value == 1 else 'are'} {display(count.value, 'count')} matching {'record' if count.value == 1 else 'records'} in this result."
     totals = []
     for i, c in measures:
         if c.additive and all(row[i] is not None for row in rows):
             value = sum(amount(row[i]) for row in rows)
             claim(f"total_{c.name}", value, c, operation="sum", sources=[f"rows.{n}.{i}" for n in range(len(rows))])
-            totals.append(f"{c.label}: {display(value, c.unit)}")
+            totals.append(f"{c.label} totalled {display(value, c.unit)} across these records.")
     if totals:
-        text += " Totals for these records: " + "; ".join(totals[:2]) + "."
+        text += " " + " ".join(totals[:2])
     return text, claims, notices, chart

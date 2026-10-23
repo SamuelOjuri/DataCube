@@ -102,6 +102,7 @@ class GroundedAnswer(Contract):
     notices: list[str]
     scope_changes: dict
     summary: str | None = None
+    summary_version: str | None = None
     summary_notices: list[str] = Field(default_factory=list)
     exploratory_chart: ExploratoryChartIntent | None = None
 

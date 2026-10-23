@@ -548,7 +548,7 @@ test('mobile layout and keyboard navigation remain accessible',async({page})=>{
 
 test('comparison shows its baseline scope and undefined percentage change',async({page})=>{
   await fixture(page,{existing:true,comparison:true});await signIn(page,`/conversations/${thread}`);
-  await expect(page.getByRole('region',{name:'Comparison'})).toContainText('2026-08-01 to 2026-09-01 (end exclusive)');
+  await expect(page.getByRole('region',{name:'Comparison'})).toContainText('August 2026');
   await expect(page.getByRole('region',{name:'Comparison'})).toContainText('Percentage change is undefined because the baseline is zero or unknown.');
 });
 
@@ -621,6 +621,35 @@ test('monthly exploration opens with summary, maturity caveat and chart and reta
   expect(state.resultReads).toBeGreaterThan(1);
 });
 
+test('monthly enquiry uses conversational wording and keeps exact dates in source details',async({page},testInfo)=>{
+  const summaryText='New enquiry value totalled £6,055,247.06 in September 2026.';
+  const evidenceText='Monthly New Enquiry Value: GBP 6055247.06.';
+  const state=await fixture(page,{existing:true,answerOverride:{summary:summaryText,summary_version:'2',text:evidenceText,
+    chart:{kind:'number',x:null,y:'value'}}});
+  state.result={...state.result,columns:['value'],rows:[['6055247.06']],provenance:{...state.result.provenance,
+    metric_id:'enquiry_monthly_actual',metric_label:'Monthly New Enquiry Value',
+    request:{period:'last_month',filters:[],dimensions:[]},resolved_period:{start_date:'2026-09-01',end_date_exclusive:'2026-10-01'},
+    columns:[{name:'value',type:'decimal',unit:'source_currency'}],total:{value:'6055247.06',source_rows:1,known_values:1},
+    coverage:{},limitations:[],returned_rows:1,matched_groups:1,evaluation_only:false}};
+  state.runs[0].question='What was gross New Enquiry Value for the last completed month?';
+  await signIn(page,`/conversations/${thread}`);
+  const card=page.getByRole('region',{name:'Monthly New Enquiry Value'});
+  await expect(card.getByLabel('Summary',{exact:true})).toHaveText(summaryText);
+  await expect(card.locator('.result-scope')).toHaveText('September 2026 · Reportable projects, including archived projects');
+  await expect(card.getByText('2026-09-01 to 2026-10-01 (end exclusive) · Europe/London',{exact:true})).toBeHidden();
+  await expect(card.locator('.answer-text')).toBeHidden();
+  await page.screenshot({path:testInfo.outputPath('enquiry-summary-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await card.getByLabel('Summary',{exact:true}).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  await page.screenshot({path:testInfo.outputPath('enquiry-summary-mobile.png'),fullPage:true});
+  await card.getByText('Supporting figures',{exact:true}).click();
+  await expect(card.locator('.answer-text')).toHaveText(evidenceText);
+  await card.getByText('Definitions and source details',{exact:true}).click();
+  await expect(card.getByText('2026-09-01 to 2026-10-01 (end exclusive) · Europe/London',{exact:true})).toBeVisible();
+});
+
 test('certified conversion shows the conversational summary and exclusions above the figure on desktop and mobile',async({page},testInfo)=>{
   const state=await fixture(page,{existing:true,answerOverride:{summary:certifiedConversionSummary,
     summary_notices:['Open projects are excluded from closed-only conversion.','Recent creation cohorts have had less time to reach invoiced completion.'],
@@ -690,7 +719,7 @@ for(const [reason,title,text] of [
     await signIn(page,`/conversations/${thread}`);
     await expect(page.getByLabel('Summary',{exact:true})).toHaveText(text);
     await expect(page.getByLabel('Summary',{exact:true})).toBeVisible();
-    await expect(page.getByText('Answer text',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('Supporting figures',{exact:true})).toHaveCount(0);
     expect(state.resultReads).toBe(0);
   });
 }
@@ -753,7 +782,7 @@ test('retries stay with their question while the completed answer leads the defa
   await expect(page.locator('.attempt-history li').first()).toBeVisible();
   await page.getByText('Definitions and source details',{exact:true}).click();
   await expect(page.getByText('One source value is unknown.',{exact:true})).toBeVisible();
-  await page.getByText('Answer text',{exact:true}).click();
+  await page.getByText('Supporting figures',{exact:true}).click();
   await expect(page.locator('.answer-text')).toBeVisible();
   expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
 });

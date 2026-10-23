@@ -85,6 +85,31 @@ layouts and text/table alternatives for charts. Chart libraries load on demand.
 The Vega runtime remains a large separate bundle (approximately 517 KB before
 gzip); it is not needed for sign-in or table-only answers.
 
+### Conversational presentation (23 October 2026)
+
+`workflow/summary_language.py` owns summary wording, readable calendar periods,
+and decimal display for both certified and exploratory answers. The certified
+summary leads with the measured result: for example, "New enquiry value totalled
+£6,055,247.06 in September 2026." Presentation names are independent of the signed
+catalogue; they do not infer gross/weighted or tax definitions from the question.
+Date wording uses the saved reporting boundaries, so reopening a result later
+does not reinterpret "last month". Open-ended creation cohorts retain their lower
+bound. Exact boundaries and source evidence remain available in source details.
+
+The main summary uses pound symbols and readable months, while the expandable
+evidence text is labelled **Supporting figures**. Incomplete-data, limited-result,
+conversion-maturity and causality caveats remain visible. The calculations, claim
+values, source coordinates and metric definitions are unchanged; this introduces
+no additional model call.
+
+New answers carry `summary_version: "2"`. Authenticated workflow reads, idempotent
+submission replays and answer-event replays refresh missing or outdated summaries
+from the owned saved result. Result/run/catalogue references and permissions are
+checked before regeneration. Only the returned presentation is refreshed: stored
+answers, events and source data are not rewritten or requeried. Current summaries
+are reused. Deploy the API and frontend together; no database migration or new
+environment setting is required, and the workflow graph version is unchanged.
+
 ### Exploratory summaries (22 October 2026)
 
 Both certified metric and exploratory answers display a short server-generated

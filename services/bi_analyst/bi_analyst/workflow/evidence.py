@@ -5,6 +5,7 @@ from .contracts import ChartIntent, EvidenceClaim, GroundedAnswer, Presentation,
 from ..metrics.contracts import MetricResult
 from .errors import EvidenceError
 from .summary import summarize_metric
+from .summary_language import SUMMARY_VERSION
 
 
 def candidates(result: MetricResult) -> list[EvidenceClaim]:
@@ -119,4 +120,4 @@ def ground(result: MetricResult, presentation: Presentation, scope_changes: dict
     return GroundedAnswer(result=ResultReference(result_id=result.id, query_reference=p.query_reference,
         catalogue_sha256=p.catalogue_sha256), claims=[*claims, *summary_claims], text="\n".join(lines), chart=presentation.chart,
         notices=list(dict.fromkeys([*notices, *summary_notices])), scope_changes=scope_changes,
-        summary=summary, summary_notices=summary_notices)
+        summary=summary, summary_version=SUMMARY_VERSION, summary_notices=summary_notices)

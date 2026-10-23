@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {chartSpec, columnHeading, compareDecimal, formatCell} from '../src/presentation.mjs';
+import {chartSpec, columnHeading, compareDecimal, formatCell, periodLabel} from '../src/presentation.mjs';
 import {readEvents} from '../src/sse.mjs';
 
 const fixture = () => ({id:'owned', columns:['category','value'], rows:[['A','20.00'],['B','10.00']],
   provenance:{metric_label:'Order Value',unit:'source_currency',columns:[{name:'value',unit:'source_currency'}],dataset_scope:'complete'}});
+test('readable reporting periods retain exclusive boundaries and are independent of the browser timezone', () => {
+  const original = process.env.TZ;
+  try {
+    for (const timezone of ['Europe/London', 'America/Los_Angeles', 'Pacific/Auckland']) {
+      process.env.TZ = timezone;
+      for (const [start_date, end_date_exclusive, expected] of [
+        ['2026-09-01', '2026-10-01', 'September 2026'],
+        ['2025-10-01', '2026-10-01', 'October 2025 to September 2026'],
+        ['2024-02-01', '2024-03-01', 'February 2024'],
+        ['2024-02-15', '2024-03-01', '15 February 2024 to 29 February 2024'],
+        ['2026-09-30', '2026-10-01', '30 September 2026'],
+        ['2024-10-22', null, 'Projects created on or after 22 October 2024'],
+      ]) assert.equal(periodLabel({start_date, end_date_exclusive}), expected);
+      assert.equal(periodLabel(null), 'All recorded history');
+    }
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
+});
+
 test('charts use only owned inline data and permitted fields; unknowns are not zero', () => {
   const r = fixture(), intent = {kind:'bar',x:'category',y:'value'};
   assert.deepEqual(chartSpec(r,intent,'owned').spec.data.values.map(r=>r.value),[20,10]);

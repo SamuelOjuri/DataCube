@@ -54,7 +54,7 @@ export default function ExploratoryCard({auth, answer, result, signal}: {auth: A
         <ul>{[...new Set([...p.limitations, ...answer.notices])].map(text => <li key={text}>{text}</li>)}</ul></div>
       <dl className="scope"><div><dt>Query reference</dt><dd>{p.query_reference}</dd></div><div><dt>Catalogue</dt><dd>{p.catalogue_version}</dd></div>
         <div><dt>Query time</dt><dd>{p.freshness.queried_at} (not a source refresh timestamp)</dd></div></dl></details>
-    <details><summary>Answer text</summary><p className="answer-text">{answer.text}</p></details>
+    <details><summary>Supporting figures</summary><p className="answer-text">{answer.text}</p></details>
     <details><summary>Give feedback</summary><label>Optional comment<textarea value={comment} maxLength={2000} onChange={e => setComment(e.target.value)} /></label>
       <div className="actions"><button className="secondary" disabled={busy} onClick={() => feedback('helpful')}>Helpful</button><button className="secondary" disabled={busy} onClick={() => feedback('not_helpful')}>Not helpful</button></div></details>
     {notice && <p role="status">{notice}</p>}{error && <p role="alert" className="error">{error}</p>}

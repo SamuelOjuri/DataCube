@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from ..workflow.contracts import ChartIntent, EvidenceClaim, GroundedAnswer, ResultReference
 from ..workflow.evidence import EvidenceError
+from ..workflow.summary_language import SUMMARY_VERSION
 from .contracts import ExploratoryResult
 from .summary import summarize
 
@@ -67,7 +68,7 @@ def ground_exploration(result: ExploratoryResult, *, asks_for_cause=False) -> Gr
         claims=[*claims, *summary_claims], text="\n".join([p.title + ".", *lines, *partial]),
         chart=ChartIntent(kind="number" if numeric else "table"),
         notices=list(dict.fromkeys([*notices, *summary_notices])), scope_changes={},
-        summary=summary, summary_notices=summary_notices, exploratory_chart=exploratory_chart)
+        summary=summary, summary_version=SUMMARY_VERSION, summary_notices=summary_notices, exploratory_chart=exploratory_chart)
 
 
 def partial_answer(result: ExploratoryResult, measures) -> list[str]:

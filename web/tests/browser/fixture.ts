@@ -35,7 +35,7 @@ export const monthlyResult = {id:resultId,run_id:runId,columns:['creation_month'
       {name:'wins',label:'Won invoiced projects',role:'measure',unit:'count',type:'integer'},
       {name:'eligible',label:'Eligible projects',role:'measure',unit:'count',type:'integer'},
       {name:'inclusive_conversion',label:'Inclusive conversion',role:'measure',unit:'ratio',type:'decimal'}]}};
-export const monthlySummary = 'Inclusive conversion was 50.0% in 2024-01-01 and 9.0% in 2025-12-01; overall for these months was 9.8%. The first 12 months had a combined rate of 50.0% versus 9.0% for the last 12 months (41.0 percentage points lower).';
+export const monthlySummary = 'Inclusive conversion was 50.0% in January 2024 and 9.0% in December 2025; overall for these months was 9.8%. The first 12 months had a combined rate of 50.0% versus 9.0% for the last 12 months (41.0 percentage points lower).';
 export const certifiedConversionResult = {id:resultId,run_id:runId,columns:['value','numerator','denominator'],
   rows:[['0.582','405','696']],provenance:{...result.provenance,
     metric_id:'conversion_closed_two_year',metric_label:'2-year Closed-only Conversion Rate',unit:'ratio',
@@ -44,7 +44,7 @@ export const certifiedConversionResult = {id:resultId,run_id:runId,columns:['val
     columns:[{name:'value',type:'decimal',unit:'ratio'},{name:'numerator',type:'decimal',unit:'count'},{name:'denominator',type:'decimal',unit:'count'}],
     total:{value:'0.582',source_rows:1000,known_values:1000,numerator:'405',denominator:'696'},
     coverage:{},limitations:[],returned_rows:1,matched_groups:1}};
-export const certifiedConversionSummary = 'For projects created from 2024-10-22 onward, 405 of the 696 closed projects were won and invoiced, giving a closed-only conversion rate of 58.2%.';
+export const certifiedConversionSummary = 'The closed-only conversion rate was 58.2% for projects created on or after 22 October 2024, with 405 of the 696 closed projects won and invoiced.';
 
 export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false, explanation=false, monthly=false,
   answerOverride=null as Record<string,unknown>|null,

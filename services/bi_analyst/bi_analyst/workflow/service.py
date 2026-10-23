@@ -12,6 +12,7 @@ from .checkpoints import ScopedPostgresSaver
 from .evidence import EvidenceError
 from .contracts import GroundedAnswer
 from .summary import summarize_metric
+from .summary_language import SUMMARY_VERSION
 from .graph import ConversationGraph
 from .provider import EXPLORE_PROMPT_VERSION, GENERATION, MODEL, PROMPT_VERSION, ProviderFailure
 from .store import WorkflowStore
@@ -71,7 +72,7 @@ class WorkflowService:
 
     async def present_answer(self, actor, answer, run_id):
         """Enrich old saved answers from owned stored evidence, without writes or source queries."""
-        if answer.get('kind') == 'explanation' or answer.get('summary'):
+        if answer.get('kind') == 'explanation' or (answer.get('summary') and answer.get('summary_version') == SUMMARY_VERSION):
             return answer
         grounded = GroundedAnswer.model_validate(answer)
         stored = await self.store.result(actor, grounded.result.result_id)
@@ -92,17 +93,20 @@ class WorkflowService:
         else:
             summary, claims, notices = summarize_metric(MetricResult.model_validate(stored))
         grounded.summary = summary
+        grounded.summary_version = SUMMARY_VERSION
         if any('do not establish causes' in n for n in grounded.notices):
             notices.append('These measured values and differences do not establish causes.')
+        # Replace the old derived presentation without retaining stale claims or
+        # duplicating its caveats. Non-summary evidence and notices stay intact.
+        other_notices = [n for n in grounded.notices if n not in grounded.summary_notices]
         grounded.summary_notices = list(dict.fromkeys(notices))
-        ids = {c.id for c in grounded.claims}
-        grounded.claims.extend(c for c in claims if c.id not in ids)
-        grounded.notices = list(dict.fromkeys([*grounded.notices, *notices]))
+        grounded.claims = [c for c in grounded.claims if not c.id.startswith('summary_')] + claims
+        grounded.notices = list(dict.fromkeys([*other_notices, *notices]))
         return grounded.model_dump(mode='json')
 
     async def public(self, actor, row):
         run = self.jobs.public(row)
-        if isinstance(run.answer, GroundedAnswer) and not run.answer.summary:
+        if isinstance(run.answer, GroundedAnswer):
             run.answer = GroundedAnswer.model_validate(await self.present_answer(
                 actor, run.answer.model_dump(mode='json'), run.run_id))
         return run

@@ -52,7 +52,7 @@ def test_weighted_conversion_uses_all_months_with_reproducible_evidence():
     assert claims['summary_change'].unit == 'percentage_points'
     assert 'overall for these months was 9.8%' in answer.summary
     assert '41.0 percentage points lower' in answer.summary
-    assert '2025-12-01' in answer.summary
+    assert 'December 2025' in answer.summary
     assert answer.exploratory_chart.series == ['inclusive_conversion']
     assert any('less time' in notice for notice in answer.summary_notices)
     # Decimal values loaded from persisted JSON follow exactly the same path.
@@ -65,7 +65,14 @@ def test_months_are_sorted_independently_of_query_order():
     result.rows.reverse()
     answer = ground_exploration(result)
     assert facts(answer)['summary_latest'].sources == ['rows.0.3']
-    assert '50.0% in 2024-01-01 and 9.0% in 2025-12-01' in answer.summary
+    assert '50.0% in January 2024 and 9.0% in December 2025' in answer.summary
+
+
+def test_single_month_has_one_plain_sentence_without_duplicate_endpoints_or_extrema():
+    answer = ground_exploration(monthly(rows=[['2024-01-01', 1, 2, '.5']]))
+    assert answer.summary == 'Inclusive conversion was 50.0% in January 2024.'
+    assert facts(answer)['summary_overall'].value == Decimal('.5')
+    assert any('less time' in n for n in answer.summary_notices)
 
 
 @pytest.mark.parametrize('change', ['null', 'zero', 'negative', 'absent'])
@@ -150,7 +157,7 @@ def test_supporting_category_share_does_not_replace_the_primary_money_measure():
                                  ('share', 'measure', 'ratio', 'decimal')]]
     columns, _ = describe_columns('SELECT category, sum(amount) AS revenue, avg(amount) AS share FROM data GROUP BY category', columns)
     answer = ground_exploration(exploratory_result([['A', 10, '.1'], ['B', 90, '.9']], columns))
-    assert 'GBP 90.00' in answer.summary
+    assert '£90.00' in answer.summary
     assert answer.exploratory_chart.series == ['revenue']
 
 
@@ -162,7 +169,7 @@ def test_lists_total_amounts_but_never_identifiers_rates_or_averages():
     columns, _ = describe_columns('SELECT id, value, days FROM projects', columns)
     result = exploratory_result([['a', '10.10', 5], ['b', '20.20', 7]], columns)
     answer = ground_exploration(result)
-    assert '2 records' in answer.summary and 'GBP 30.30' in answer.summary
+    assert '2 matching records' in answer.summary and '£30.30' in answer.summary
     assert facts(answer)['summary_total_value'].value == Decimal('30.30')
     assert 'summary_total_days' not in facts(answer)
     assert answer.exploratory_chart is None
@@ -173,7 +180,7 @@ def test_lists_total_amounts_but_never_identifiers_rates_or_averages():
 
 def test_older_saved_answers_default_to_no_summary_or_exploratory_chart():
     answer = ground_exploration(monthly()).model_dump(mode='json')
-    for key in ('summary', 'summary_notices', 'exploratory_chart'):
+    for key in ('summary', 'summary_version', 'summary_notices', 'exploratory_chart'):
         answer.pop(key)
     old = GroundedAnswer.model_validate(answer)
     assert old.summary is None and old.exploratory_chart is None

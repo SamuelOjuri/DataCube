@@ -2,7 +2,7 @@ import {useEffect, useState} from 'react';
 import type {Auth, MetricDefinition, ProjectPage, ResultAnswer, SavedResult} from './types';
 import {isExploratory} from './types';
 import {errorMessage, json, post} from './api';
-import {chartSpec, formatCell, unitLabel} from './presentation.mjs';
+import {chartSpec, formatCell, periodLabel, unitLabel} from './presentation.mjs';
 import Chart from './Chart';
 import DataTable from './DataTable';
 import ExploratoryCard from './ExploratoryCard';
@@ -66,14 +66,14 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
   return <section className="result-card" aria-label={p.metric_label}>
     <div className="result-heading"><div><p className="eyebrow">{unitLabel(p.unit)}{p.evaluation_only ? ' · Evaluation data' : ''}</p><h3>{p.metric_label}</h3></div><span className="badge">Source freshness unknown</span></div>
     <AnswerSummary answer={answer} />
-    <p className="result-scope">{period} · {p.source_population === 'reportable' ? 'Reportable projects, including archived projects' : 'Independent hidden inventory'}
+    <p className="result-scope">{periodLabel(p.resolved_period)} · {p.source_population === 'reportable' ? 'Reportable projects, including archived projects' : 'Independent hidden inventory'}
       {!!p.request.filters.length && <> · {filterLabel(p.request.filters)}</>}</p>
     {p.total && <div className="total"><strong>{formatCell(p.total.value, p.unit)}</strong><span>{p.unit === 'ratio' ? 'Overall conversion rate' : p.unit === 'days' ? 'Overall average' : p.total.known_values < p.total.source_rows ? 'Known subtotal for this scope' : 'Total for this scope'}</span></div>}
     {p.total && p.total.source_rows === 0 ? <p className="data-warning">No matching records were found.</p> : p.total && p.total.known_values < p.total.source_rows && <p className="data-warning">{formatCell(p.total.source_rows - p.total.known_values)} of {formatCell(p.total.source_rows)} matching records have no value. {p.total.known_values ? 'This subtotal may be incomplete.' : 'The aggregate is unknown.'}</p>}
     {p.truncated && <p className="data-warning">Showing {p.returned_rows} of {p.matched_groups} groups. The total covers all matching records; the table and CSV include only these {p.returned_rows} groups.</p>}
     {p.unit === 'ratio' && p.total && <p className="note">Numerator: {formatCell(p.total.numerator)} · Denominator: {formatCell(p.total.denominator)} · Rates are shown as percentages.</p>}
     {p.comparison && <section className="comparison" aria-label="Comparison"><h4>Comparison of complete filtered aggregates</h4><dl className="scope">
-      <div><dt>Baseline period</dt><dd>{p.comparison_period ? `${p.comparison_period.start_date} to ${p.comparison_period.end_date_exclusive || 'onward'}${p.comparison_period.end_date_exclusive ? ' (end exclusive)' : ''}` : 'All stored history'}</dd></div>
+      <div><dt>Baseline period</dt><dd>{periodLabel(p.comparison_period)}</dd></div>
       <div><dt>Baseline filters</dt><dd>{filterLabel(p.request.comparison?.filters ?? p.request.filters)}</dd></div>
       <div><dt>Baseline value</dt><dd>{formatCell(p.comparison.baseline.value, p.unit)}</dd></div>
       <div><dt>Absolute change</dt><dd>{formatCell(p.comparison.absolute_change, p.unit)}</dd></div>
@@ -97,6 +97,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
         <button className="text-button" onClick={() => setProjects(null)}>Close projects</button></div></section>}
     <details onToggle={event => {if (event.currentTarget.open) void loadDefinition();}}><summary>Definitions and source details</summary>
       <dl className="scope"><div><dt>Period</dt><dd>{period} · {p.business_timezone}</dd></div>
+        {p.comparison_period && <div><dt>Comparison period</dt><dd>{p.comparison_period.start_date} to {p.comparison_period.end_date_exclusive ? `${p.comparison_period.end_date_exclusive} (end exclusive)` : 'onward'} · {p.business_timezone}</dd></div>}
         <div><dt>Population</dt><dd>{p.source_population === 'reportable' ? 'Retained reportable projects, including genuine archived projects' : 'Independent hidden inventory'}</dd></div>
         <div><dt>Filters</dt><dd>{filterLabel(p.request.filters)}</dd></div>
         <div><dt>Display</dt><dd>{p.returned_rows} of {p.matched_groups} groups · {p.truncated ? 'Limited result; this display is not the full population' : 'Complete requested dataset'} · no sampling</dd></div>
@@ -112,7 +113,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
       <div><dt>Query time</dt><dd>{p.freshness.queried_at} (not a source refresh timestamp)</dd></div>
       {p.unit === 'source_currency' && <div><dt>Currency basis</dt><dd>GBP, as stored; VAT inclusion unspecified</dd></div>}</dl>
       <p>Coverage counters describe the unfiltered gateway population.</p><dl className="scope">{Object.entries(p.coverage).map(([key, value]) => <div key={key}><dt>{key.replaceAll('_', ' ')}</dt><dd>{value}</dd></div>)}</dl></details>
-    <details><summary>Answer text</summary><p className="answer-text">{answer.text}</p></details>
+    <details><summary>Supporting figures</summary><p className="answer-text">{answer.text}</p></details>
     <details><summary>Give feedback</summary><label>Optional comment<textarea value={comment} maxLength={2000} onChange={e => setComment(e.target.value)} /></label>
       <div className="actions"><button className="secondary" disabled={busy} onClick={() => feedback('helpful')}>Helpful</button><button className="secondary" disabled={busy} onClick={() => feedback('not_helpful')}>Not helpful</button></div></details>
     {notice && <p role="status">{notice}</p>}{error && <p role="alert" className="error">{error}</p>}

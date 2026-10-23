@@ -1,4 +1,22 @@
 export const unitLabel = unit => ({source_currency: 'GBP', ratio: '%', percent: '%', days: 'days', count: 'count', none: ''}[unit] ?? unit ?? '');
+// These are calendar dates already resolved in the business timezone. UTC keeps
+// browser timezones from shifting their day/month during presentation.
+export function periodLabel(period) {
+  if (!period) return 'All recorded history';
+  const start = new Date(`${period.start_date}T00:00:00Z`);
+  const format = (date, monthOnly = false) => date.toLocaleDateString('en-GB', {
+    ...(monthOnly ? {} : {day: 'numeric'}), month: 'long', year: 'numeric', timeZone: 'UTC',
+  });
+  if (!period.end_date_exclusive) return `Projects created on or after ${format(start)}`;
+  const end = new Date(`${period.end_date_exclusive}T00:00:00Z`);
+  const last = new Date(end.getTime() - 86400000);
+  if (start.getUTCDate() === 1 && end.getUTCDate() === 1) {
+    const firstMonth = format(start, true), lastMonth = format(last, true);
+    return firstMonth === lastMonth ? firstMonth : `${firstMonth} to ${lastMonth}`;
+  }
+  return start.getTime() === last.getTime() ? format(start) : `${format(start)} to ${format(last)}`;
+}
+
 export function columnHeading(name, column) {
   const label = column?.label || name.replaceAll('_', ' ');
   const unit = unitLabel(column?.unit);

@@ -6,7 +6,7 @@ export type Run = {id: string; conversation_id: string; question: string; status
 export type ChartIntent = {kind: 'table' | 'number' | 'bar' | 'line'; x?: 'month' | 'category' | 'type' | null; y: 'value'};
 export type ExploratoryChartIntent = {kind: 'bar' | 'line'; x: string; series: string[]};
 export type ResultAnswer = {kind?: 'result'; text: string; result: {result_id: string}; chart: ChartIntent; notices: string[]; scope_changes: Record<string, unknown>;
-  summary?: string | null; summary_notices?: string[]; exploratory_chart?: ExploratoryChartIntent | null};
+  summary?: string | null; summary_version?: string | null; summary_notices?: string[]; exploratory_chart?: ExploratoryChartIntent | null};
 export type ExplanationAnswer = {kind: 'explanation'; reason: string; title: string; text: string; suggestions: string[]; notices: string[]};
 export type Workflow = {run_id: string; conversation_id: string; status: string; error_code: string | null;
   clarification: null | {id: string; question: string; options: string[]};

@@ -5,8 +5,9 @@ reuse the exploratory fact engine through a typed adapter with identical row
 coordinates; rate and mean aggregates are never summed across groups.
 """
 from ..exploration.contracts import ExploratoryColumn, ExploratoryProvenance, ExploratoryResult
-from ..exploration.summary import MATURITY, amount, display, summarize
+from ..exploration.summary import MATURITY, amount, summarize
 from .contracts import EvidenceClaim
+from .summary_language import comparison_sentence, display, month_text, period_scope, total_sentence
 
 CONVERSION = {
     "conversion_five_year": "inclusive", "conversion_two_year": "inclusive",
@@ -15,6 +16,7 @@ CONVERSION = {
 
 
 def period_text(period):
+    """Keep exact boundaries in evidence claims; prose uses summary_language."""
     if period is None:
         return "all stored history"
     if period.end_date_exclusive is None:
@@ -69,34 +71,15 @@ def summarize_metric(result):
     if total:
         fact("total", total.value, source="provenance.total.value")
         if total.source_rows == 0:
-            return f"No matching records were found for {scope}.", claims, notices
+            return total_sentence(p, variant), claims, notices
         if total.known_values < total.source_rows:
             notices.append("Some matching records have unknown values. A known subtotal may be incomplete; unknown values are not zero.")
-        if total.value is None:
-            if variant and total.denominator == 0:
-                denominator = "closed" if variant == "closed-only" else "eligible"
-                text = f"There are no {denominator} projects for {scope}, so the {variant} conversion rate cannot be calculated."
-            else:
-                text = f"{p.metric_label} is unknown for {scope}; the matching records do not provide a usable aggregate."
-        elif variant:
-            if total.numerator is not None and total.denominator is not None and total.denominator > 0:
-                fact("numerator", total.numerator, source="provenance.total.numerator", unit="count", label="Invoiced wins")
-                fact("denominator", total.denominator, source="provenance.total.denominator", unit="count", label="Closed projects" if variant == "closed-only" else "Eligible projects")
-                denominator = "closed" if variant == "closed-only" else "eligible"
-                text = (f"For {scope}, {display(total.numerator, 'count')} of the {display(total.denominator, 'count')} "
-                        f"{denominator} projects were won and invoiced, giving a {variant} conversion rate of {display(total.value, p.unit)}.")
-            else:
-                text = f"The {variant} conversion rate for {scope} is {display(total.value, p.unit)}."
-        elif p.unit == "days":
-            statistic = "median" if "median" in p.metric_id else "average"
-            text = f"The {statistic} observed gestation for {scope} is {display(total.value, p.unit)}."
-        else:
-            subject = f"the known subtotal for {p.metric_label}" if total.known_values < total.source_rows else p.metric_label
-            text = f"For {scope}, {subject} is {display(total.value, p.unit)}."
-    else:
-        text = f"{p.metric_label} is shown for {scope}; no complete aggregate was requested."
+        if (variant and total.value is not None and total.numerator is not None
+                and total.denominator is not None and total.denominator > 0):
+            fact("numerator", total.numerator, source="provenance.total.numerator", unit="count", label="Invoiced wins")
+            fact("denominator", total.denominator, source="provenance.total.denominator", unit="count", label="Closed projects" if variant == "closed-only" else "Eligible projects")
 
-    sentences = [text]
+    sentences = [total_sentence(p, variant)]
     limited = p.truncated or p.dataset_scope == "limited"
     if limited:
         notices.append("The displayed groups are limited. The overall aggregate, when shown, covers the complete filtered population.")
@@ -119,9 +102,13 @@ def summarize_metric(result):
         elif first and latest:
             month = result.columns.index("month")
             a, b = int(first.sources[0].split('.')[1]), int(latest.sources[0].split('.')[1])
-            prefix = "Among the returned months, " if limited else ""
-            sentences.append(f"{prefix}the first known monthly value was {display(first.value, p.unit)} in {rows[a][month]} "
-                f"and the latest was {display(latest.value, p.unit)} in {rows[b][month]}.")
+            if a != b:
+                prefix = "Among the returned months, the" if limited else "The"
+                sentences.append(f"{prefix} first known monthly value was {display(first.value, p.unit)} in {month_text(rows[a][month])} "
+                    f"and the latest was {display(latest.value, p.unit)} in {month_text(rows[b][month])}.")
+            elif len(rows) > 1 or limited:
+                prefix = "Among the returned months, the" if limited else "The"
+                sentences.append(f"{prefix} only known monthly value was {display(first.value, p.unit)} in {month_text(rows[a][month])}.")
         elif not first:
             notices.append("The returned rows do not provide an unambiguous monthly trend.")
     elif rows and p.request.dimensions and "value" in result.columns:
@@ -135,6 +122,8 @@ def summarize_metric(result):
                       else "Unclassified" for d in keys]
             label = " / ".join(labels)
             fact("leader", value, source=f"rows.{top}.{index}", label=label, kind="contributor")
+            # Friendly month names belong in prose, not in the source claim label.
+            label = " / ".join(month_text(value) if key == "month" and value != "Unclassified" else value for key, value in zip(keys, labels))
             qualifier = "Among the returned groups" if limited else "Among the groups"
             if len(known) < len(rows):
                 qualifier += " with known values"
@@ -144,7 +133,6 @@ def summarize_metric(result):
 
     change = p.comparison
     if change:
-        baseline_scope = period_text(p.comparison_period)
         fact("baseline", change.baseline.value, source="provenance.comparison.baseline.value")
         if change.baseline.source_rows == 0 or change.baseline.value is None or total is None or total.value is None:
             notices.append("A comparison cannot be calculated because a current or baseline aggregate is unknown or has no matching records.")
@@ -154,10 +142,7 @@ def summarize_metric(result):
             if delta is not None:
                 field = "percentage_point_change" if p.unit == "ratio" else "absolute_change"
                 fact("comparison_change", delta, source=f"provenance.comparison.{field}", unit=unit, kind=field)
-                direction = "higher" if delta > 0 else "lower" if delta < 0 else "unchanged"
-                comparison = (f"This is {display(abs(delta), unit)} {direction} than the baseline" if delta else
-                              "This matches the baseline")
-                sentences.append(f"{comparison} of {display(change.baseline.value, p.unit)} for {baseline_scope}.")
+                sentences.append(comparison_sentence(change.baseline.value, delta, unit, p.unit, p.comparison_period))
         if change.zero_denominator:
             notices.append("Relative percentage change is undefined because the baseline is zero or unknown.")
         if change.baseline.known_values < change.baseline.source_rows:
@@ -166,5 +151,5 @@ def summarize_metric(result):
         if comparison_filters is not None and comparison_filters != p.request.filters:
             notices.append("The baseline uses different filters from the current scope; see the comparison details.")
     if total is None and not rows:
-        sentences = [f"No matching records were found for {scope}."]
+        sentences = [f"No matching records were found {period_scope(p.resolved_period)}."]
     return " ".join(sentences[:3]), claims, list(dict.fromkeys(notices))

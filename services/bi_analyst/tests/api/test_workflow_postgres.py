@@ -156,7 +156,8 @@ def test_clarification_survives_restart_and_resume_is_idempotent(setup):
         assert [stage for stage,_ in provider.calls] == ['plan']
 
 
-def test_legacy_answer_reads_and_event_replay_gain_summary_without_rewriting_history(setup):
+@pytest.mark.parametrize('existing_summary', [False, True])
+def test_legacy_answer_reads_and_event_replay_gain_summary_without_rewriting_history(setup, existing_summary):
     admin, _, _, _, start = setup
     provider = ScriptedProvider('conversion_closed_two_year')
     with start(provider) as client:
@@ -165,21 +166,28 @@ def test_legacy_answer_reads_and_event_replay_gain_summary_without_rewriting_his
         run_id = submit(client, thread, idempotency_key=key)
         completed = settle(client, run_id)
         original = completed['answer']
-        old = {k:v for k,v in original.items() if k not in {'summary','summary_notices','exploratory_chart'}}
+        old = {k:v for k,v in original.items() if k not in {'summary','summary_version','summary_notices','exploratory_chart'}}
         old['claims'] = [c for c in old['claims'] if not c['id'].startswith('summary_')]
+        if existing_summary:
+            old.update(summary='Old mechanical summary.', summary_version='1', summary_notices=original['summary_notices'])
+            old['claims'] = original['claims']
         admin.execute('UPDATE analyst_state.workflow_jobs SET answer=%s WHERE run_id=%s', (Jsonb(old),run_id))
         admin.execute("UPDATE analyst_state.workflow_events SET payload=%s WHERE run_id=%s AND kind='answer'", (Jsonb(old),run_id))
         recovered = client.get(f'/v1/runs/{run_id}/workflow').json()
         assert recovered['answer']['summary'] == original['summary']
+        assert recovered['answer']['summary_version'] == original['summary_version']
         events = client.get(f'/v1/runs/{run_id}/events').text
         payload = next(json.loads(block.split('data: ',1)[1]) for block in events.split('\n\n') if 'event: answer\n' in block)
         assert payload['summary'] == original['summary']
+        assert payload['summary_version'] == original['summary_version']
         # Replaying an idempotent submission uses the same saved-answer presentation.
         response = client.post(f'/v1/conversations/{thread}/messages',json={
             'question':'Show stored parent Order Value','idempotency_key':key})
         assert response.status_code == 202 and response.json()['answer']['summary'] == original['summary']
         stored = admin.execute('SELECT answer FROM analyst_state.workflow_jobs WHERE run_id=%s',(run_id,)).fetchone()['answer']
-        assert 'summary' not in stored and len(provider.calls) == 1
+        assert stored == old and len(provider.calls) == 1
+        stored_event = admin.execute("SELECT payload FROM analyst_state.workflow_events WHERE run_id=%s AND kind='answer'", (run_id,)).fetchone()['payload']
+        assert stored_event == old
 
 
 def test_followup_patch_preserves_filters_and_exposes_changes(setup):
