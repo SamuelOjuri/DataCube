@@ -25,6 +25,7 @@ export type MetricResult = {id: string; run_id: string; columns: string[]; rows:
   freshness: {status: string; queried_at: string; limitation: string}; coverage: Record<string, number>; coverage_scope: string;
   limitations: string[]; truncated: boolean; returned_rows: number; matched_groups: number; dataset_scope: string;
   evaluation_only: boolean;
+  certification_basis?: 'owner_accepted' | 'local_evaluation';
 }};
 export type ProjectPage = {columns: string[]; rows: Cell[][]; has_more: boolean; offset: number; queried_at: string; limitation: string};
 export type ExploratoryColumn = {name: string; label: string; role: 'dimension' | 'measure'; unit: string; type: string;

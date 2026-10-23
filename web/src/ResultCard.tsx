@@ -2,7 +2,7 @@ import {useEffect, useState} from 'react';
 import type {Auth, MetricDefinition, ProjectPage, ResultAnswer, SavedResult} from './types';
 import {isExploratory} from './types';
 import {errorMessage, json, post} from './api';
-import {chartSpec, formatCell, periodLabel, unitLabel} from './presentation.mjs';
+import {chartSpec, formatCell, metricPresentation, periodLabel, unitLabel} from './presentation.mjs';
 import Chart from './Chart';
 import DataTable from './DataTable';
 import ExploratoryCard from './ExploratoryCard';
@@ -57,15 +57,22 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
   if (saved && isExploratory(saved)) return <ExploratoryCard auth={auth} answer={answer} result={saved} signal={controller.signal} />;
   if (!result) return <div role="status">{error || 'Loading saved result…'}</div>;
   const p = result.provenance;
+  const {label, definition: definitionSummary} = metricPresentation(p);
+  const displayAnswer = label === p.metric_label ? answer : {...answer,
+    text: answer.text.replaceAll(p.metric_label, label),
+    summary: answer.summary?.replaceAll(p.metric_label, label)};
+  const definitionStatus = p.certification_basis === 'owner_accepted' ? 'Owner accepted'
+    : p.certification_basis === 'local_evaluation' || p.evaluation_only ? 'Local evaluation'
+    : 'Not recorded for this saved result';
   const period = p.resolved_period ? `${p.resolved_period.start_date} to ${p.resolved_period.end_date_exclusive || 'onward'}${p.resolved_period.end_date_exclusive ? ' (end exclusive)' : ''}` : 'All stored history';
   const filterLabel = (filters: typeof p.request.filters) => filters.length ? filters.map(f => `${f.dimension}: ${f.operator === 'is_null' ? 'unclassified' : f.values.join(', ')}`).join('; ') : 'None';
   const hasChart = !!chartSpec(result, answer.chart, answer.result.result_id).spec;
   const tableColumns = result.columns.filter(name => showCounts || !['source_rows', 'known_values'].includes(name));
   const tableRows = result.rows.map(row => tableColumns.map(name => row[result.columns.indexOf(name)]));
   const hasCounts = result.columns.some(name => ['source_rows', 'known_values'].includes(name));
-  return <section className="result-card" aria-label={p.metric_label}>
-    <div className="result-heading"><div><p className="eyebrow">{unitLabel(p.unit)}{p.evaluation_only ? ' · Evaluation data' : ''}</p><h3>{p.metric_label}</h3></div><span className="badge">Source freshness unknown</span></div>
-    <AnswerSummary answer={answer} />
+  return <section className="result-card" aria-label={label}>
+    <div className="result-heading"><div><p className="eyebrow">{unitLabel(p.unit)}{p.evaluation_only ? ' · Evaluation data' : ''}</p><h3>{label}</h3></div><span className="badge">Source freshness unknown</span></div>
+    <AnswerSummary answer={displayAnswer} />
     <p className="result-scope">{periodLabel(p.resolved_period)} · {p.source_population === 'reportable' ? 'Reportable projects, including archived projects' : 'Independent hidden inventory'}
       {!!p.request.filters.length && <> · {filterLabel(p.request.filters)}</>}</p>
     {p.total && <div className="total"><strong>{formatCell(p.total.value, p.unit)}</strong><span>{p.unit === 'ratio' ? 'Overall conversion rate' : p.unit === 'days' ? 'Overall average' : p.total.known_values < p.total.source_rows ? 'Known subtotal for this scope' : 'Total for this scope'}</span></div>}
@@ -85,7 +92,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
     {hasChart && <button className="text-button values-toggle" aria-expanded={showValues} onClick={() => setShowValues(value => !value)}>{showValues ? 'Hide values' : `View ${p.returned_rows} values`}</button>}
     {(!hasChart || showValues) && <div className="result-values">
       {hasCounts && <label className="checkbox table-options"><input type="checkbox" checked={showCounts} onChange={e => setShowCounts(e.target.checked)} />Show source record counts</label>}
-      <DataTable columns={tableColumns} rows={tableRows} metadata={p.columns} caption={`${p.metric_label} — values`} />
+      <DataTable columns={tableColumns} rows={tableRows} metadata={p.columns} caption={`${label} — values`} />
     </div>}
     <div className="actions"><button className="secondary" disabled={busy} onClick={download}>Download CSV ({p.returned_rows} rows)</button>
       {p.source_population === 'reportable' && <button className="secondary" disabled={busy} onClick={() => drill()}>Explore contributing projects</button>}</div>
@@ -96,7 +103,10 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
         <button className="secondary" disabled={busy || !projects.has_more} onClick={() => drill(projects.offset + 25)}>Next projects</button>
         <button className="text-button" onClick={() => setProjects(null)}>Close projects</button></div></section>}
     <details onToggle={event => {if (event.currentTarget.open) void loadDefinition();}}><summary>Definitions and source details</summary>
-      <dl className="scope"><div><dt>Period</dt><dd>{period} · {p.business_timezone}</dd></div>
+      <dl className="scope">
+        {definitionSummary && <div><dt>Calculation</dt><dd>{definitionSummary}</dd></div>}
+        <div><dt>Definition status</dt><dd>{definitionStatus}</dd></div>
+        <div><dt>Period</dt><dd>{period} · {p.business_timezone}</dd></div>
         {p.comparison_period && <div><dt>Comparison period</dt><dd>{p.comparison_period.start_date} to {p.comparison_period.end_date_exclusive ? `${p.comparison_period.end_date_exclusive} (end exclusive)` : 'onward'} · {p.business_timezone}</dd></div>}
         <div><dt>Population</dt><dd>{p.source_population === 'reportable' ? 'Retained reportable projects, including genuine archived projects' : 'Independent hidden inventory'}</dd></div>
         <div><dt>Filters</dt><dd>{filterLabel(p.request.filters)}</dd></div>
@@ -113,7 +123,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
       <div><dt>Query time</dt><dd>{p.freshness.queried_at} (not a source refresh timestamp)</dd></div>
       {p.unit === 'source_currency' && <div><dt>Currency basis</dt><dd>GBP, as stored; VAT inclusion unspecified</dd></div>}</dl>
       <p>Coverage counters describe the unfiltered gateway population.</p><dl className="scope">{Object.entries(p.coverage).map(([key, value]) => <div key={key}><dt>{key.replaceAll('_', ' ')}</dt><dd>{value}</dd></div>)}</dl></details>
-    <details><summary>Supporting figures</summary><p className="answer-text">{answer.text}</p></details>
+    <details><summary>Supporting figures</summary><p className="answer-text">{displayAnswer.text}</p></details>
     <details><summary>Give feedback</summary><label>Optional comment<textarea value={comment} maxLength={2000} onChange={e => setComment(e.target.value)} /></label>
       <div className="actions"><button className="secondary" disabled={busy} onClick={() => feedback('helpful')}>Helpful</button><button className="secondary" disabled={busy} onClick={() => feedback('not_helpful')}>Not helpful</button></div></details>
     {notice && <p role="status">{notice}</p>}{error && <p role="alert" className="error">{error}</p>}

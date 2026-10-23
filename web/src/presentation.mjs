@@ -1,4 +1,14 @@
 export const unitLabel = unit => ({source_currency: 'GBP', ratio: '%', percent: '%', days: 'days', count: 'count', none: ''}[unit] ?? unit ?? '');
+// Display copy stays separate from the fingerprinted catalogue and saved evidence.
+export function metricPresentation(provenance) {
+  if (provenance.metric_id === 'invoice_monthly_actual' && provenance.metric_version === '1.1.0') {
+    return {
+      label: 'Monthly Invoiced Revenue',
+      definition: 'Positive invoice amounts grouped by invoice date for reportable projects, including archived projects, regardless of project stage. Only completed months are included. Undated invoices and negative amounts are excluded; months without qualifying invoices are shown as zero.',
+    };
+  }
+  return {label: provenance.metric_label, definition: null};
+}
 // These are calendar dates already resolved in the business timezone. UTC keeps
 // browser timezones from shifting their day/month during presentation.
 export function periodLabel(period) {
@@ -96,7 +106,7 @@ export function chartSpec(result, intent, ownedId) {
     axis: {format: p.unit === 'source_currency' ? '~s' : p.unit === 'ratio' ? '.0%' : undefined, tickCount: 5}};
   return {reason: '', spec: {
     data: {values}, width: 560, height: horizontal ? Math.max(250, new Set(values.map(v => v.label)).size * 26) : 250,
-    description: `${p.metric_label} (${unitLabel(p.unit)}). ${p.dataset_scope === 'limited' ? 'Limited result.' : 'Stored result.'} Exact values are in the table.`,
+    description: `${metricPresentation(p).label} (${unitLabel(p.unit)}). ${p.dataset_scope === 'limited' ? 'Limited result.' : 'Stored result.'} Exact values are in the table.`,
     mark: {type: intent.kind, ...(intent.kind === 'line' ? {point: true} : {})},
     encoding: {
       x: horizontal ? valueAxis : categoryAxis,
