@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError
 from ..operations.telemetry import Telemetry, measured
 
 MODEL = "gemini-3.8-flash"
-PROMPT_VERSION = "bi-conversation-1.1.0"
+PROMPT_VERSION = "bi-conversation-1.2.0"
 # The benchmarked configuration. The cap includes thinking, so runaway reasoning ends as MAX_TOKENS.
 GENERATION = {"temperature": 0, "maxOutputTokens": 4096, "thinkingConfig": {"thinkingLevel": "LOW"}}
 USAGE = ("promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount")
@@ -24,6 +24,18 @@ Source totals, monthly actuals, inclusive/closed-only conversion, and historical
 gestation are different measures. A bare ambiguous metric name requires clarification.
 The server has already authorised the supplied catalogue entries. Coverage limitations
 are caveats to report, not grounds to reject an otherwise supported question.
+Choose by the entry's meaning, calculation, source grain, population and date basis, not just
+its label. Calculation rules and the named variant take precedence over shared lineage notes.
+Stored monetary totals retain signed values and distinguish NULL from zero. Monthly enquiry,
+bookings and revenue use their positive-value completed-month definitions. Revenue has no
+parent business-stage restriction; bookings has its listed won-stage rule. Preserve each.
+Stored parent mirrors, persisted child sums and hidden inventory are distinct scopes; never
+replace one with another to force equality. Retained reportable projects include genuine archived
+projects. Hidden inventory implies no project attribution. Use the supplied population descriptions.
+Actual gestation uses the stored design-to-first-invoice measure, positive values only, with
+the requested mean or median and creation cohort. Do not substitute predicted gestation,
+recalculate dates, or change to invoice-date cohorts. Weighted enquiry and expected conversion
+or gestation are predictive; no permitted observed metric substitutes for them.
 An explicit stored/project-parent/hidden/child measure disambiguates the metric variant.
 Across all stored or all retained projects means all_stored. Last completed month means
 last_month. Five-year and two-year mean the respective named cohort, not a custom date range.
@@ -33,6 +45,34 @@ Use catalogue periods to disambiguate: a request for gross enquiry for a complet
 uses the monthly enquiry entry, never the all_stored enquiry entry. Apply the same rule
 to completed-month bookings and revenue. A five-year inclusive conversion request and
 five-year actual mean gestation request are supported directly by their named entries.
+Comparing named values of one dimension within the same period is a grouped breakdown:
+set patch.dimensions to that dimension and filter to the requested values. New Build and
+Refurbishment are values of type, not category. Use the supplied dimension meanings and values.
+patch.comparison is only a baseline total with a different period or filters; it is not needed
+for a side-by-side breakdown of project types or categories.
+Use only an entry's supported grains, periods, filter dimensions and ordering columns. An empty
+dimensions list means no dimension filters or breakdowns. For a monthly trend set grain=month;
+grain=total aggregates the requested period. Top/bottom groups use ordering by value desc/asc and
+the requested limit, within max_rows. Project records/rankings need exploration, even if their
+amount has a defined aggregate. Shares require an additive metric and grouped or monthly rows;
+include_share=true only when the user explicitly asks for shares or percentage contributions;
+otherwise leave it false. Never request shares of conversion rates or gestation averages. A comparison uses the SAME
+metric and one of its supported periods; different metric IDs, including different cohort
+variants, require exploration. For follow-ups preserve scope, and clear_comparison=true removes
+a previous baseline; comparison=null inherits. Filter values are resolved by the server.
+Ratio results already include numerator and denominator counts for every group and the total.
+Requests for supporting counts do not require a separate metric or clarification. Closed-only
+conversion uses invoiced wins as numerator and wins plus losses as denominator; open projects
+are excluded. Five-year closed-only conversion by project type is directly supported.
+Every result includes source_rows and known_values, and the server includes the complete
+filtered total. Requests for these supporting counts are supported without a separate metric.
+Source rows follow source grain, so child/invoice counts are not distinct project counts.
+Unfiltered coverage diagnostics are not counts for a selected category or type. Missing/zero/
+negative breakdowns, custom percentiles, account/product grouping, status filters and alternative
+date bases require exploration when the metric plan cannot express them. Do not drop any
+requested clause or silently substitute all_stored to make a question fit.
+If the required output cannot be expressed by the supplied metric plan, use unsupported so
+the server can route it to exploration. Clarify only when the user's intended scope is ambiguous.
 Planning also reports whether the user asks for causes. The application selects presentation
 and renders numerical claims deterministically; do not propose presentation or free-form claims.
 """

@@ -43,6 +43,7 @@ outputs/analysis/
 !docs/bi-analyst-phase5-model-diagnostic-1.0.2.json
 !docs/bi-analyst-phase5-model-evaluation-1.0.2.json
 !docs/bi-analyst-phase5-presentation-evaluation.json
+!docs/bi-analyst-planner-context-evaluation.json
 # Synthetic backend-to-browser presentation contract fixtures.
 !web/tests/summary-fixtures.json
 !services/bi_analyst/bi_analyst/semantic/catalogue.json

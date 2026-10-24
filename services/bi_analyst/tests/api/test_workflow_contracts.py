@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import time
@@ -7,17 +8,64 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
+from fastapi import HTTPException
 from pydantic import SecretStr, ValidationError
 import pytest
 
 from bi_analyst.workflow.contracts import ChartIntent, PlanDraft, Presentation
-from bi_analyst.metrics.contracts import Aggregate
+from bi_analyst.metrics.compiler import Compiler
+from bi_analyst.metrics.contracts import Aggregate, MetricRequest
 from bi_analyst.workflow.evidence import select_presentation
-from bi_analyst.workflow.graph import ConversationGraph
+from bi_analyst.workflow.graph import ConversationGraph, GraphState
 from bi_analyst.workflow.provider import GeminiProvider, MODEL, ProviderFailure
 from test_settings import config
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+@pytest.mark.parametrize('allowed_metric', [None, 'conversion_closed_five_year', 'order_hidden_complete_subtotal'])
+def test_planner_receives_authorised_dimension_meanings_and_supporting_count_definitions(allowed_metric):
+    compiler = Compiler()
+    metric_id = allowed_metric or 'conversion_closed_five_year'
+    conversion = metric_id == 'conversion_closed_five_year'
+    patch = {'metric_id':metric_id, 'period':'five_year_cohort' if conversion else 'all_stored'}
+    if conversion:
+        patch.update(dimensions=['type'], filters=[{'dimension':'type','values':['New Build','Refurbishment']}])
+    provider = SimpleNamespace(generate=AsyncMock(return_value=(PlanDraft(action='plan', patch=patch), {})))
+
+    def require_access(metric_id, version, population):
+        if allowed_metric and metric_id != allowed_metric:
+            raise HTTPException(403, 'access_denied')
+        return compiler.metric(metric_id, version, population)
+
+    workflow = object.__new__(ConversationGraph)
+    workflow.actor = workflow.run_id = workflow.token = None
+    workflow.jobs = SimpleNamespace(progress=AsyncMock(), budget=AsyncMock(), usage=AsyncMock())
+    workflow.metrics = SimpleNamespace(compiler=compiler, require_access=require_access)
+    workflow.service = SimpleNamespace(provider=provider, settings=config())
+    question = ('Compare five-year closed-only conversion between New Build and Refurbishment '
+                'projects, showing the supporting counts.') if conversion else 'Show stored hidden order subtotal.'
+    result = asyncio.run(workflow.make_plan(GraphState(question=question)))
+    stage, payload, schema = provider.generate.await_args.args
+    assert stage == 'plan' and schema is PlanDraft
+    entries = {m['id']:m for m in payload['catalogue']}
+    assert set(entries) == ({allowed_metric} if allowed_metric else set(compiler.metrics))
+    assert len(json.dumps(payload, ensure_ascii=True).encode()) < 48000
+    if conversion:
+        dimensions = {d['id']:d for d in payload['dimensions']}
+        assert dimensions['type']['values'] == ['New Build', 'Refurbishment']
+        assert 'Refurbishment' not in dimensions['category']['values']
+        assert entries[metric_id]['supporting_counts'] == {
+            'numerator':'sum(win_count)', 'denominator':'sum(closed_count)'}
+        plan = MetricRequest.model_validate(result['plan'])
+        compiled = compiler.compile(plan, now=datetime(2026, 10, 24, tzinfo=timezone.utc),
+                                    business_timezone='Europe/London')
+        assert plan.comparison is None and result['clarification'] is None
+        assert {'type', 'value', 'numerator', 'denominator'} <= {c.name for c in compiled.columns}
+        assert ['New Build', 'Refurbishment'] in compiled.rows.params
+    else:
+        assert payload['dimensions'] == []
+        assert 'supporting_counts' not in entries[metric_id]
 
 
 def test_workflow_migration_embeds_runtime_audit():

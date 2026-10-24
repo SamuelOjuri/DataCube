@@ -20,6 +20,7 @@ from ..operations.telemetry import operation_context
 from .contracts import Clarification, ExplanationAnswer, PlanDraft, Presentation, ResultReference
 from .evidence import ground, select_presentation
 from .explanation import explain as explanation_for
+from .planning_context import build_planning_context
 from .provider import ProviderFailure
 
 # One generated query plus at most two repairs, each within the run's model and tool budgets.
@@ -41,11 +42,6 @@ class GraphState(Contract):
     clarification: dict | None = None
     result: dict | None = None
     presentation: dict | None = None
-
-
-def metric_summary(metric):
-    return {key: getattr(metric,key) for key in
-            ('id','version','family','label','aliases','population','periods','unit','dimensions','kind','examples')}
 
 
 class ConversationGraph:
@@ -105,10 +101,11 @@ class ConversationGraph:
         await self.stage('retrieving_definitions')
         permitted = {m.id:m for m in permitted}
         await self.stage('planning')
-        entries = [{**metric_summary(m), 'date_basis':m.date_basis, 'status_filters':m.status_filters,
-                    'limitations':self.metrics.compiler.catalogue.runtime_limitations(m)} for m in permitted.values()]
-        draft = await self.model('plan', {'question':state.question,'replies':state.replies,
-            'previous_plan':state.previous_plan,'catalogue':entries,
+        context = build_planning_context(self.metrics.compiler, list(permitted.values()),
+            now=datetime.now(timezone.utc), business_timezone=self.service.settings.business_timezone,
+            max_rows=self.service.settings.metric_max_rows)
+        draft = await self.model('plan', {**context, 'question':state.question,'replies':state.replies,
+            'previous_plan':state.previous_plan,
             'instructions':'Understand the question and return one plan patch. Null inherits; [] clears lists. Select an explicit period for a new plan. Unsupported time windows require unsupported, never a substitute period. Set asks_for_cause when the user requests an explanation of causes.'},PlanDraft)
         if draft.action == 'unsupported':
             if self.service.settings.exploratory_enabled:

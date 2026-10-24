@@ -71,7 +71,16 @@ COLUMN_NOTES = {
                                           "with ', '; blank is ''."), "values": CHANGE_REASONS},
         "formula_enquiry_value": {"meaning": "quote_amount when reason_for_change is exactly 'New Enquiry', else 0."},
     },
-    "invoice_reporting_facts_v1": CLASSIFICATION,
+    "enquiry_monthly_v1": {
+        "enquiry_month": {"meaning": "Calendar month of the project's enquiry creation date (date_created)."},
+    },
+    "bookings_monthly_v1": {
+        "booking_month": {"meaning": "Calendar month of the project's order-received date (date_order_received)."},
+    },
+    "invoice_reporting_facts_v1": {
+        **CLASSIFICATION,
+        "invoice_date": {"meaning": "Recorded child invoice date in a completed month; not the parent's first invoice date."},
+    },
     "conversion_cohorts_v1": {
         **CLASSIFICATION,
         "cohort_years": {"meaning": "Cohort length in years; filter exactly one.", "values": [2, 5]},
