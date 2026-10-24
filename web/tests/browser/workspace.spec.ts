@@ -665,6 +665,33 @@ test('monthly enquiry uses conversational wording and keeps exact dates in sourc
   await expect(card.getByText('2026-09-01 to 2026-10-01 (end exclusive) · Europe/London',{exact:true})).toBeVisible();
 });
 
+test('gestation displays rounded days in the summary, headline and table while retaining supporting precision',async({page},testInfo)=>{
+  const summary='The average observed gestation was 233.9 days for projects created on or after 24 October 2021.';
+  const text='5-year Actual Gestation Period: 233.874837 days.';
+  const state=await fixture(page,{existing:true,answerOverride:{summary,text,chart:{kind:'number',x:null,y:'value'}}});
+  state.result.columns=['value'];
+  state.result.rows=[['233.874837']];
+  Object.assign(state.result.provenance,{metric_id:'gestation_five_year',metric_label:'5-year Actual Gestation Period',unit:'days',
+    request:{period:'five_year_cohort',filters:[],dimensions:[]},resolved_period:{start_date:'2021-10-24',end_date_exclusive:null},
+    columns:[{name:'value',type:'decimal',unit:'days',precision:6}],
+    total:{value:'233.874837',source_rows:7876,known_values:1534},coverage:{},limitations:[],returned_rows:1,matched_groups:1});
+  await signIn(page,`/conversations/${thread}`);
+  const card=page.getByRole('region',{name:'5-year Actual Gestation Period'});
+  for (const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    await expect(card.getByLabel('Summary',{exact:true})).toHaveText(summary);
+    await expect(card.locator('.total strong')).toHaveText('233.9 days');
+    await expect(card.getByRole('cell',{name:'233.9 days',exact:true})).toBeVisible();
+    await expect(card.locator('.answer-text')).toBeHidden();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath(`gestation-${width}.png`),fullPage:true});
+  }
+  await card.getByText('Supporting figures',{exact:true}).click();
+  await expect(card.locator('.answer-text')).toHaveText(text);
+  expect(state.result.rows[0][0]).toBe('233.874837');
+  expect(state.result.provenance.total.value).toBe('233.874837');
+});
+
 test('certified conversion shows the conversational summary and exclusions above the figure on desktop and mobile',async({page},testInfo)=>{
   const state=await fixture(page,{existing:true,answerOverride:{summary:certifiedConversionSummary,
     summary_notices:['Open projects are excluded from closed-only conversion.','Recent creation cohorts have had less time to reach invoiced completion.'],

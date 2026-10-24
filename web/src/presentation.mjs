@@ -61,22 +61,26 @@ const chartTheme = {
   legend: {labelColor: '#666666', titleColor: '#262626'},
 };
 // Round the decimal string using integer arithmetic, without losing database precision.
-function percentage(value, ratio) {
+function roundedTenth(value, ratio = false) {
   const negative = String(value).startsWith('-');
   const [whole, fraction = ''] = String(value).replace(/^-/, '').split('.');
   let scaled = BigInt(whole + fraction) * (ratio ? 1000n : 10n);
   const divisor = 10n ** BigInt(fraction.length);
   scaled = (scaled + divisor / 2n) / divisor;
-  return `${negative && scaled !== 0n ? '-' : ''}${(scaled / 10n).toLocaleString('en-GB')}.${scaled % 10n}%`;
+  return `${negative && scaled !== 0n ? '-' : ''}${(scaled / 10n).toLocaleString('en-GB')}.${scaled % 10n}`;
 }
 // Preserve decimal strings from PostgreSQL, including values beyond JS integer precision.
 export function formatCell(value, unit) {
   if (value === null || value === undefined) return 'Unknown';
   if (!/^-?\d+(\.\d+)?$/.test(String(value))) return String(value);
-  if (unit === 'ratio' || unit === 'percent') return percentage(value, unit === 'ratio');
+  if (unit === 'ratio' || unit === 'percent') return roundedTenth(value, unit === 'ratio') + '%';
+  if (unit === 'days') {
+    const number = roundedTenth(value).replace(/\.0$/, '');
+    return number + (/^-?1$/.test(number) ? ' day' : ' days');
+  }
   const [whole, fraction] = String(value).split('.');
   const number = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (fraction === undefined ? '' : '.' + fraction);
-  return unit === 'source_currency' ? '£' + number : number + (unit === 'days' ? ' days' : '');
+  return unit === 'source_currency' ? '£' + number : number;
 }
 export function compareDecimal(a, b) {
   if (a === null) return b === null ? 0 : 1;

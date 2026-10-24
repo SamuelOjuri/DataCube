@@ -91,7 +91,7 @@
       ],
       "scope_changes": {},
       "summary": "Revenue totalled £1,234.56.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "total",
@@ -212,7 +212,7 @@
       ],
       "scope_changes": {},
       "summary": "Among the returned groups, C had the lowest revenue at £5.00. This represents 11.1% of the returned total.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [],
       "exploratory_chart": {
         "kind": "bar",
@@ -334,7 +334,7 @@
       ],
       "scope_changes": {},
       "summary": "Current rate was 60.0%, 20.0 percentage points higher compared with Baseline rate at 40.0%.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [],
       "exploratory_chart": {
         "kind": "comparison",
@@ -470,7 +470,7 @@
       ],
       "scope_changes": {},
       "summary": "Revenue was £50.00 in 23 October 2026, £30.00 higher (150.0%) compared with £20.00 in 20 October 2026.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
         "Some periods have unknown values. The trend uses known values and leaves gaps in the chart.",
@@ -605,7 +605,7 @@
       ],
       "scope_changes": {},
       "summary": "Revenue was £50.00 in Q3 2026, £30.00 higher (150.0%) compared with £20.00 in Q1 2026.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [],
       "exploratory_chart": {
         "kind": "line",
@@ -727,7 +727,7 @@
       ],
       "scope_changes": {},
       "summary": "Among the returned values, delivery time ranged from 1 day to 4 days, with a median of 2.5 days.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
       ],
@@ -867,7 +867,7 @@
       ],
       "scope_changes": {},
       "summary": "Among the returned pairs, revenue and delivery time had a positive linear correlation (r = 1.00). This describes an association, not a cause.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
         "Only records with known values for both measures are compared."
@@ -997,7 +997,7 @@
       ],
       "scope_changes": {},
       "summary": "I can show the available figures, but they do not form a clear sequence of distinct reporting periods. I found 2 matching records. The table shows Account, Revenue. Revenue totalled £40.00 across these records.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "records",
@@ -1098,7 +1098,7 @@
       ],
       "scope_changes": {},
       "summary": "I found 2 matching records. The table shows Account.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "records",
@@ -1206,7 +1206,7 @@
       ],
       "scope_changes": {},
       "summary": "No matching records were found for this scope. Try a different period or broader filters.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "empty",
@@ -1307,7 +1307,7 @@
       ],
       "scope_changes": {},
       "summary": "The returned records do not contain known values for Revenue, so I can't calculate a reliable finding from them.",
-      "summary_version": "5",
+      "summary_version": "6",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
       ],

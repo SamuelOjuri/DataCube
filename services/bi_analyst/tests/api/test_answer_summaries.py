@@ -17,7 +17,7 @@ from bi_analyst.workflow.evidence import ground, select_presentation
 from bi_analyst.workflow.explanation import LEADS, explain
 from bi_analyst.workflow.service import WorkflowService
 from bi_analyst.workflow.summary import summarize_metric
-from bi_analyst.workflow.summary_language import SUMMARY_VERSION, period_scope, period_text
+from bi_analyst.workflow.summary_language import SUMMARY_VERSION, display, period_scope, period_text
 from bi_analyst.exploration.evidence import ground_exploration
 from test_exploration_summary import monthly
 
@@ -149,9 +149,41 @@ def test_five_year_conversion_keeps_saved_counts_and_lower_bound_when_presented(
     assert result.model_dump(mode='json') == before
 
 
-@pytest.mark.parametrize('metric_id,word', [('gestation_five_year','average'), ('gestation_median_five_year','median')])
+@pytest.mark.parametrize('metric_id,word', [('gestation_five_year','average'),
+    ('gestation_two_year','average'), ('gestation_median_five_year','median')])
 def test_gestation_uses_the_correct_statistic(metric_id, word):
-    assert f'The {word} observed gestation' in summarize_metric(metric_result(metric_id))[0]
+    result = metric_result(metric_id, total=Aggregate(value='233.874837', source_rows=7876, known_values=1534))
+    before = result.model_dump(mode='json')
+    answer = ground(result, select_presentation(result), {})
+    assert f'The {word} observed gestation was 233.9 days' in answer.summary
+    assert next(c for c in answer.claims if c.id == 'summary_total').value == Decimal('233.874837')
+    assert '233.874837 days' in answer.text  # Supporting figures keep exact evidence.
+    assert result.model_dump(mode='json') == before
+
+
+@pytest.mark.parametrize('value,expected', [
+    ('233.874837', '233.9 days'), ('233.849999', '233.8 days'), ('233.85', '233.9 days'),
+    ('-233.85', '-233.9 days'), ('20.000000', '20 days'), ('1.04', '1 day'), ('-1.04', '-1 day'),
+    ('0.000001', '0 days'), ('-0.04', '0 days'), ('-0.05', '-0.1 days'), ('999.95', '1,000 days'),
+    ('9007199254740993.25', '9,007,199,254,740,993.3 days'),
+])
+def test_day_display_rounds_half_up_without_changing_the_decimal(value, expected):
+    amount = Decimal(value)
+    assert display(amount, 'days') == expected
+    assert str(amount) == value
+    assert display(None, 'days') == 'unknown'
+
+
+def test_saved_gestation_summary_refreshes_from_exact_evidence():
+    result = metric_result('gestation_five_year', total=Aggregate(value='233.874837', source_rows=7876, known_values=1534))
+    answer = ground(result, select_presentation(result), {}).model_dump(mode='json')
+    old = {**answer, 'summary': answer['summary'].replace('233.9 days', '233.874837 days'), 'summary_version': '5'}
+    service = object.__new__(WorkflowService)
+    service.store = SimpleNamespace(result=AsyncMock(return_value=result.model_dump(mode='json')))
+    presented = asyncio.run(service.present_answer('actor', old, result.run_id))
+    assert presented == answer
+    assert '233.874837 days' in old['summary'] and old['summary_version'] == '5'
+    service.store.result.assert_awaited_once_with('actor', result.id)
 
 
 @pytest.mark.parametrize('value,known,source,expected', [(None,0,0,'No matching records'),
@@ -289,7 +321,7 @@ def test_legacy_summary_reads_cannot_cross_result_references_or_permissions():
 
 
 @pytest.mark.parametrize('exploratory', [False, True])
-@pytest.mark.parametrize('old_version', [None, '1', '2', '3', '4'])
+@pytest.mark.parametrize('old_version', [None, '1', '2', '3', '4', '5'])
 def test_existing_outdated_summaries_are_refreshed_without_mutating_history(exploratory, old_version):
     result = monthly() if exploratory else metric_result('enquiry_monthly_actual')
     answer = ground_exploration(result) if exploratory else ground(result, select_presentation(result), {}, asks_for_cause=True)

@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 
-SUMMARY_VERSION = "5"
+SUMMARY_VERSION = "6"
 CONVERSION_MATURITY = ("This reflects recorded outcomes so far. More recent projects have had less time "
                        "to reach invoiced completion.")
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
@@ -32,6 +32,11 @@ def display(value, unit):
         return f"{value.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP):,}{suffix}"
     if unit == "source_currency":
         return f"£{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,}"
+    if unit == "days":
+        # Day averages retain their stored precision in evidence and exports.
+        value = value.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+        if value == 0:
+            value = abs(value)  # Do not display a rounded negative zero.
     return f"{value.normalize():,f}" + ((" day" if abs(value) == 1 else " days") if unit == "days" else "")
 
 

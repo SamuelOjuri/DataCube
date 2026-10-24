@@ -73,6 +73,17 @@ test('rates use exact decimal percentage formatting and headers avoid repeated u
   assert.equal(columnHeading('inclusive_conversion',{label:'Inclusive conversion',unit:'ratio'}),'Inclusive conversion (%)');
 });
 
+test('day values round to at most one decimal without binary floating point conversion', () => {
+  for (const [value, expected] of [
+    ['233.874837', '233.9 days'], ['233.849999', '233.8 days'], ['233.85', '233.9 days'],
+    ['-233.85', '-233.9 days'], ['20.000000', '20 days'], ['1.04', '1 day'], ['-1.04', '-1 day'],
+    ['0.000001', '0 days'], ['-0.04', '0 days'], ['-0.05', '-0.1 days'], ['999.95', '1,000 days'],
+    ['9007199254740993.25', '9,007,199,254,740,993.3 days'],
+  ]) assert.equal(formatCell(value, 'days'), expected);
+  assert.equal(formatCell(null, 'days'), 'Unknown');
+  assert.equal(formatCell('233.874837', 'none'), '233.874837');
+});
+
 test('percentage changes round long decimal strings without rescaling or losing precision', () => {
   for (const [value, expected] of [
     ['191.96271978353071266956772189089245237668869807260', '192.0%'],
