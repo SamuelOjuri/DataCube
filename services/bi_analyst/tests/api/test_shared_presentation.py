@@ -21,6 +21,7 @@ from bi_analyst.workflow.service import WorkflowService
 from bi_analyst.workflow.summary_language import SUMMARY_VERSION
 from bi_analyst.metrics.contracts import Ordering
 from test_answer_summaries import metric_result
+from test_exploration_summary import calendar
 from test_exploration_workflow import exploratory_result
 
 NOW = datetime(2026, 10, 23, 12, tzinfo=timezone.utc)
@@ -48,6 +49,7 @@ def cases():
     revenue = col('revenue', grouped=True, additive=True)
     duration = col('delivery_time', unit='days', label='Delivery time')
     return {
+        'calendar': calendar().model_copy(update={'id': RESULT_ID, 'run_id': RUN_ID, 'created_at': NOW}),
         'total': dataset([['1234.56']], [revenue], {'kind': 'total'}, 'Total revenue'),
         'ranking': dataset([['A', 10], ['B', 30], ['C', 5]], [category, revenue],
             {'kind': 'ranking', 'primary_measure': 'revenue', 'direction': 'lowest'}, 'Lowest revenue by account'),
@@ -72,6 +74,7 @@ def cases():
 def ui_fixtures():
     output = {}
     for name, result in cases().items():
+        result.provenance.freshness.queried_at = NOW
         answer = ground_exploration(result).model_dump(mode='json')
         answer.pop('claims')
         output[name] = {'result': result.model_dump(mode='json'), 'answer': answer}
@@ -214,6 +217,23 @@ def test_saved_nonmonthly_answer_is_refreshed_without_requery_or_write():
     refreshed = asyncio.run(service.present_answer('actor', old, result.run_id))
     assert refreshed['summary'] == answer.summary and refreshed['exploratory_chart']['time_grain'] == 'quarter'
     assert old['summary_version'] == '3'
+    service.store.result.assert_awaited_once_with('actor', result.id)
+
+
+def test_saved_calendar_answer_is_refreshed_with_explicit_grain_without_changing_stored_metadata():
+    result = calendar()
+    result.provenance.columns[0].time_grain = None
+    old = ground_exploration(result).model_dump(mode='json')
+    old['summary_version'] = '6'
+    stored = result.model_dump(mode='json')
+    service = object.__new__(WorkflowService)
+    service.store = SimpleNamespace(result=AsyncMock(return_value=stored))
+    refreshed = asyncio.run(service.present_answer('actor', old, result.run_id))
+    assert old['summary_kind'] == 'records' and old['exploratory_chart'] is None
+    assert refreshed['summary_kind'] == 'trend' and refreshed['chart_reason'] is None
+    assert refreshed['summary_version'] == SUMMARY_VERSION
+    assert refreshed['exploratory_chart']['time_grain'] == 'month'
+    assert stored['provenance']['columns'][0]['time_grain'] is None
     service.store.result.assert_awaited_once_with('actor', result.id)
 
 

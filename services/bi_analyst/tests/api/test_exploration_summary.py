@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from bi_analyst.exploration.contracts import ExploratoryColumn
+from bi_analyst.exploration.contracts import AnalysisIntent, ExploratoryColumn
 from bi_analyst.exploration.evidence import ground_exploration
 from bi_analyst.exploration.semantics import describe_columns
 from bi_analyst.workflow.contracts import GroundedAnswer
@@ -13,6 +13,69 @@ SQL = """SELECT date_trunc('month', date_created)::date AS creation_month,
 sum(win_count) AS wins, sum(eligible_count) AS eligible,
 round(sum(win_count)::numeric / nullif(sum(eligible_count), 0), 4) AS inclusive_conversion
 FROM analyst_query.conversion_cohorts_v1 GROUP BY 1 ORDER BY 1"""
+
+CALENDAR_SQL = """WITH calendar_months AS (
+    SELECT CAST(GENERATE_SERIES(CAST('2025-11-01' AS DATE), CAST('2026-09-01' AS DATE),
+        CAST('1 month' AS INTERVAL)) AS DATE) AS invoice_month),
+    monthly_rev AS (
+        SELECT CAST(DATE_TRUNC('MONTH', invoice_date) AS DATE) AS invoice_month,
+            SUM(amount_invoiced) AS invoiced_revenue, COUNT(*) AS invoice_count
+        FROM analyst_query.invoice_reporting_facts_v1
+        WHERE invoice_date >= '2025-11-01' AND invoice_date < '2026-10-01' AND amount_invoiced > 0
+        GROUP BY CAST(DATE_TRUNC('MONTH', invoice_date) AS DATE))
+    SELECT cm.invoice_month, CAST(COALESCE(mr.invoiced_revenue, 0) AS DECIMAL(14, 2)) AS invoiced_revenue,
+        COALESCE(mr.invoice_count, 0) AS invoice_count
+    FROM calendar_months AS cm LEFT JOIN monthly_rev AS mr ON cm.invoice_month = mr.invoice_month
+    ORDER BY cm.invoice_month ASC"""
+
+
+def calendar():
+    columns = [ExploratoryColumn(name=n, label=label, role=role, unit=unit, type=kind)
+               for n, label, role, unit, kind in [
+                   ('invoice_month', 'Invoice month', 'dimension', 'none', 'date'),
+                   ('invoiced_revenue', 'Invoiced revenue', 'measure', 'source_currency', 'decimal'),
+                   ('invoice_count', 'Invoice count', 'measure', 'count', 'integer')]]
+    columns, limited = describe_columns(CALENDAR_SQL, columns)
+    # Include the calendar's explicit zero-filled month beside known revenue.
+    rows = [[f'{2025 + (i + 10) // 12}-{(i + 10) % 12 + 1:02}-01',
+             '0.00' if i == 2 else '100.00', 0 if i == 2 else 1] for i in range(11)]
+    result = exploratory_result(rows, columns, title='Monthly invoiced revenue')
+    result.provenance.sql = CALENDAR_SQL
+    result.provenance.query_limited = limited
+    result.provenance.analysis_intent = AnalysisIntent(kind='trend', axis='invoice_month',
+        primary_measure='invoiced_revenue', secondary_measure='invoice_count')
+    return result
+
+
+def test_zero_filled_monthly_revenue_selects_a_line_chart_after_the_calendar_join():
+    result = calendar()
+    answer = ground_exploration(result)
+    assert result.provenance.columns[0].time_grain == 'month'
+    assert answer.summary_kind == 'trend' and answer.chart_reason is None
+    assert answer.exploratory_chart.kind == 'line'
+    assert answer.exploratory_chart.series == ['invoiced_revenue']
+    assert answer.exploratory_chart.time_grain == 'month'
+    assert 'November 2025' in answer.summary and 'September 2026' in answer.summary
+    assert facts(answer)['summary_low'].value == 0
+    assert facts(answer)['summary_overall'].value == Decimal(1000) / 11
+    # The joined count has a different unit and must not be drawn on the revenue axis.
+    assert 'invoice_count' not in answer.exploratory_chart.series
+
+
+@pytest.mark.parametrize('mode', ['duplicate', 'misaligned', 'truncated', 'sql_limit'])
+def test_generated_calendars_still_reject_unsuitable_trends(mode):
+    result = calendar()
+    if mode == 'duplicate':
+        result.rows[-1][0] = result.rows[0][0]
+    elif mode == 'misaligned':
+        result.rows[0][0] = '2025-11-02'
+    elif mode == 'truncated':
+        result.provenance.truncated = True
+    else:
+        result.provenance.sql += ' LIMIT 11'
+        result.provenance.columns, result.provenance.query_limited = describe_columns(
+            result.provenance.sql, result.provenance.columns)
+    assert ground_exploration(result).exploratory_chart is None
 
 
 def monthly(rows=None, sql=SQL):

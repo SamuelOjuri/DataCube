@@ -11,7 +11,7 @@ const fixtures = JSON.parse(readFileSync(new URL('./summary-fixtures.json', impo
 const render = (item, intent = item.answer.exploratory_chart || item.answer.chart, id = item.result.id) => chartSpec(item.result, intent, id);
 
 test('backend-selected chart templates compile and render using the restricted interpreter', async () => {
-  for (const name of ['ranking', 'comparison', 'daily', 'quarterly', 'distribution', 'relationship']) {
+  for (const name of ['calendar', 'ranking', 'comparison', 'daily', 'quarterly', 'distribution', 'relationship']) {
     const {spec, reason} = render(fixtures[name]);
     assert.ok(spec, `${name}: ${reason}`);
     const runtime = parse(compile(spec).spec, undefined, {ast: true});
@@ -21,6 +21,17 @@ test('backend-selected chart templates compile and render using the restricted i
     assert.match(svg, /<svg/);
     view.finalize();
   }
+});
+
+test('refreshed calendar charts render with saved column metadata and retain explicit zero months', () => {
+  const item = structuredClone(fixtures.calendar);
+  item.result.provenance.columns[0].time_grain = null;
+  const {spec, reason} = render(item);
+  assert.ok(spec, reason);
+  assert.equal(spec.mark.type, 'line');
+  assert.equal(spec.data.values.length, 11);
+  assert.equal(spec.data.values.find(v => v.label === '2026-01-01').value, 0);
+  assert.deepEqual([...new Set(spec.data.values.map(v => v.series))], ['Invoiced revenue']);
 });
 
 test('daily gaps, quarterly order, rankings and distributions represent the actual observations', () => {
@@ -42,7 +53,7 @@ test('unknown, empty and unsupported interpretations retain summaries without fa
 });
 
 test('new templates reject unowned, limited, misreferenced and unsafe numerical data', () => {
-  for (const name of ['ranking', 'comparison', 'daily', 'quarterly', 'distribution', 'relationship']) {
+  for (const name of ['calendar', 'ranking', 'comparison', 'daily', 'quarterly', 'distribution', 'relationship']) {
     const item = fixtures[name];
     assert.equal(render(item, undefined, 'another-result').spec, null);
     assert.equal(render(item, {...item.answer.exploratory_chart, transform: [{calculate: '1'}]}).spec, null);

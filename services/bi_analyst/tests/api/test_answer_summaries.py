@@ -321,7 +321,7 @@ def test_legacy_summary_reads_cannot_cross_result_references_or_permissions():
 
 
 @pytest.mark.parametrize('exploratory', [False, True])
-@pytest.mark.parametrize('old_version', [None, '1', '2', '3', '4', '5'])
+@pytest.mark.parametrize('old_version', [None, '1', '2', '3', '4', '5', '6'])
 def test_existing_outdated_summaries_are_refreshed_without_mutating_history(exploratory, old_version):
     result = monthly() if exploratory else metric_result('enquiry_monthly_actual')
     answer = ground_exploration(result) if exploratory else ground(result, select_presentation(result), {}, asks_for_cause=True)

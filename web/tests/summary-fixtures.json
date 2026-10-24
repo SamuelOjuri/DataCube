@@ -1,4 +1,191 @@
 {
+  "calendar": {
+    "result": {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "run_id": "30000000-0000-4000-8000-000000000001",
+      "permissions_version": 1,
+      "columns": [
+        "invoice_month",
+        "invoiced_revenue",
+        "invoice_count"
+      ],
+      "rows": [
+        [
+          "2025-11-01",
+          "100.00",
+          1
+        ],
+        [
+          "2025-12-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-01-01",
+          "0.00",
+          0
+        ],
+        [
+          "2026-02-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-03-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-04-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-05-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-06-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-07-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-08-01",
+          "100.00",
+          1
+        ],
+        [
+          "2026-09-01",
+          "100.00",
+          1
+        ]
+      ],
+      "provenance": {
+        "kind": "exploratory",
+        "contract_version": "1.0.0",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_version": "1.0.0",
+        "catalogue_version": "1.1.0",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": "Monthly invoiced revenue",
+        "sql": "WITH calendar_months AS (\n    SELECT CAST(GENERATE_SERIES(CAST('2025-11-01' AS DATE), CAST('2026-09-01' AS DATE),\n        CAST('1 month' AS INTERVAL)) AS DATE) AS invoice_month),\n    monthly_rev AS (\n        SELECT CAST(DATE_TRUNC('MONTH', invoice_date) AS DATE) AS invoice_month,\n            SUM(amount_invoiced) AS invoiced_revenue, COUNT(*) AS invoice_count\n        FROM analyst_query.invoice_reporting_facts_v1\n        WHERE invoice_date >= '2025-11-01' AND invoice_date < '2026-10-01' AND amount_invoiced > 0\n        GROUP BY CAST(DATE_TRUNC('MONTH', invoice_date) AS DATE))\n    SELECT cm.invoice_month, CAST(COALESCE(mr.invoiced_revenue, 0) AS DECIMAL(14, 2)) AS invoiced_revenue,\n        COALESCE(mr.invoice_count, 0) AS invoice_count\n    FROM calendar_months AS cm LEFT JOIN monthly_rev AS mr ON cm.invoice_month = mr.invoice_month\n    ORDER BY cm.invoice_month ASC",
+        "relations": [
+          "invoice_reporting_facts_v1"
+        ],
+        "columns": [
+          {
+            "name": "invoice_month",
+            "label": "Invoice month",
+            "role": "dimension",
+            "unit": "none",
+            "type": "date",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": "month"
+          },
+          {
+            "name": "invoiced_revenue",
+            "label": "Invoiced revenue",
+            "role": "measure",
+            "unit": "source_currency",
+            "type": "decimal",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          },
+          {
+            "name": "invoice_count",
+            "label": "Invoice count",
+            "role": "measure",
+            "unit": "count",
+            "type": "integer",
+            "additive": false,
+            "grouped": false,
+            "numerator": null,
+            "denominator": null,
+            "time_grain": null
+          }
+        ],
+        "business_timezone": "Europe/London",
+        "authorization_scope": "company_wide",
+        "freshness": {
+          "queried_at": "2026-10-23T12:00:00Z",
+          "status": "unknown",
+          "ingestion_at": null,
+          "rollup_at": null,
+          "refreshed_at": null,
+          "data_version": null,
+          "historical_snapshot_date": null,
+          "limitation": "Successful ingestion, rollup and refresh evidence is not published by the query gateways."
+        },
+        "limitations": [
+          "Exploratory analysis: generated SQL over governed views, not a certified metric."
+        ],
+        "caveats": [],
+        "certification_basis": "exploratory_uncertified",
+        "truncated": false,
+        "truncation_reasons": [],
+        "returned_rows": 11,
+        "dataset_scope": "complete",
+        "query_limited": false,
+        "monthly_comparison": null,
+        "analysis_intent": {
+          "kind": "trend",
+          "primary_measure": "invoiced_revenue",
+          "secondary_measure": "invoice_count",
+          "axis": "invoice_month",
+          "direction": "highest",
+          "period_comparison": null
+        }
+      },
+      "created_at": "2026-10-23T12:00:00Z"
+    },
+    "answer": {
+      "result": {
+        "result_id": "20000000-0000-4000-8000-000000000001",
+        "query_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalogue_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "text": "Monthly invoiced revenue.\n2025-11-01 — Invoiced revenue: GBP 100.00.\n2025-11-01 — Invoice count: 1.\n2025-12-01 — Invoiced revenue: GBP 100.00.\n2025-12-01 — Invoice count: 1.\n2026-01-01 — Invoiced revenue: GBP 0.00.\n2026-01-01 — Invoice count: 0.\n2026-02-01 — Invoiced revenue: GBP 100.00.\n2026-02-01 — Invoice count: 1.\n2026-03-01 — Invoiced revenue: GBP 100.00.\n2026-03-01 — Invoice count: 1.\n2026-04-01 — Invoiced revenue: GBP 100.00.\n2026-04-01 — Invoice count: 1.\n2026-05-01 — Invoiced revenue: GBP 100.00.\n2026-05-01 — Invoice count: 1.\n2026-06-01 — Invoiced revenue: GBP 100.00.\n2026-06-01 — Invoice count: 1.\n3 further rows are shown in the table.",
+      "chart": {
+        "kind": "table",
+        "x": null,
+        "y": "value"
+      },
+      "notices": [
+        "Exploratory analysis: generated SQL over governed views, not a certified metric.",
+        "Source freshness is unknown; query time does not establish ingestion or refresh time.",
+        "Currency: GBP. Amounts are as stored; VAT inclusion is unspecified."
+      ],
+      "scope_changes": {},
+      "summary": "Invoiced revenue was £100.00 in November 2025 and £100.00 in September 2026; the monthly average for these months was £90.91. The highest monthly value was £100.00 in November 2025; the lowest was £0.00 in January 2026.",
+      "summary_version": "7",
+      "summary_notices": [],
+      "exploratory_chart": {
+        "kind": "line",
+        "x": "invoice_month",
+        "series": [
+          "invoiced_revenue"
+        ],
+        "comparison": null,
+        "period_comparison": null,
+        "time_grain": "month",
+        "sort": null
+      },
+      "summary_kind": "trend",
+      "chart_reason": null
+    }
+  },
   "total": {
     "result": {
       "id": "20000000-0000-4000-8000-000000000001",
@@ -91,7 +278,7 @@
       ],
       "scope_changes": {},
       "summary": "Revenue totalled £1,234.56.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "total",
@@ -212,7 +399,7 @@
       ],
       "scope_changes": {},
       "summary": "Among the returned groups, C had the lowest revenue at £5.00. This represents 11.1% of the returned total.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [],
       "exploratory_chart": {
         "kind": "bar",
@@ -334,7 +521,7 @@
       ],
       "scope_changes": {},
       "summary": "Current rate was 60.0%, 20.0 percentage points higher compared with Baseline rate at 40.0%.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [],
       "exploratory_chart": {
         "kind": "comparison",
@@ -470,7 +657,7 @@
       ],
       "scope_changes": {},
       "summary": "Revenue was £50.00 in 23 October 2026, £30.00 higher (150.0%) compared with £20.00 in 20 October 2026.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
         "Some periods have unknown values. The trend uses known values and leaves gaps in the chart.",
@@ -605,7 +792,7 @@
       ],
       "scope_changes": {},
       "summary": "Revenue was £50.00 in Q3 2026, £30.00 higher (150.0%) compared with £20.00 in Q1 2026.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [],
       "exploratory_chart": {
         "kind": "line",
@@ -727,7 +914,7 @@
       ],
       "scope_changes": {},
       "summary": "Among the returned values, delivery time ranged from 1 day to 4 days, with a median of 2.5 days.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
       ],
@@ -867,7 +1054,7 @@
       ],
       "scope_changes": {},
       "summary": "Among the returned pairs, revenue and delivery time had a positive linear correlation (r = 1.00). This describes an association, not a cause.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only.",
         "Only records with known values for both measures are compared."
@@ -997,7 +1184,7 @@
       ],
       "scope_changes": {},
       "summary": "I can show the available figures, but they do not form a clear sequence of distinct reporting periods. I found 2 matching records. The table shows Account, Revenue. Revenue totalled £40.00 across these records.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "records",
@@ -1098,7 +1285,7 @@
       ],
       "scope_changes": {},
       "summary": "I found 2 matching records. The table shows Account.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "records",
@@ -1206,7 +1393,7 @@
       ],
       "scope_changes": {},
       "summary": "No matching records were found for this scope. Try a different period or broader filters.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [],
       "exploratory_chart": null,
       "summary_kind": "empty",
@@ -1307,7 +1494,7 @@
       ],
       "scope_changes": {},
       "summary": "The returned records do not contain known values for Revenue, so I can't calculate a reliable finding from them.",
-      "summary_version": "6",
+      "summary_version": "7",
       "summary_notices": [
         "Some returned values are unknown. They are not treated as zero, and summaries use known values only."
       ],

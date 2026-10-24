@@ -11,7 +11,7 @@ for (const width of [1440, 390]) {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     const state = await fixture(page, {existing: true, exploratory: true});
-    for (const name of ['ranking', 'comparison', 'daily', 'quarterly', 'distribution', 'relationship', 'fallback', 'unknown', 'records', 'empty', 'total']) {
+    for (const name of ['calendar', 'ranking', 'comparison', 'daily', 'quarterly', 'distribution', 'relationship', 'fallback', 'unknown', 'records', 'empty', 'total']) {
       const {answer, result} = presentations[name];
       state.result = structuredClone(result);
       state.workflow[runId].answer = structuredClone(answer);

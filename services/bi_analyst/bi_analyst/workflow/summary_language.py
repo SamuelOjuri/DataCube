@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 
-SUMMARY_VERSION = "6"
+SUMMARY_VERSION = "7"
 CONVERSION_MATURITY = ("This reflects recorded outcomes so far. More recent projects have had less time "
                        "to reach invoiced completion.")
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",

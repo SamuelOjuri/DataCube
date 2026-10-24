@@ -4,9 +4,12 @@ Unrecognised expressions still appear in tables; they are never guessed to be
 additive or averaged as rates. In particular, window/cumulative totals cannot be
 added again. Ratio components must also be returned by the same SELECT.
 """
+import re
+
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import SqlglotError
+from sqlglot.errors import OptimizeError, SqlglotError
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 
 def unwrap(node):
@@ -49,6 +52,77 @@ def projections(select, inherited=None):
     return expressions, grouped, raw_rows
 
 
+def series_grain(node):
+    """Recognise calendar steps; owned dates still have to pass bucket validation."""
+    if not isinstance(node, exp.GenerateSeries):
+        return None
+    step = node.args.get("step")
+    if isinstance(step, exp.Interval) and isinstance(step.this, exp.Literal):
+        interval = f"{step.this.this} {step.args.get('unit', '')}"
+    elif (isinstance(step, exp.Cast) and step.to.this == exp.DataType.Type.INTERVAL
+          and isinstance(step.this, exp.Literal) and step.this.is_string):
+        interval = step.this.this
+    else:
+        return None
+    match = re.fullmatch(r"\s*([1-9]\d*)\s+([a-z]+)\s*", interval, re.IGNORECASE)
+    if not match:
+        return None
+    amount, unit = int(match[1]), match[2].lower().removesuffix("s")
+    return {(1, "day"): "day", (1, "week"): "week", (7, "day"): "week",
+            (1, "month"): "month", (3, "month"): "quarter",
+            (1, "year"): "year", (12, "month"): "year"}.get((amount, unit))
+
+
+def calendar_grains(select):
+    """Trace only calendar axes through scoped CTEs, subqueries and joins.
+
+    Join cardinality is not evidence of additivity. Keep this separate from the
+    measure projections above; duplicate or misaligned dates are checked later.
+    """
+    inferred = {}
+    try:
+        for scope in traverse_scope(select):
+            if not isinstance(scope.expression, exp.Select):
+                inferred[scope] = {}
+                continue
+            sources = {}
+            for alias, (_, source) in scope.selected_sources.items():
+                if isinstance(source, Scope):
+                    sources[alias] = inferred.get(source, {})
+                elif isinstance(source, exp.Table) and isinstance(source.this, exp.GenerateSeries):
+                    names = source.alias_column_names or [source.alias_or_name, "generate_series"]
+                    sources[alias] = {name: series_grain(source.this) for name in names if name}
+                else:
+                    sources[alias] = {}
+
+            def grain(node):
+                node = unwrap(node)
+                if isinstance(node, (exp.DateTrunc, exp.TimestampTrunc)):
+                    unit = str(node.args.get("unit", "")).strip("'").lower()
+                    return unit if unit in {"day", "week", "month", "quarter", "year"} else None
+                if isinstance(node, exp.Column) and not node.db and not node.catalog:
+                    if node.table:
+                        return sources.get(node.table, {}).get(node.name)
+                    # A bare column across joins may refer to a USING/coalesced
+                    # key. Do not assign it another source's calendar metadata.
+                    if len(sources) == 1:
+                        return next(iter(sources.values())).get(node.name)
+                    return None
+                return series_grain(node)
+
+            outputs = {}
+            for i, node in enumerate(scope.expression.expressions):
+                name = scope.outer_columns[i] if i < len(scope.outer_columns) else node.alias_or_name
+                outputs[name] = grain(node) if name not in outputs else None
+            inferred[scope] = outputs
+            if scope.expression is select:
+                return outputs
+    except OptimizeError:
+        # Unresolvable aliases must not break otherwise useful table output.
+        pass
+    return {}
+
+
 def describe_columns(sql, columns):
     columns = [c.model_copy(update={"additive": False, "grouped": False, "numerator": None,
                                    "denominator": None, "time_grain": None}) for c in columns]
@@ -60,6 +134,7 @@ def describe_columns(sql, columns):
     if not isinstance(tree, exp.Select):
         return columns, limited
     expressions, grouped, raw_rows = projections(tree)
+    grains = calendar_grains(tree)
     updates = {}
     for column in columns:
         node = expressions.get(column.name)
@@ -68,13 +143,10 @@ def describe_columns(sql, columns):
         identifier = isinstance(node, exp.Column) and (node.name == "id" or node.name.endswith("_id"))
         additive = (isinstance(node, (exp.Sum, exp.Count)) and not node.find(exp.Window)
                     and not node.find(exp.Distinct)) or (raw_rows and isinstance(node, exp.Column) and not identifier)
-        grain = str(node.args.get("unit", "")).strip("'").lower() if isinstance(node, (exp.DateTrunc, exp.TimestampTrunc)) else None
-        if grain not in {"day", "week", "month", "quarter", "year"}:
-            grain = None
         updates[column.name] = column.model_copy(update={
             "grouped": grouped,
             "additive": bool(additive and column.role == "measure" and column.unit in {"count", "source_currency"}),
-            "time_grain": grain if column.role == "dimension" and column.type == "date" else None})
+            "time_grain": grains.get(column.name) if column.role == "dimension" and column.type == "date" else None})
     for name, column in list(updates.items()):
         node = expressions[name]
         if column.unit != "ratio" or not isinstance(node, exp.Div):

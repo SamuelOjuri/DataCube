@@ -93,7 +93,8 @@ def _summarize_known_shape(result, primary=None):
         if axis is not None or (len(rows) <= 30 and all(c.grouped and (c.additive or c.unit in {"ratio", "percent"}) for c in selected)
                                 and p.columns[dimensions[0]].type == "text"):
             chart = ExploratoryChartIntent(kind="line" if axis is not None else "bar",
-                x=p.columns[dimensions[0]].name, series=[c.name for c in selected])
+                x=p.columns[dimensions[0]].name, series=[c.name for c in selected],
+                time_grain=p.columns[axis].time_grain if axis is not None else None)
     if axis is not None and chosen:
         index, column = chosen[0]
         ordered = sorted(range(len(rows)), key=lambda n: str(rows[n][axis]))
