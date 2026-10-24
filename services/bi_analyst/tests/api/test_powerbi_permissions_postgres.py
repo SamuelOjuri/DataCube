@@ -50,7 +50,6 @@ def test_powerbi_fix_preserves_analyst_boundary(database):
         # All setup, grants and probes are confined to a disposable local fixture
         # and rolled back. No source environment credentials are loaded.
         conn.execute('CREATE ROLE powerbi_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS')
-        conn.execute('ALTER TABLE public.projects ADD COLUMN item_name text')
         conn.execute("INSERT INTO public.projects(monday_id,item_name,pipeline_stage) VALUES ('placeholder','New project','Open Enquiry')")
         conn.execute("INSERT INTO public.project_reporting_classifications VALUES ('placeholder','redundant_placeholder')")
         conn.execute('''CREATE OR REPLACE VIEW public.reportable_projects WITH(security_invoker=true) AS

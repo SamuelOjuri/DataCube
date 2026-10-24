@@ -6,7 +6,7 @@ import os
 import psycopg
 import pytest
 
-from bi_analyst.exploration.context import COLUMN_NOTES, TYPES, approved_relations, build_context
+from bi_analyst.exploration.context import COLUMN_NOTES, GATEWAY_COLUMNS, TYPES, approved_relations, build_context
 from bi_analyst.metrics.compiler import Compiler
 
 CATALOGUE = Compiler().catalogue
@@ -22,7 +22,7 @@ def test_column_notes_name_approved_catalogue_columns():
     relations = {r.id: r for r in CATALOGUE.relations}
     for relation, notes in COLUMN_NOTES.items():
         assert relation in RELATIONS
-        assert set(notes) <= relations[relation].columns.keys(), relation
+        assert set(notes) <= {**relations[relation].columns, **GATEWAY_COLUMNS.get(relation, {})}.keys(), relation
 
 
 def test_context_carries_labels_meanings_and_definition_semantics():
@@ -34,7 +34,10 @@ def test_context_carries_labels_meanings_and_definition_semantics():
     assert {'Lost', 'Open Enquiry'} <= set(projects['pipeline_stage']['values'])
     assert 'not yet invoiced' in projects['gestation_period']['meaning']
     assert 'first invoice is dated before the first design' in projects['gestation_period']['meaning']
-    assert projects['monday_id'] == {'type': 'text'}
+    assert projects['monday_id']['type'] == 'text' and 'Internal Monday' in projects['monday_id']['meaning']
+    assert projects['item_name']['type'] == 'text' and 'leading zeroes' in projects['item_name']['meaning']
+    assert CATALOGUE.owner_accepted
+    assert 'item_name' not in next(r for r in CATALOGUE.relations if r.id == 'projects_v1').columns
     assert views['conversion_cohorts_v1']['columns']['cohort_years']['values'] == [2, 5]
     assert {d['column'] for d in ctx['dimensions']} == {'category', 'type'}
     gestation = next(d for d in ctx['definitions'] if d['id'] == 'gestation_five_year')

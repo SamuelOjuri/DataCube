@@ -70,8 +70,9 @@ function roundedTenth(value, ratio = false) {
   return `${negative && scaled !== 0n ? '-' : ''}${(scaled / 10n).toLocaleString('en-GB')}.${scaled % 10n}`;
 }
 // Preserve decimal strings from PostgreSQL, including values beyond JS integer precision.
-export function formatCell(value, unit) {
+export function formatCell(value, unit, type) {
   if (value === null || value === undefined) return 'Unknown';
+  if (type === 'text') return String(value);
   if (!/^-?\d+(\.\d+)?$/.test(String(value))) return String(value);
   if (unit === 'ratio' || unit === 'percent') return roundedTenth(value, unit === 'ratio') + '%';
   if (unit === 'days') {

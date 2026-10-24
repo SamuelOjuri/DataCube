@@ -79,6 +79,11 @@ def project_statement(compiler, provenance: MetricProvenance, limit: int, offset
     if 'category' in compiler.relations[metric.relation].columns or metric.id in {'enquiry_monthly_actual', 'bookings_monthly_actual'}:
         fields.extend(['left(category,256) AS category', 'left(type,256) AS type'])
         columns.extend(['category', 'type'])
+    # Resolve the parent label at project grain for every evidence source. A
+    # scalar lookup cannot multiply child values; retain IDs in the API evidence.
+    fields.append("coalesce((SELECT nullif(trim(p.item_name),'') FROM analyst_query.projects_v1 p "
+                  f"WHERE p.monday_id=filtered.{project}),filtered.{project}) AS project")
+    columns.append('project')
     # Gestation statistics exclude non-positive values; show only contributors.
     eligible = ' WHERE gestation_period>0' if metric.family == 'gestation' else ''
     statement = base + ' SELECT ' + ','.join(fields) + ' FROM filtered' + eligible + ' ORDER BY project_id,source_id LIMIT %s OFFSET %s'

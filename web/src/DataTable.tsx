@@ -8,7 +8,7 @@ export default function DataTable({columns, rows, caption, metadata = [], rowSco
   const defs = useMemo<ColumnDef<Cell[]>[]>(() => columns.map((name, index) => {
     const column = metadata.find(c => c.name === name);
     return {id: name, accessorFn: row => row[index], header: columnHeading(name, column),
-      cell: info => formatCell(info.getValue(), column?.unit),
+      cell: info => formatCell(info.getValue(), column?.unit, column?.type),
       sortingFn: (a, b) => column?.type === 'decimal' || column?.type === 'integer'
         ? compareDecimal(a.original[index], b.original[index]) : String(a.original[index] ?? '').localeCompare(String(b.original[index] ?? ''))};
   }), [columns, metadata]);

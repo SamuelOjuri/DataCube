@@ -76,6 +76,10 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
     return label ? {...column, label} : column;
   });
   const hasCounts = result.columns.some(name => ['source_rows', 'known_values'].includes(name));
+  const projectColumns = projects?.columns.includes('project')
+    ? ['project', ...projects.columns.filter(name => !['project', 'project_id', 'source_id'].includes(name))]
+    : projects?.columns ?? [];
+  const projectRows = projects?.rows.map(row => projectColumns.map(name => row[projects.columns.indexOf(name)])) ?? [];
   return <section className="result-card" aria-label={label}>
     <div className="result-heading"><div><p className="eyebrow">{unitLabel(p.unit)}{p.evaluation_only ? ' · Evaluation data' : ''}</p><h3>{label}</h3></div><span className="badge" title="The latest source update could not be confirmed. The query time does not establish source freshness.">Source update unconfirmed</span></div>
     <AnswerSummary answer={displayAnswer} />
@@ -109,8 +113,8 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
     <div className="actions"><button className="secondary" disabled={busy} onClick={download}>Download CSV ({p.returned_rows} rows)</button>
       {p.source_population === 'reportable' && <button className="secondary" disabled={busy} onClick={() => drill()}>Explore contributing projects</button>}</div>
     {projects && <section aria-label="Contributing projects"><h4>Contributing projects</h4><p>{projects.limitation}</p><p className="note">Queried {projects.queried_at}. Page starts at row {projects.offset + 1}.</p>
-      <DataTable key={projects.offset} columns={projects.columns} rows={projects.rows} caption="Project source rows" rowScope="source rows on this page"
-        metadata={[{name: 'source_value', type: 'decimal', unit: p.unit === 'ratio' ? 'count' : p.unit}, {name: 'denominator', type: 'decimal', unit: 'count'}]} />
+      <DataTable key={projects.offset} columns={projectColumns} rows={projectRows} caption="Project source rows" rowScope="source rows on this page"
+        metadata={[{name: 'project', label: 'Project', type: 'text', unit: null}, {name: 'source_value', type: 'decimal', unit: p.unit === 'ratio' ? 'count' : p.unit}, {name: 'denominator', type: 'decimal', unit: 'count'}]} />
       <div className="actions"><button className="secondary" disabled={busy || projects.offset === 0} onClick={() => drill(Math.max(0, projects.offset - 25))}>Previous projects</button>
         <button className="secondary" disabled={busy || !projects.has_more} onClick={() => drill(projects.offset + 25)}>Next projects</button>
         <button className="text-button" onClick={() => setProjects(null)}>Close projects</button></div></section>}

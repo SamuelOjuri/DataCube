@@ -64,6 +64,14 @@ test('financial formatting and sorting retain decimal precision and signed value
   assert.equal(compareDecimal('-0.01','0'),-1);
   assert.equal(formatCell(null),'Unknown'); assert.equal(formatCell('0','ratio'),'0.0%');
 });
+test('project labels remain text while numeric measures retain number formatting', () => {
+  for (const label of ['18952', '0018952', '1778334088', 'Northern Rotunda, G']) {
+    assert.equal(formatCell(label, 'none', 'text'), label);
+  }
+  assert.equal(formatCell(null, 'none', 'text'), 'Unknown');
+  assert.equal(formatCell('18952', 'count', 'integer'), '18,952');
+  assert.equal(formatCell('18952.00', 'source_currency', 'decimal'), '£18,952.00');
+});
 test('rates use exact decimal percentage formatting and headers avoid repeated units', () => {
   for (const [value, unit, expected] of [['0.1837','ratio','18.4%'], ['18.37','percent','18.4%'],
     ['-0.0005','ratio','-0.1%'], ['1','ratio','100.0%'], ['9007199254740993.01','percent','9,007,199,254,740,993.0%']]) {

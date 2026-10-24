@@ -35,10 +35,19 @@ CLASSIFICATION = {
     "type": {"meaning": "Construction type; refurbishment and new-build questions filter this column.",
              "values": TYPES},
 }
+# Reviewed gateway additions, separate from the fingerprinted metric catalogue.
+# Migration 011 exposes the label without changing any certified metric definition.
+GATEWAY_COLUMNS = {"projects_v1": {"item_name": "text"}}
 # Exploration-only column notes; the sealed catalogue is unchanged.
 COLUMN_NOTES = {
     "projects_v1": {
         **CLASSIFICATION,
+        "monday_id": {"meaning": "Internal Monday project ID. Use for joins and per-project grouping, not the default display label."},
+        "item_name": {"meaning": (
+            "Monday item name, shown in the board's Project column (a project reference, not the separate Project Name). "
+            "Preferred project label in reports and visuals. Keep as text, including leading zeroes. "
+            "May be blank or duplicated: use COALESCE(NULLIF(TRIM(item_name), ''), monday_id) AS project "
+            "for display, and retain monday_id in per-project GROUP BY keys.")},
         "pipeline_stage": {"meaning": "Current sales stage. Won stages are the three 'Won ...' values.",
                            "values": PIPELINE_STAGES},
         "account": {"meaning": "Customer name(s) as one stored string; may name several organisations."},
@@ -81,7 +90,7 @@ def build_context(catalogue: Catalogue, relations: frozenset[str], *, today: dat
         "calendar": CALENDAR,
         "views": [{"name": f"analyst_query.{r.id}", "grain": r.grain, "key": r.key,
                    "columns": {name: {"type": kind, **COLUMN_NOTES.get(r.id, {}).get(name, {})}
-                               for name, kind in r.columns.items()},
+                               for name, kind in {**r.columns, **GATEWAY_COLUMNS.get(r.id, {})}.items()},
                    "population": populations[r.population], "description": r.description}
                   for r in catalogue.relations if r.id in relations],
         "dimensions": [{"column": d.column, "description": d.description} for d in catalogue.dimensions],

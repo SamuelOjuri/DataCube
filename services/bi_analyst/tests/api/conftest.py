@@ -46,6 +46,7 @@ def database():
             test_dsn = make_conninfo(dsn, dbname=name)
             with psycopg.connect(test_dsn, autocommit=True, row_factory=dict_row) as conn:
                 conn.execute((ROOT/"services/bi_analyst/tests/semantic/source_fixture.sql").read_text(encoding="utf-8"))
+                conn.execute("ALTER TABLE public.projects ADD COLUMN item_name text")
                 source = (ROOT/"src/database/schema/schema.sql").read_text(encoding="utf-8")
                 for view in ["vw_actual_enquiry_monthly_v1", "vw_actual_bookings_monthly_v1", "vw_actual_revenue_monthly_v1"]:
                     conn.execute(re.search(r"CREATE OR REPLACE VIEW "+view+r" AS\n.*?;", source, re.S).group())
@@ -86,6 +87,8 @@ def database():
                 with conn.transaction():
                     conn.execute(migration)
                 installed = True
+                with conn.transaction():
+                    conn.execute((ROOT/"src/database/migrations/20261024_011_analyst_project_labels.sql").read_text(encoding="utf-8"))
                 for role in ROLES[:2]:
                     conn.execute(sql.SQL("ALTER ROLE {} LOGIN").format(sql.Identifier(role)))
                 conn.execute("CREATE TABLE analyst_query.future_data(secret text)")

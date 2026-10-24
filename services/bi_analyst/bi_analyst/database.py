@@ -71,6 +71,8 @@ class Database:
             async with conn.pipeline():
                 for relation in GATEWAYS:
                     await conn.execute(sql.SQL("SELECT * FROM analyst_query.{} LIMIT 0").format(sql.Identifier(relation)))
+                # The exploration prompt requires the gateway-only label from migration 011.
+                await conn.execute("SELECT item_name FROM analyst_query.projects_v1 LIMIT 0")
         async with self.transaction() as conn:
             row = await (await conn.execute("SELECT version FROM analyst_state.schema_version")).fetchone()
             if row not in ({"version": 3}, {"version": 5}, {"version": 6}, {"version": 7}, {"version": 8}) or (self.settings.auth_provider == "monday" and row == {"version": 3}):

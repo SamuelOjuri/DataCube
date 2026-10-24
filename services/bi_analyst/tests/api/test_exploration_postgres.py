@@ -87,6 +87,49 @@ def test_exploratory_answer_is_grounded_stored_and_exportable(explore):
         assert [stage for stage, _ in provider.calls] == ['plan', 'explore']
 
 
+@pytest.mark.parametrize('duplicate_label', [False, True])
+def test_project_labels_reach_summary_saved_rows_and_export_without_merging_projects(explore, duplicate_label):
+    admin, _, config, start = explore
+    second_label = '0018952' if duplicate_label else '18951'
+    projects = [('label_a', '0018952', 300), ('label_b', second_label, 200),
+                ('label_blank', '  ', 100), ('label_missing', None, 50)]
+    ids = [p[0] for p in projects]
+    for row in projects:
+        admin.execute('INSERT INTO public.projects(monday_id,item_name,total_order_value) VALUES (%s,%s,%s)', row)
+    try:
+        query = """SELECT COALESCE(NULLIF(TRIM(item_name), ''), monday_id) AS project,
+            sum(total_order_value) AS order_value FROM analyst_query.projects_v1
+            WHERE monday_id IN ('label_a','label_b','label_blank','label_missing')
+            GROUP BY monday_id,item_name ORDER BY order_value DESC LIMIT 10"""
+        proposal = draft(query, (('project', 'dimension', 'none'), ('order_value', 'measure', 'source_currency')),
+                         'Projects by order value')
+        proposal['analysis_intent'] = {'kind': 'ranking', 'primary_measure': 'order_value', 'axis': 'project'}
+        with start(Explorer(proposal), config_override=config) as client:
+            run_id = submit(client, question='Which projects have the largest order value?')
+            run = settle(client, run_id)
+            assert run['status'] == 'completed', run
+            answer = run['answer']
+            if duplicate_label:
+                # The presentation layer safely retains duplicate labels in a
+                # table instead of claiming that they identify distinct groups.
+                assert 'distinct groups' in answer['summary']
+            else:
+                assert '0018952' in answer['summary'] and 'label_a' not in answer['summary']
+            result_id = answer['result']['result_id']
+            result = client.get(f'/v1/results/{result_id}').json()
+            assert result['columns'] == ['project', 'order_value']
+            assert result['rows'] == [['0018952', '300.00'], [second_label, '200.00'],
+                                      ['label_blank', '100.00'], ['label_missing', '50.00']]
+            label = result['provenance']['columns'][0]
+            assert label['label'] == 'Project' and label['type'] == 'text' and label['role'] == 'dimension'
+            export = client.get(f'/v1/results/{result_id}/export')
+            assert export.status_code == 200
+            assert '0018952,300.00' in export.text and f'{second_label},200.00' in export.text
+            assert client.get(f'/v1/runs/{run_id}/workflow').json()['answer']['summary'] == answer['summary']
+    finally:
+        admin.execute('DELETE FROM public.projects WHERE monday_id=ANY(%s)', (ids,))
+
+
 def test_follow_up_stays_exploratory_with_previous_sql(explore):
     _, _, config, start = explore
     by_category = draft("SELECT category, sum(amount_invoiced) AS revenue FROM analyst_query.invoice_reporting_facts_v1 "

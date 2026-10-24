@@ -305,3 +305,36 @@ users and planned maintenance for disruptive checks. Database outages and other
 destructive failure injection stay in local/CI fixtures. This is not a claim that
 the original staging-based full-release validator passed; follow the revised
 [Phase 7 acceptance and rollback procedure](bi-analyst-phase7.md).
+
+## Project display references (24 October 2026)
+
+Project labels use `public.projects.item_name`, the Monday board's **Project**
+reference (for example `18952`). The separate **Project Name** field is
+`project_name`. The internal Monday identifier remains `monday_id`.
+
+Apply [migration 011](../src/database/migrations/20261024_011_analyst_project_labels.sql)
+in one administrator transaction before deploying the updated API. It appends
+`item_name` to `analyst_query.projects_v1` and preserves its owner, privileges,
+project population and original columns. The analytics catalogue and its accepted
+fingerprint are unchanged. Readiness checks require the new gateway column.
+
+The exploratory context and prompt prefer this text dimension for project rows
+and chart axes:
+
+```sql
+COALESCE(NULLIF(TRIM(p.item_name), ''), p.monday_id) AS project
+```
+
+Keep `monday_id` as the join key and in per-project grouping keys alongside
+`item_name`; labels are not unique. Blank labels fall back to the internal ID.
+The contributing-projects API also resolves the parent label for project, child
+and cohort sources, while retaining source IDs in its evidence response.
+
+Deploy the updated frontend to display the **Project** label in the contributing
+projects table and preserve numeric-looking text, including leading zeroes.
+Exploratory summaries, tables, exports and supported charts consume the label
+returned by the query; `workflow/summary.py` needs no label lookup.
+
+Rerun existing exploratory questions after rollout. Saved rows and summaries are
+historical query results and do not acquire labels retroactively. A follow-up such
+as “Show those projects using their Project reference” generates a new result.
