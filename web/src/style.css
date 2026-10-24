@@ -312,7 +312,7 @@ nav a time {
 .composer textarea {
   border:0;
   padding:5px 0;
-  min-height:calc(1lh + 10px);
+  min-height:calc(1lh + 8px);
   max-height:calc(8lh + 10px);
   resize:none;
   overflow-y:auto;
