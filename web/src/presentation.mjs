@@ -3,6 +3,22 @@ import {advance, bucket, bucketLabel, grains, iso} from './calendar.mjs';
 import {analyticalChart, metricComparisonChart} from './analyticalCharts.mjs';
 
 export const unitLabel = unit => ({source_currency: 'GBP', ratio: '%', percent: '%', days: 'days', count: 'count', none: ''}[unit] ?? unit ?? '');
+const conversionVariants = new Map([
+  ['conversion_five_year', 'Inclusive'], ['conversion_two_year', 'Inclusive'],
+  ['conversion_closed_five_year', 'Closed-only'], ['conversion_closed_two_year', 'Closed-only'],
+]);
+export function conversionPresentation(provenance) {
+  const variant = conversionVariants.get(provenance.metric_id);
+  if (!variant || provenance.metric_version !== '1.0.0' || provenance.unit !== 'ratio') return null;
+  const closed = variant === 'Closed-only';
+  return {
+    rateLabel: `${variant} conversion rate`, denominatorLabel: closed ? 'Closed projects' : 'Eligible projects',
+    definition: (closed
+      ? 'Invoiced wins divided by invoiced wins plus lost projects. Open projects and projects with an unknown stage are excluded from the denominator.'
+      : 'Invoiced wins divided by all eligible projects. Open and lost projects, as well as projects with an unknown stage, remain in the denominator.')
+      + ' A win means the recorded stage is Won - Closed (Invoiced). Projects without a creation date are excluded. The cohort has a lower date bound only; future-dated projects remain eligible under this definition.',
+  };
+}
 // Display copy stays separate from the fingerprinted catalogue and saved evidence.
 export function metricPresentation(provenance) {
   if (provenance.metric_id === 'invoice_monthly_actual' && provenance.metric_version === '1.1.0') {
@@ -11,7 +27,7 @@ export function metricPresentation(provenance) {
       definition: 'Positive invoice amounts grouped by invoice date for reportable projects, including archived projects, regardless of project stage. Only completed months are included. Undated invoices and negative amounts are excluded; months without qualifying invoices are shown as zero.',
     };
   }
-  return {label: provenance.metric_label, definition: null};
+  return {label: provenance.metric_label, definition: conversionPresentation(provenance)?.definition ?? null};
 }
 // These are calendar dates already resolved in the business timezone. UTC keeps
 // browser timezones from shifting their day/month during presentation.

@@ -676,6 +676,11 @@ test('certified conversion shows the conversational summary and exclusions above
   await expect(summary).toBeVisible();
   expect((await summary.boundingBox())!.y).toBeLessThan((await card.locator('.total').boundingBox())!.y);
   await expect(card.getByRole('note',{name:'What this answer leaves out'})).toContainText('Open projects are excluded');
+  const counts=card.getByLabel('Conversion counts',{exact:true});
+  await expect(counts).toContainText('Invoiced wins405');
+  await expect(counts).toContainText('Closed projects696');
+  await expect(card.getByRole('columnheader',{name:'Closed projects'})).toBeVisible();
+  await expect(card.getByRole('columnheader',{name:'Eligible projects'})).toHaveCount(0);
   await expect(card.locator('.answer-text')).toBeHidden();
   await summary.scrollIntoViewIfNeeded();
   await page.screenshot({path:testInfo.outputPath('certified-summary-desktop.png'),fullPage:true});
@@ -688,6 +693,47 @@ test('certified conversion shows the conversational summary and exclusions above
   await page.reload();
   await page.getByRole('button',{name:'Continue with Monday'}).click();
   await expect(summary).toHaveText(certifiedConversionSummary);
+});
+
+test('inclusive conversion shows wins and eligible counts with accurate scope on desktop and mobile',async({page},testInfo)=>{
+  const summary='The inclusive conversion rate was 19.8% for projects created on or after 24 October 2021: 1,557 invoiced wins out of 7,876 eligible projects. The denominator includes open and lost projects, as well as wins; projects with an unknown stage also remain eligible.';
+  const state=await fixture(page,{existing:true,answerOverride:{summary,
+    summary_notices:['This reflects recorded outcomes so far. More recent projects have had less time to reach invoiced completion.'],
+    chart:{kind:'number',x:null,y:'value'}}});
+  state.result=structuredClone(certifiedConversionResult);
+  Object.assign(state.result.provenance,{metric_id:'conversion_five_year',metric_label:'5-year Inclusive Conversion Rate',
+    request:{period:'five_year_cohort',filters:[],dimensions:[]},resolved_period:{start_date:'2021-10-24',end_date_exclusive:null},
+    total:{value:'0.198',source_rows:7876,known_values:7876,numerator:'1557',denominator:'7876'},evaluation_only:false});
+  state.result.columns=['value','numerator','denominator','source_rows','known_values'];
+  state.result.rows=[['0.198','1557','7876',7876,7876]];
+  state.result.provenance.columns.push(...['source_rows','known_values'].map(name=>({name,type:'integer',unit:'count'})));
+  state.runs[0].question='What is inclusive conversion for the five-year cohort? Show wins and eligible project counts.';
+  await signIn(page,`/conversations/${thread}`);
+  const card=page.getByRole('region',{name:'5-year Inclusive Conversion Rate'});
+  await expect(card.getByLabel('Summary',{exact:true})).toHaveText(summary);
+  await expect(card.locator('.total strong')).toHaveText('19.8%');
+  const counts=card.getByLabel('Conversion counts',{exact:true});
+  await expect(counts).toContainText('Invoiced wins1,557');
+  await expect(counts).toContainText('Eligible projects7,876');
+  await expect(card.getByRole('columnheader',{name:'Inclusive conversion rate (%)'})).toBeVisible();
+  await expect(card.getByRole('columnheader',{name:'Invoiced wins (count)'})).toBeVisible();
+  await expect(card.getByRole('columnheader',{name:'Eligible projects'})).toBeVisible();
+  await expect(card.getByRole('columnheader',{name:/numerator|denominator|source rows|known values/i})).toHaveCount(0);
+  await expect(card.locator('.result-scope')).toHaveText('Projects created on or after 24 October 2021 · Reportable projects, including archived projects');
+  await expect(card.getByRole('note')).not.toContainText('closed-only');
+  await expect(card.getByText('Source update unconfirmed',{exact:true})).toHaveAttribute('title',/query time does not establish source freshness/);
+  await page.screenshot({path:testInfo.outputPath('inclusive-conversion-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await counts.scrollIntoViewIfNeeded();
+  await expect(counts).toBeInViewport();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  await page.screenshot({path:testInfo.outputPath('inclusive-conversion-mobile.png'),fullPage:true});
+  await card.getByLabel('Show source record counts').check();
+  await expect(card.getByRole('columnheader',{name:'source rows (count)'})).toBeVisible();
+  await card.getByText('Definitions and source details',{exact:true}).click();
+  await expect(card.getByText(/The cohort has a lower date bound only/)).toBeVisible();
+  await expect(card.getByText('The latest source update could not be confirmed.',{exact:true})).toBeVisible();
 });
 
 test('certified summaries survive initial submission, clarification and follow-up answers',async({page})=>{
@@ -778,7 +824,7 @@ test('retries stay with their question while the completed answer leads the defa
   await expect(page.getByText('3 earlier unsuccessful attempts',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Retry question'})).toHaveCount(0);
   await expect(page.getByText('1 of 24 matching records have no value.',{exact:false})).toBeVisible();
-  await expect(page.getByText('Source freshness unknown',{exact:true})).toBeVisible();
+  await expect(page.getByText('Source update unconfirmed',{exact:true})).toBeVisible();
   await expect(page.locator('nav time')).toHaveText('8 Oct, 13:00');
   await expect(page.getByRole('table')).toHaveCount(0);
   await expect(page.locator('.answer-text')).toBeHidden();

@@ -2,7 +2,7 @@ import {useEffect, useState} from 'react';
 import type {Auth, MetricDefinition, ProjectPage, ResultAnswer, SavedResult} from './types';
 import {isExploratory} from './types';
 import {errorMessage, json, post} from './api';
-import {chartSpec, formatCell, metricPresentation, periodLabel, unitLabel} from './presentation.mjs';
+import {chartSpec, conversionPresentation, formatCell, metricPresentation, periodLabel, unitLabel} from './presentation.mjs';
 import Chart from './Chart';
 import DataTable from './DataTable';
 import ExploratoryCard from './ExploratoryCard';
@@ -58,6 +58,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
   if (!result) return <div role="status">{error || 'Loading saved result…'}</div>;
   const p = result.provenance;
   const {label, definition: definitionSummary} = metricPresentation(p);
+  const conversion = conversionPresentation(p);
   const displayAnswer = label === p.metric_label ? answer : {...answer,
     text: answer.text.replaceAll(p.metric_label, label),
     summary: answer.summary?.replaceAll(p.metric_label, label)};
@@ -69,16 +70,27 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
   const hasChart = !!chartSpec(result, answer.chart, answer.result.result_id).spec;
   const tableColumns = result.columns.filter(name => showCounts || !['source_rows', 'known_values'].includes(name));
   const tableRows = result.rows.map(row => tableColumns.map(name => row[result.columns.indexOf(name)]));
+  const tableMetadata = p.columns.map(column => {
+    const label = conversion && (column.name === 'value' ? conversion.rateLabel
+      : column.name === 'numerator' ? 'Invoiced wins' : column.name === 'denominator' ? conversion.denominatorLabel : null);
+    return label ? {...column, label} : column;
+  });
   const hasCounts = result.columns.some(name => ['source_rows', 'known_values'].includes(name));
   return <section className="result-card" aria-label={label}>
-    <div className="result-heading"><div><p className="eyebrow">{unitLabel(p.unit)}{p.evaluation_only ? ' · Evaluation data' : ''}</p><h3>{label}</h3></div><span className="badge">Source freshness unknown</span></div>
+    <div className="result-heading"><div><p className="eyebrow">{unitLabel(p.unit)}{p.evaluation_only ? ' · Evaluation data' : ''}</p><h3>{label}</h3></div><span className="badge" title="The latest source update could not be confirmed. The query time does not establish source freshness.">Source update unconfirmed</span></div>
     <AnswerSummary answer={displayAnswer} />
     <p className="result-scope">{periodLabel(p.resolved_period)} · {p.source_population === 'reportable' ? 'Reportable projects, including archived projects' : 'Independent hidden inventory'}
       {!!p.request.filters.length && <> · {filterLabel(p.request.filters)}</>}</p>
-    {p.total && <div className="total"><strong>{formatCell(p.total.value, p.unit)}</strong><span>{p.unit === 'ratio' ? 'Overall conversion rate' : p.unit === 'days' ? 'Overall average' : p.total.known_values < p.total.source_rows ? 'Known subtotal for this scope' : 'Total for this scope'}</span></div>}
+    {p.total && <div className="result-totals">
+      <div className="total"><strong>{formatCell(p.total.value, p.unit)}</strong><span>{conversion ? conversion.rateLabel : p.unit === 'ratio' ? 'Overall conversion rate' : p.unit === 'days' ? 'Overall average' : p.total.known_values < p.total.source_rows ? 'Known subtotal for this scope' : 'Total for this scope'}</span></div>
+      {conversion && <dl className="conversion-counts" aria-label="Conversion counts">
+        <div><dt>Invoiced wins</dt><dd>{formatCell(p.total.numerator)}</dd></div>
+        <div><dt>{conversion.denominatorLabel}</dt><dd>{formatCell(p.total.denominator)}</dd></div>
+      </dl>}
+    </div>}
     {p.total && p.total.source_rows === 0 ? <p className="data-warning">No matching records were found.</p> : p.total && p.total.known_values < p.total.source_rows && <p className="data-warning">{formatCell(p.total.source_rows - p.total.known_values)} of {formatCell(p.total.source_rows)} matching records have no value. {p.total.known_values ? 'This subtotal may be incomplete.' : 'The aggregate is unknown.'}</p>}
     {p.truncated && <p className="data-warning">Showing {p.returned_rows} of {p.matched_groups} groups. The total covers all matching records; the table and CSV include only these {p.returned_rows} groups.</p>}
-    {p.unit === 'ratio' && p.total && <p className="note">Numerator: {formatCell(p.total.numerator)} · Denominator: {formatCell(p.total.denominator)} · Rates are shown as percentages.</p>}
+    {p.unit === 'ratio' && p.total && !conversion && <p className="note">Numerator: {formatCell(p.total.numerator)} · Denominator: {formatCell(p.total.denominator)} · Rates are shown as percentages.</p>}
     {p.comparison && <section className="comparison" aria-label="Comparison"><h4>Comparison of complete filtered aggregates</h4><dl className="scope">
       <div><dt>Baseline period</dt><dd>{periodLabel(p.comparison_period)}</dd></div>
       <div><dt>Baseline filters</dt><dd>{filterLabel(p.request.comparison?.filters ?? p.request.filters)}</dd></div>
@@ -92,7 +104,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
     {hasChart && <button className="text-button values-toggle" aria-expanded={showValues} onClick={() => setShowValues(value => !value)}>{showValues ? 'Hide values' : `View ${p.returned_rows} values`}</button>}
     {(!hasChart || showValues) && <div className="result-values">
       {hasCounts && <label className="checkbox table-options"><input type="checkbox" checked={showCounts} onChange={e => setShowCounts(e.target.checked)} />Show source record counts</label>}
-      <DataTable columns={tableColumns} rows={tableRows} metadata={p.columns} caption={`${label} — values`} />
+      <DataTable columns={tableColumns} rows={tableRows} metadata={tableMetadata} caption={`${label} — values`} />
     </div>}
     <div className="actions"><button className="secondary" disabled={busy} onClick={download}>Download CSV ({p.returned_rows} rows)</button>
       {p.source_population === 'reportable' && <button className="secondary" disabled={busy} onClick={() => drill()}>Explore contributing projects</button>}</div>
@@ -112,7 +124,7 @@ export default function ResultCard({auth, answer}: {auth: Auth; answer: ResultAn
         <div><dt>Filters</dt><dd>{filterLabel(p.request.filters)}</dd></div>
         <div><dt>Display</dt><dd>{p.returned_rows} of {p.matched_groups} groups · {p.truncated ? 'Limited result; this display is not the full population' : 'Complete requested dataset'} · no sampling</dd></div>
         {p.total && <div><dt>Known values</dt><dd>{formatCell(p.total.known_values)} of {formatCell(p.total.source_rows)} matching source records</dd></div>}</dl>
-      <div className="limitations"><h4>Coverage and freshness</h4><p>{p.freshness.limitation}</p>
+      <div className="limitations"><h4>Coverage and freshness</h4><p>The latest source update could not be confirmed.</p><p>{p.freshness.limitation}</p>
         <ul>{[...new Set([...p.limitations, ...answer.notices])].map(text => <li key={text}>{text}</li>)}</ul></div>
       <p className="note">CSV includes all stored rows across table pages{p.truncated ? '; excluded groups are not exported' : ', the complete requested dataset'}. It does not include drill-down rows.</p>
       {definitionNotice && <p role="status">{definitionNotice}</p>}

@@ -448,6 +448,34 @@ nav a time {
   margin:16px 0;
   gap:5px;
 }
+.result-totals {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  column-gap:32px;
+}
+.conversion-counts {
+  display:flex;
+  flex-wrap:wrap;
+  gap:24px;
+  margin:16px 0;
+}
+.conversion-counts>div {
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+}
+.conversion-counts dt {
+  font-size:.73rem;
+  color:var(--color-muted);
+}
+.conversion-counts dd {
+  order:-1;
+  margin:0;
+  font-size:1.7rem;
+  font-weight:700;
+  overflow-wrap:anywhere;
+}
 .result-scope {
   color:var(--color-muted);
   font-size:.8rem;

@@ -18,6 +18,7 @@ from bi_analyst.answer_presentation.service import present_explanation, present_
 from bi_analyst.workflow.errors import EvidenceError
 from bi_analyst.workflow.explanation import explain
 from bi_analyst.workflow.service import WorkflowService
+from bi_analyst.workflow.summary_language import SUMMARY_VERSION
 from bi_analyst.metrics.contracts import Ordering
 from test_answer_summaries import metric_result
 from test_exploration_workflow import exploratory_result
@@ -219,7 +220,7 @@ def test_saved_nonmonthly_answer_is_refreshed_without_requery_or_write():
 def test_blank_explanations_still_have_a_conversational_summary():
     answer = explain('data_unavailable').model_copy(update={'text': '  '})
     rendered = present_explanation(answer)
-    assert 'available data' in rendered.summary and rendered.summary_version == '4'
+    assert 'available data' in rendered.summary and rendered.summary_version == SUMMARY_VERSION
 
 
 def test_certified_rankings_respect_the_requested_direction_and_acknowledge_ties():

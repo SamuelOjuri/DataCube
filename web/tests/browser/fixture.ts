@@ -44,7 +44,7 @@ export const certifiedConversionResult = {id:resultId,run_id:runId,columns:['val
     columns:[{name:'value',type:'decimal',unit:'ratio'},{name:'numerator',type:'decimal',unit:'count'},{name:'denominator',type:'decimal',unit:'count'}],
     total:{value:'0.582',source_rows:1000,known_values:1000,numerator:'405',denominator:'696'},
     coverage:{},limitations:[],returned_rows:1,matched_groups:1}};
-export const certifiedConversionSummary = 'The closed-only conversion rate was 58.2% for projects created on or after 22 October 2024, with 405 of the 696 closed projects won and invoiced.';
+export const certifiedConversionSummary = 'The closed-only conversion rate was 58.2% for projects created on or after 22 October 2024: 405 invoiced wins out of 696 closed projects.';
 
 export async function fixture(page: Page, {clarify=false, hold=false, existing=false, disconnect=false, comparison=false, limited=false, exploratory=false, explanation=false, monthly=false,
   answerOverride=null as Record<string,unknown>|null,

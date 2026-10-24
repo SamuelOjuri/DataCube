@@ -8,6 +8,7 @@ import pytest
 
 from bi_analyst.exploration.policy import validate
 from bi_analyst.exploration.service import ExplorationService
+from bi_analyst.workflow.summary_language import SUMMARY_VERSION
 from test_exploration_policy import RELATIONS, VALID
 from test_workflow_postgres import conversation, settle, setup, submit, workflow_database  # noqa: F401
 
@@ -175,7 +176,7 @@ def test_shared_intent_is_persisted_and_summary_survives_api_and_event_replay(ex
         row = settle(client, run_id)
         assert row['status'] == 'completed', row
         answer = row['answer']
-        assert answer['summary_kind'] == kind and answer['summary_version'] == '4'
+        assert answer['summary_kind'] == kind and answer['summary_version'] == SUMMARY_VERSION
         assert answer['exploratory_chart']['kind'] == chart
         saved = client.get(f"/v1/results/{answer['result']['result_id']}").json()
         assert saved['provenance']['analysis_intent']['kind'] == kind

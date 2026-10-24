@@ -5,9 +5,9 @@ reuse the exploratory fact engine through a typed adapter with identical row
 coordinates; rate and mean aggregates are never summed across groups.
 """
 from ..exploration.contracts import ExploratoryColumn, ExploratoryProvenance, ExploratoryResult
-from ..exploration.summary import MATURITY, amount, summarize
+from ..exploration.summary import amount, summarize
 from .contracts import EvidenceClaim
-from .summary_language import comparison_sentence, display, month_text, period_scope, total_sentence
+from .summary_language import CONVERSION_MATURITY, comparison_sentence, display, month_text, period_scope, total_sentence
 
 CONVERSION = {
     "conversion_five_year": "inclusive", "conversion_two_year": "inclusive",
@@ -65,7 +65,8 @@ def summarize_metric(result):
         return item
 
     if variant:
-        notices.append(MATURITY)
+        notices.append(CONVERSION_MATURITY + (" Closed-only rates also depend on which projects have closed."
+                                             if variant == "closed-only" else ""))
         if variant == "closed-only":
             notices.append("Open projects are excluded from closed-only conversion; the denominator includes invoiced wins and lost projects.")
     if total:

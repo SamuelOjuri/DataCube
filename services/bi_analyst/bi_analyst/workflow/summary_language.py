@@ -3,7 +3,9 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 
-SUMMARY_VERSION = "4"
+SUMMARY_VERSION = "5"
+CONVERSION_MATURITY = ("This reflects recorded outcomes so far. More recent projects have had less time "
+                       "to reach invoiced completion.")
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
           "September", "October", "November", "December")
 # Copy is separate from the signed business catalogue. Never infer a metric's
@@ -88,9 +90,13 @@ def total_sentence(provenance, variant):
         text = f"{subject} was {value} {scope}"
         if total.numerator is not None and total.denominator is not None and total.denominator > 0:
             denominator = "closed" if variant == "closed-only" else "eligible"
-            text += (f", with {display(total.numerator, 'count')} of the {display(total.denominator, 'count')} "
-                     f"{denominator} projects won and invoiced")
-        return text + "."
+            text += (f": {display(total.numerator, 'count')} invoiced wins out of "
+                     f"{display(total.denominator, 'count')} {denominator} projects")
+        text += "."
+        if variant == "inclusive":
+            text += (" The denominator includes open and lost projects, as well as wins; "
+                     "projects with an unknown stage also remain eligible.")
+        return text
     if p.unit == "days":
         return f"{subject} was {value} {scope}."
     if total.known_values < total.source_rows:

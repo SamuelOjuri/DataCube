@@ -108,21 +108,45 @@ def test_single_month_does_not_repeat_the_same_value_as_first_and_latest():
 def test_screenshot_closed_only_conversion_explains_counts_scope_and_exclusions():
     result = metric_result('conversion_closed_two_year')
     answer = ground(result, select_presentation(result), {})
-    assert '405 of the 696 closed projects won and invoiced' in answer.summary
+    assert '405 invoiced wins out of 696 closed projects' in answer.summary
     assert answer.summary.startswith('The closed-only conversion rate was 58.2%')
     assert 'projects created on or after 22 October 2024' in answer.summary
     assert any('Open projects are excluded' in n for n in answer.summary_notices)
     assert any('less time' in n for n in answer.summary_notices)
+    assert any('which projects have closed' in n for n in answer.summary_notices)
+    assert 'remain eligible' not in answer.summary
     claims = {c.id:c for c in answer.claims}
     assert claims['summary_numerator'].sources == ['provenance.total.numerator']
     assert claims['summary_denominator'].value == 696
 
 
-def test_inclusive_conversion_does_not_claim_open_projects_are_excluded():
-    result = metric_result('conversion_two_year')
+@pytest.mark.parametrize('metric_id', ['conversion_five_year', 'conversion_two_year'])
+def test_inclusive_conversion_explains_the_denominator_without_closed_only_caveats(metric_id):
+    result = metric_result(metric_id)
     summary, _, notices = summarize_metric(result)
     assert '696 eligible projects' in summary and 'inclusive' in summary
+    assert 'includes open and lost projects, as well as wins' in summary
+    assert 'unknown stage also remain eligible' in summary
     assert not any('Open projects are excluded' in n for n in notices)
+    assert not any('closed-only' in n.lower() for n in notices)
+    assert any('recorded outcomes so far' in n and 'less time' in n for n in notices)
+
+
+def test_five_year_conversion_keeps_saved_counts_and_lower_bound_when_presented():
+    result = metric_result('conversion_five_year', total=Aggregate(value='0.198', source_rows=7876,
+        known_values=7876, numerator=1557, denominator=7876))
+    result.provenance.resolved_period = resolve_period('five_year_cohort',
+        now=datetime(2026, 10, 24, 16, tzinfo=timezone.utc), business_timezone='Europe/London')
+    before = result.model_dump(mode='json')
+    answer = ground(result, select_presentation(result), {})
+    assert '19.8%' in answer.summary and '1,557 invoiced wins out of 7,876 eligible projects' in answer.summary
+    assert 'projects created on or after 24 October 2021' in answer.summary
+    assert result.provenance.resolved_period.end_date_exclusive is None
+    claims = {c.id: c for c in answer.claims}
+    for key, value in [('total', Decimal('0.198')), ('numerator', 1557), ('denominator', 7876)]:
+        claim = claims[f'summary_{key}']
+        assert claim.value == value and claim.sources == [f'provenance.total.{"value" if key == "total" else key}']
+    assert result.model_dump(mode='json') == before
 
 
 @pytest.mark.parametrize('metric_id,word', [('gestation_five_year','average'), ('gestation_median_five_year','median')])
@@ -140,11 +164,23 @@ def test_empty_unknown_zero_signed_and_partial_results_have_distinct_summaries(v
         assert any('unknown values' in n for n in answer.summary_notices)
 
 
-def test_zero_rate_denominator_is_undefined_not_zero_conversion():
-    result = metric_result('conversion_closed_two_year', total=Aggregate(value=None, source_rows=3, known_values=3,
+@pytest.mark.parametrize('metric_id,denominator', [('conversion_closed_two_year', 'closed'), ('conversion_five_year', 'eligible')])
+def test_zero_rate_denominator_is_undefined_not_zero_conversion(metric_id, denominator):
+    result = metric_result(metric_id, total=Aggregate(value=None, source_rows=3, known_values=3,
         numerator=0, denominator=0))
-    assert 'no closed projects' in summarize_metric(result)[0]
+    assert f'no {denominator} projects' in summarize_metric(result)[0]
     assert 'cannot be calculated' in summarize_metric(result)[0]
+    assert '0.0%' not in summarize_metric(result)[0]
+
+
+@pytest.mark.parametrize('value,numerator,denominator,expected', [
+    ('0', 0, 10, '0 invoiced wins out of 10 eligible projects'),
+    (None, None, None, 'is unknown'),
+])
+def test_conversion_preserves_zero_wins_and_unknown_values(value, numerator, denominator, expected):
+    result = metric_result('conversion_five_year', total=Aggregate(value=value, source_rows=10,
+        known_values=10, numerator=numerator, denominator=denominator))
+    assert expected in summarize_metric(result)[0]
 
 
 def test_monthly_conversion_uses_all_counts_not_the_average_of_rates():
@@ -253,7 +289,7 @@ def test_legacy_summary_reads_cannot_cross_result_references_or_permissions():
 
 
 @pytest.mark.parametrize('exploratory', [False, True])
-@pytest.mark.parametrize('old_version', [None, '1', '2', '3'])
+@pytest.mark.parametrize('old_version', [None, '1', '2', '3', '4'])
 def test_existing_outdated_summaries_are_refreshed_without_mutating_history(exploratory, old_version):
     result = monthly() if exploratory else metric_result('enquiry_monthly_actual')
     answer = ground_exploration(result) if exploratory else ground(result, select_presentation(result), {}, asks_for_cause=True)
