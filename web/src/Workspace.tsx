@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import type {Auth, Conversation, Run, Workflow} from './types';
 import {activeRun, ApiError, errorMessage, json, post, watchRun} from './api';
 import ResultCard from './ResultCard';
@@ -12,6 +12,10 @@ import {readDraft, saveDraft} from './drafts.mjs';
 const route = () => /^\/conversations\/([0-9a-f-]{36})$/.exec(window.location.pathname)?.[1] || null;
 type SubmissionRequest = {path: string; body: Record<string, unknown>; question: string};
 type Pending = {request: SubmissionRequest; status: 'submitting' | 'unconfirmed'};
+function sizeQuestion(input: HTMLTextAreaElement) {
+  input.style.height = 'auto';
+  input.style.height = `${input.scrollHeight}px`;
+}
 export default function Workspace({auth, subject}: {auth: Auth; subject: string}) {
   const [recovered] = useState(() => readDraft(subject, route()));
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -32,6 +36,7 @@ export default function Workspace({auth, subject}: {auth: Auth; subject: string}
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [finished, setFinished] = useState(false);
   const mounted = useRef(true), loading = useRef(false);
+  const questionInput = useRef<HTMLTextAreaElement>(null);
   const lastWatched = useRef<string | null>(null);
   const acknowledgedConversation = useRef<string | null>(null);
   const lifetime = useRef(new AbortController());
@@ -41,6 +46,22 @@ export default function Workspace({auth, subject}: {auth: Auth; subject: string}
   };
   const editQuestion = (text: string) => {persist({question:text}); setQuestion(text);};
   const editReply = (text: string) => {persist({reply:text}); setReply(text);};
+  useLayoutEffect(() => {
+    if (questionInput.current) sizeQuestion(questionInput.current);
+  }, [question]);
+  useLayoutEffect(() => {
+    const input = questionInput.current;
+    if (!input) return;
+    let width = input.clientWidth, active = true;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === width) return;
+      width = input.clientWidth;
+      sizeQuestion(input);
+    });
+    observer.observe(input);
+    document.fonts.ready.then(() => {if (active) sizeQuestion(input);});
+    return () => {active = false; observer.disconnect();};
+  }, []);
   useEffect(() => {
     const interact = () => {if (document.visibilityState === 'visible') auth.activity().catch(fail);};
     const workspace = document.getElementById('workspace');
@@ -214,7 +235,7 @@ export default function Workspace({auth, subject}: {auth: Auth; subject: string}
       {(creatingConversation || pending?.status === 'submitting') && <div className="notice"><AgentStatus phase="submitting" message={pending?.request.path.endsWith('/resume') ? 'Submitting your clarification…' : 'Submitting your query…'} /></div>}
       {pending?.status === 'unconfirmed' && <div className="notice"><AgentStatus announce={false} phase="waiting" message="Submission was not confirmed. Retry safely with the same request." /><button disabled={busy} onClick={() => act(() => sendPending(pending.request))}>Retry submission</button></div>}
       <form className="composer" onSubmit={e => {e.preventDefault(); send();}}><label htmlFor="question">{latestAnswer ? 'Ask a follow-up or a new question' : 'Your question'}</label>
-        <textarea id="question" placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => editQuestion(e.target.value)} required disabled={creatingConversation || pending?.status === 'submitting' || !!current} />
+        <textarea ref={questionInput} id="question" rows={1} placeholder="e.g. How did revenue compare with the previous month?" maxLength={8000} value={question} onChange={e => editQuestion(e.target.value)} required disabled={creatingConversation || pending?.status === 'submitting' || !!current} />
         <div className="composer-footer">{latestAnswer && <label className="checkbox"><input type="checkbox" checked={followUp} onChange={e => setFollowUp(e.target.checked)} />Use the latest answer as context</label>}
           <button className="ask-analyst" disabled={busy || !!current || !!pending || !question.trim()}>Ask analyst
             <span className="ask-analyst-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></span>
