@@ -33,7 +33,7 @@ LIMITATIONS = [
     "Query time is not an ingestion, refresh, or historical business snapshot date.",
 ]
 LABELS = {
-    "item_name": "Project", "project": "Project",
+    "item_name": "Project", "project": "Project", "project_name": "Project name",
     "creation_month": "Creation month", "won_invoiced_count": "Won invoiced projects",
     "eligible_project_count": "Eligible projects", "closed_project_count": "Closed projects",
     "inclusive_conversion_rate": "Inclusive conversion", "closed_conversion_rate": "Closed-only conversion",

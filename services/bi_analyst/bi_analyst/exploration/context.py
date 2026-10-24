@@ -36,8 +36,8 @@ CLASSIFICATION = {
              "values": TYPES},
 }
 # Reviewed gateway additions, separate from the fingerprinted metric catalogue.
-# Migration 011 exposes the label without changing any certified metric definition.
-GATEWAY_COLUMNS = {"projects_v1": {"item_name": "text"}}
+# Migrations 011/012 expose labels without changing certified metric definitions.
+GATEWAY_COLUMNS = {"projects_v1": {"item_name": "text", "project_name": "text"}}
 # Exploration-only column notes; the sealed catalogue is unchanged.
 COLUMN_NOTES = {
     "projects_v1": {
@@ -45,9 +45,13 @@ COLUMN_NOTES = {
         "monday_id": {"meaning": "Internal Monday project ID. Use for joins and per-project grouping, not the default display label."},
         "item_name": {"meaning": (
             "Monday item name, shown in the board's Project column (a project reference, not the separate Project Name). "
-            "Preferred project label in reports and visuals. Keep as text, including leading zeroes. "
+            "Display alongside project_name in project reports and visuals. Keep as text, including leading zeroes. "
             "May be blank or duplicated: use COALESCE(NULLIF(TRIM(item_name), ''), monday_id) AS project "
             "for display, and retain monday_id in per-project GROUP BY keys.")},
+        "project_name": {"meaning": (
+            "Descriptive project name from the board's Project Name column. Include as project_name alongside "
+            "the project reference in project records, rankings and visuals. Use NULLIF(TRIM(project_name), '') "
+            "and keep missing names NULL. Names may be duplicated; retain monday_id in per-project GROUP BY keys.")},
         "pipeline_stage": {"meaning": "Current sales stage. Won stages are the three 'Won ...' values.",
                            "values": PIPELINE_STAGES},
         "account": {"meaning": "Customer name(s) as one stored string; may name several organisations."},

@@ -24,6 +24,13 @@ class Evidence:
         self.result, self.p, self.rows = result, result.provenance, result.rows
         self.claims, self.notices = [], []
         self.dimensions = [i for i, c in enumerate(self.p.columns) if c.role == "dimension"]
+        self.project_ref = next((i for i in self.dimensions if self.p.columns[i].name == "project"
+                                 and self.p.columns[i].type == "text"), None)
+        self.project_name = next((i for i in self.dimensions if self.p.columns[i].name == "project_name"
+                                  and self.p.columns[i].type == "text"), None)
+        self.project_pair = self.project_ref is not None and self.project_name is not None
+        # Reference and name describe the same project axis, not two breakdowns.
+        self.category_dimensions = [i for i in self.dimensions if not (self.project_pair and i == self.project_name)]
         self.measures = [i for i, c in enumerate(self.p.columns) if c.role == "measure" and c.type in {"integer", "decimal"}]
         self.limited = self.p.truncated or self.p.query_limited or self.p.dataset_scope == "limited"
         if ([c.name for c in self.p.columns] != result.columns
@@ -53,7 +60,15 @@ class Evidence:
         return self.claim(key, amount(self.rows[n][i]), self.p.columns[i], kind=kind, sources=[f"rows.{n}.{i}"])
 
     def group(self, n):
-        return " / ".join("Unclassified" if self.rows[n][i] is None else str(self.rows[n][i])[:120] for i in self.dimensions)
+        labels = []
+        for i in self.category_dimensions:
+            value = "Unclassified" if self.rows[n][i] is None else str(self.rows[n][i])[:120]
+            if self.project_pair and i == self.project_ref:
+                name = self.rows[n][self.project_name]
+                if name is not None and str(name).strip():
+                    value += " — " + str(name).strip()[:120]
+            labels.append(value)
+        return " / ".join(labels)
 
     def difference(self, key, current, baseline, column, sources):
         rate = column.unit in {"ratio", "percent"}
@@ -109,9 +124,9 @@ def grouped(e, primary, direction="highest"):
         text += f" This represents {display(share, 'ratio')} of the returned total."
     if e.limited:
         return text, None, "The table shows the returned groups; their ranking may not describe the full population."
-    if len(e.dimensions) != 1 or len(e.rows) > 30:
+    if len(e.category_dimensions) != 1 or len(e.rows) > 30:
         return text, None, "The table keeps the individual breakdowns clear; combining them into one chart would obscure the detail."
-    axis = e.p.columns[e.dimensions[0]]
+    axis = e.p.columns[e.category_dimensions[0]]
     if axis.type != "text":
         return text, None, "These groups do not provide a clear category axis, so the values are shown in a table."
     return text, ExploratoryChartIntent(kind="bar", x=axis.name, series=[c.name],
@@ -161,10 +176,10 @@ def comparison(e, primary, secondary):
         a, b = e.cell("comparison_current", 0, primary), e.cell("comparison_baseline", 0, secondary)
         a_label, b_label = c.label, e.p.columns[secondary].label
         chart = ExploratoryChartIntent(kind="comparison", x=c.name, series=[c.name, e.p.columns[secondary].name])
-    elif len(e.rows) == 2 and len(e.dimensions) == 1 and e.group(0) != e.group(1):
+    elif len(e.rows) == 2 and len(e.category_dimensions) == 1 and e.group(0) != e.group(1):
         a, b = e.cell("comparison_current", 0, primary), e.cell("comparison_baseline", 1, primary)
         a_label, b_label = e.group(0), e.group(1)
-        axis = e.p.columns[e.dimensions[0]]
+        axis = e.p.columns[e.category_dimensions[0]]
         chart = ExploratoryChartIntent(kind="bar", x=axis.name, series=[c.name]) if axis.type == "text" else None
     else:
         return None

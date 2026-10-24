@@ -36,6 +36,7 @@ def test_context_carries_labels_meanings_and_definition_semantics():
     assert 'first invoice is dated before the first design' in projects['gestation_period']['meaning']
     assert projects['monday_id']['type'] == 'text' and 'Internal Monday' in projects['monday_id']['meaning']
     assert projects['item_name']['type'] == 'text' and 'leading zeroes' in projects['item_name']['meaning']
+    assert projects['project_name']['type'] == 'text' and 'Descriptive project name' in projects['project_name']['meaning']
     assert CATALOGUE.owner_accepted
     assert 'item_name' not in next(r for r in CATALOGUE.relations if r.id == 'projects_v1').columns
     assert views['conversion_cohorts_v1']['columns']['cohort_years']['values'] == [2, 5]

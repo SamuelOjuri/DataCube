@@ -238,5 +238,31 @@ def test_existing_result_access_module_remains_importable():
     assert Feedback(rating='helpful').rating == 'helpful'
 
 
+def test_project_reference_and_name_share_a_category_axis_and_preserve_identity():
+    columns = [col('project', role='dimension', unit='none'), col('project_name', role='dimension', unit='none'),
+               col('order_value', additive=True, grouped=True)]
+    result = dataset([['0018952', 'North site', 30], ['18951', 'School', 10], ['18950', None, 5]], columns,
+                     {'kind': 'ranking', 'axis': 'project', 'primary_measure': 'order_value'})
+    rendered = present_result(result)
+    assert '0018952 — North site' in rendered.summary
+    assert rendered.chart.kind == 'bar' and rendered.chart.x == 'project'
+    compared = dataset(result.rows[:2], columns,
+                       {'kind': 'comparison', 'axis': 'project', 'primary_measure': 'order_value'})
+    assert present_result(compared).chart.kind == 'bar'
+    assert '0018952 — North site' in present_result(compared).summary
+    result.rows[0][1] = None
+    assert '0018952 had the highest' in present_result(result).summary
+    result.rows[0][1] = 'North site'
+    result.rows[1][:2] = ['0018952', 'South site']
+    assert present_result(result).chart.kind == 'bar'
+    result.rows[1][1] = 'North site'
+    assert present_result(result).chart is None
+    result.provenance.columns.append(col('account', role='dimension', unit='none'))
+    result.columns.append('account')
+    result.rows = [row + ['Account A'] for row in result.rows]
+    result.rows[1][1] = 'South site'
+    assert present_result(result).chart is None
+
+
 if __name__ == '__main__':
     FIXTURE.write_text(json.dumps(ui_fixtures(), indent=2, ensure_ascii=False) + '\n', encoding='utf-8')

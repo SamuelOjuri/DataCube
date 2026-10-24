@@ -1,5 +1,7 @@
 """Exploratory SQL end to end: real gateways, restricted reader role, LangGraph and the API."""
+import csv
 from decimal import Decimal
+from io import StringIO
 from uuid import uuid4
 
 from psycopg.conninfo import make_conninfo
@@ -91,17 +93,20 @@ def test_exploratory_answer_is_grounded_stored_and_exportable(explore):
 def test_project_labels_reach_summary_saved_rows_and_export_without_merging_projects(explore, duplicate_label):
     admin, _, config, start = explore
     second_label = '0018952' if duplicate_label else '18951'
-    projects = [('label_a', '0018952', 300), ('label_b', second_label, 200),
-                ('label_blank', '  ', 100), ('label_missing', None, 50)]
+    second_name = 'Northern Rotunda, G' if duplicate_label else 'School'
+    projects = [('label_a', '0018952', 'Northern Rotunda, G', 300), ('label_b', second_label, second_name, 200),
+                ('label_blank', '  ', '  ', 100), ('label_missing', None, None, 50)]
     ids = [p[0] for p in projects]
     for row in projects:
-        admin.execute('INSERT INTO public.projects(monday_id,item_name,total_order_value) VALUES (%s,%s,%s)', row)
+        admin.execute('INSERT INTO public.projects(monday_id,item_name,project_name,total_order_value) VALUES (%s,%s,%s,%s)', row)
     try:
         query = """SELECT COALESCE(NULLIF(TRIM(item_name), ''), monday_id) AS project,
+            NULLIF(TRIM(project_name), '') AS project_name,
             sum(total_order_value) AS order_value FROM analyst_query.projects_v1
             WHERE monday_id IN ('label_a','label_b','label_blank','label_missing')
-            GROUP BY monday_id,item_name ORDER BY order_value DESC LIMIT 10"""
-        proposal = draft(query, (('project', 'dimension', 'none'), ('order_value', 'measure', 'source_currency')),
+            GROUP BY monday_id,item_name,project_name ORDER BY order_value DESC LIMIT 10"""
+        proposal = draft(query, (('project', 'dimension', 'none'), ('project_name', 'dimension', 'none'),
+                                 ('order_value', 'measure', 'source_currency')),
                          'Projects by order value')
         proposal['analysis_intent'] = {'kind': 'ranking', 'primary_measure': 'order_value', 'axis': 'project'}
         with start(Explorer(proposal), config_override=config) as client:
@@ -115,16 +120,19 @@ def test_project_labels_reach_summary_saved_rows_and_export_without_merging_proj
                 assert 'distinct groups' in answer['summary']
             else:
                 assert '0018952' in answer['summary'] and 'label_a' not in answer['summary']
+                assert 'Northern Rotunda, G' in answer['summary']
             result_id = answer['result']['result_id']
             result = client.get(f'/v1/results/{result_id}').json()
-            assert result['columns'] == ['project', 'order_value']
-            assert result['rows'] == [['0018952', '300.00'], [second_label, '200.00'],
-                                      ['label_blank', '100.00'], ['label_missing', '50.00']]
+            assert result['columns'] == ['project', 'project_name', 'order_value']
+            assert result['rows'] == [['0018952', 'Northern Rotunda, G', '300.00'], [second_label, second_name, '200.00'],
+                                      ['label_blank', None, '100.00'], ['label_missing', None, '50.00']]
             label = result['provenance']['columns'][0]
             assert label['label'] == 'Project' and label['type'] == 'text' and label['role'] == 'dimension'
+            assert result['provenance']['columns'][1]['label'] == 'Project name'
             export = client.get(f'/v1/results/{result_id}/export')
             assert export.status_code == 200
-            assert '0018952,300.00' in export.text and f'{second_label},200.00' in export.text
+            assert list(csv.reader(StringIO(export.content.decode('utf-8-sig')))) == [result['columns'],
+                *[[v if v is not None else '' for v in row] for row in result['rows']]]
             assert client.get(f'/v1/runs/{run_id}/workflow').json()['answer']['summary'] == answer['summary']
     finally:
         admin.execute('DELETE FROM public.projects WHERE monday_id=ANY(%s)', (ids,))

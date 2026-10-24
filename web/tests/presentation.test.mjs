@@ -130,6 +130,26 @@ test('absent calendar months break exploratory lines rather than implying uninte
   assert.equal(spec.data.values.find(v=>v.label==='2026-09-01').value,null);
   assert.equal(spec.mark.invalid,'break-paths-show-domains');
 });
+test('project chart labels include names while preserving separate table fields', () => {
+  const result = {id:'owned', columns:['project','project_name','order_value'],
+    rows:[['0018952','North site','1200.00'],['18951',null,'300.50']],
+    provenance:{kind:'exploratory', title:'Projects by order value', dataset_scope:'complete', columns:[
+      {name:'project',label:'Project',role:'dimension',type:'text',unit:'none'},
+      {name:'project_name',label:'Project name',role:'dimension',type:'text',unit:'none'},
+      {name:'order_value',label:'Order value',role:'measure',type:'decimal',unit:'source_currency'}]}};
+  const intent = {kind:'bar',x:'project',series:['order_value']};
+  assert.deepEqual(chartSpec(result,intent,'owned').spec.data.values.map(v=>v.label),['0018952 — North site','18951']);
+  assert.equal(result.rows[0][0],'0018952');
+  assert.equal(result.rows[0][1],'North site');
+  result.rows[1]=['0018952','South site','300.50'];
+  assert.ok(chartSpec(result,intent,'owned').spec);
+  result.rows[1][1]='North site';
+  assert.equal(chartSpec(result,intent,'owned').spec,null);
+  result.provenance.columns.push({name:'account',label:'Account',role:'dimension',type:'text',unit:'none'});
+  result.columns.push('account'); result.rows=result.rows.map(r=>[...r,'Account A']);
+  assert.equal(chartSpec(result,intent,'owned').spec,null);
+});
+
 test('SSE accepts split UTF-8, CRLF and heartbeats without leaking partial answer frames',async () => {
   const payload = new TextEncoder().encode(': heartbeat\r\n\r\nid: 2\r\nevent: progress\r\ndata: {"stage":"query","text":"£"}\r\n\r\nevent: answer\ndata: {');
   let i=0,beats=0; const events=[];

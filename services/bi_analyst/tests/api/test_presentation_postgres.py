@@ -72,8 +72,8 @@ def test_detail_filter_limit_offset_and_read_only_authorization(setup):
 @pytest.mark.parametrize('metric_id', ['order_parent_value', 'invoice_stored_child_value', 'conversion_five_year'])
 def test_project_detail_labels_use_parent_item_name_with_id_fallback(setup, metric_id):
     admin, _, _, _, start = setup
-    original = admin.execute("SELECT item_name FROM public.projects WHERE monday_id='E1'").fetchone()['item_name']
-    admin.execute("UPDATE public.projects SET item_name='0018952' WHERE monday_id='E1'")
+    original = admin.execute("SELECT item_name,project_name FROM public.projects WHERE monday_id='E1'").fetchone()
+    admin.execute("UPDATE public.projects SET item_name='0018952',project_name='Northern Rotunda, G' WHERE monday_id='E1'")
     try:
         with start() as client:
             result = query(client, metric_id)
@@ -83,9 +83,11 @@ def test_project_detail_labels_use_parent_item_name_with_id_fallback(setup, metr
             identity, label = page['columns'].index('project_id'), page['columns'].index('project')
             labelled = [row for row in page['rows'] if row[identity] == 'E1']
             assert labelled and all(row[label] == '0018952' for row in labelled)
+            assert all(row[page['columns'].index('project_name')] == 'Northern Rotunda, G' for row in labelled)
             assert all(row[label] == row[identity] for row in page['rows'] if row[identity] != 'E1')
     finally:
-        admin.execute("UPDATE public.projects SET item_name=%s WHERE monday_id='E1'", (original,))
+        admin.execute("UPDATE public.projects SET item_name=%s,project_name=%s WHERE monday_id='E1'",
+                      (original['item_name'], original['project_name']))
 
 
 def test_feedback_is_idempotent_and_rls_protected(setup):

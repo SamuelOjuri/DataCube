@@ -9,7 +9,7 @@ from bi_analyst.metrics.compiler import Compiler
 
 pytestmark = pytest.mark.postgres
 ROOT = Path(__file__).resolve().parents[4]
-MIGRATION = ROOT / 'src/database/migrations/20261024_011_analyst_project_labels.sql'
+MIGRATION = ROOT / 'src/database/migrations/20261024_012_analyst_project_names.sql'
 
 
 def test_label_migration_preserves_population_measures_owner_and_privileges(database):
@@ -27,7 +27,8 @@ def test_label_migration_preserves_population_measures_owner_and_privileges(data
     assert admin.execute((ROOT / 'services/bi_analyst/bi_analyst/permissions.sql').read_text(encoding='utf-8')).fetchall() == []
     assert Compiler().catalogue.owner_accepted
     with psycopg.connect(make_conninfo(dsn, user='bi_analyst_reader')) as reader:
-        assert reader.execute("""SELECT to_jsonb(g)-'item_name' FROM analyst_query.projects_v1 g ORDER BY monday_id""").fetchall() == reader.execute(
+        assert reader.execute("""SELECT to_jsonb(g)-'item_name'-'project_name' FROM analyst_query.projects_v1 g ORDER BY monday_id""").fetchall() == reader.execute(
             'SELECT to_jsonb(p) FROM analytics.projects_v1 p ORDER BY monday_id').fetchall()
         assert reader.execute("SELECT monday_id FROM analyst_query.projects_v1 WHERE monday_id='excluded'").fetchall() == []
         assert reader.execute("SELECT pg_typeof(item_name)::text FROM analyst_query.projects_v1 LIMIT 1").fetchone() == ('text',)
+        assert reader.execute("SELECT pg_typeof(project_name)::text FROM analyst_query.projects_v1 LIMIT 1").fetchone() == ('text',)

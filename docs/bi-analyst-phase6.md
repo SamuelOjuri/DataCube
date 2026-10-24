@@ -335,6 +335,21 @@ projects table and preserve numeric-looking text, including leading zeroes.
 Exploratory summaries, tables, exports and supported charts consume the label
 returned by the query; `workflow/summary.py` needs no label lookup.
 
+### Include descriptive project names
+
+Apply [migration 012](../src/database/migrations/20261024_012_analyst_project_names.sql)
+in one administrator transaction after 011, then deploy the updated API and
+frontend. Keep the already applied migration 011 unchanged. Migration 012 appends
+the source `project_name` to the gateway and readiness checks require both labels.
+
+Project reports return **Project**, **Project name**, and the requested measures.
+The prompt includes `NULLIF(TRIM(p.project_name), '') AS project_name` alongside
+the project reference and groups by `monday_id`, `item_name`, and `project_name`.
+Summaries and eligible chart axes combine the reference and descriptive name;
+tables and CSV exports retain separate columns. Contributing-project evidence
+also includes the descriptive parent name. Blank names remain unknown in tables;
+chart labels and summaries retain the reference when the name is unavailable.
+
 Rerun existing exploratory questions after rollout. Saved rows and summaries are
 historical query results and do not acquire labels retroactively. A follow-up such
 as “Show those projects using their Project reference” generates a new result.

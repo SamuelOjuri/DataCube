@@ -165,7 +165,10 @@ export function exploratoryChartSpec(result, intent, ownedId) {
   if (['histogram', 'scatter', 'comparison'].includes(intent.kind)) return analyticalChart(result, intent, chartTheme, unitLabel);
   const dimensions = p.columns.filter(c => c.role === 'dimension');
   const x = result.columns.indexOf(intent.x), axis = p.columns.find(c => c.name === intent.x);
-  if (dimensions.length !== 1 || x < 0 || axis?.role !== 'dimension') return no('Chart fields do not match.');
+  const projectName = dimensions.find(c => c.name === 'project_name' && c.type === 'text');
+  const projectPair = intent.kind === 'bar' && axis?.name === 'project' && axis.type === 'text'
+    && dimensions.length === 2 && !!projectName;
+  if ((!projectPair && dimensions.length !== 1) || x < 0 || axis?.role !== 'dimension') return no('Chart fields do not match.');
   const grain = axis?.time_grain || intent.time_grain;
   if (intent.kind === 'line' && (axis.type !== 'date' || !grains.includes(grain) || intent.time_grain && intent.time_grain !== grain)) return no('A line chart requires a verified calendar time axis.');
   if (intent.kind === 'bar' && axis.type !== 'text') return no('A bar chart requires a category axis.');
@@ -177,7 +180,9 @@ export function exploratoryChartSpec(result, intent, ownedId) {
   if (!result.rows.length || result.rows.length > (intent.kind === 'bar' ? 30 : 200)) return no('Use the table for this dataset size.');
   const labels = new Set(), values = [];
   for (const row of result.rows) {
-    const label = row[x] === null ? 'Unclassified' : String(row[x]);
+    let label = row[x] === null ? 'Unclassified' : String(row[x]);
+    const name = projectPair ? row[result.columns.indexOf(projectName.name)] : null;
+    if (name !== null && String(name).trim()) label += ' — ' + String(name).trim();
     if (labels.has(label)) return no('Use the table for repeated chart coordinates.');
     labels.add(label);
     if (intent.kind === 'line') {

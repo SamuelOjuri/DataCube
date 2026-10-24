@@ -84,6 +84,9 @@ def project_statement(compiler, provenance: MetricProvenance, limit: int, offset
     fields.append("coalesce((SELECT nullif(trim(p.item_name),'') FROM analyst_query.projects_v1 p "
                   f"WHERE p.monday_id=filtered.{project}),filtered.{project}) AS project")
     columns.append('project')
+    fields.append("(SELECT nullif(trim(p.project_name),'') FROM analyst_query.projects_v1 p "
+                  f"WHERE p.monday_id=filtered.{project}) AS project_name")
+    columns.append('project_name')
     # Gestation statistics exclude non-positive values; show only contributors.
     eligible = ' WHERE gestation_period>0' if metric.family == 'gestation' else ''
     statement = base + ' SELECT ' + ','.join(fields) + ' FROM filtered' + eligible + ' ORDER BY project_id,source_id LIMIT %s OFFSET %s'
