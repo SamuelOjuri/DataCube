@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from pydantic import SecretStr, ValidationError
 import pytest
 
-from bi_analyst.workflow.contracts import ChartIntent, PlanDraft, Presentation
+from bi_analyst.workflow.contracts import ChartIntent, Clarification, ClarificationResponse, PlanDraft, Presentation
 from bi_analyst.metrics.compiler import Compiler
 from bi_analyst.metrics.contracts import Aggregate, MetricRequest
 from bi_analyst.workflow.evidence import select_presentation
@@ -72,6 +72,43 @@ def test_workflow_migration_embeds_runtime_audit():
     migration = (ROOT/'src/database/migrations/20261008_006_analyst_workflow.sql').read_text()
     runtime = (ROOT/'services/bi_analyst/bi_analyst/permissions_workflow.sql').read_text()
     assert migration.split('-- BEGIN SHARED AUDIT\n')[1].split('-- END SHARED AUDIT')[0].strip() == runtime.strip()
+
+
+@pytest.mark.parametrize('case', ['exact', 'case_and_whitespace', 'unoffered', 'unauthorised', 'free_text', 'later_period'])
+def test_only_an_offered_authorised_metric_choice_narrows_replanning(case):
+    compiler = Compiler()
+    metric_id = 'conversion_two_year'
+    option = f'{compiler.metrics[metric_id].label} ({metric_id})'
+    answer = ' ' + option.upper() + ' ' if case == 'case_and_whitespace' else option
+    if case == 'free_text':
+        answer = 'Use the two-year inclusive variant please'
+    pending = Clarification(id=uuid4(), reason='metric', question='Which metric definition should I use?',
+                            options=[] if case == 'unoffered' else [option])
+    responses = [ClarificationResponse(clarification=pending, answer=answer)]
+    if case == 'later_period':
+        responses.append(ClarificationResponse(clarification=Clarification(id=uuid4(), reason='period',
+            question='Which period?', options=['two_year_cohort']), answer='two_year_cohort'))
+
+    def require_access(identifier, version, population):
+        if case == 'unauthorised' and identifier == metric_id:
+            raise HTTPException(403, 'access_denied')
+        return compiler.metric(identifier, version, population)
+
+    provider = SimpleNamespace(generate=AsyncMock(return_value=(PlanDraft(action='clarify', reason='scope'), {})))
+    workflow = object.__new__(ConversationGraph)
+    workflow.actor = workflow.run_id = workflow.token = None
+    workflow.jobs = SimpleNamespace(progress=AsyncMock(), budget=AsyncMock(), usage=AsyncMock())
+    workflow.metrics = SimpleNamespace(compiler=compiler, require_access=require_access)
+    workflow.service = SimpleNamespace(provider=provider, settings=config())
+    state = GraphState(question='What is our conversion rate?', replies=[r.answer for r in responses],
+                       clarification_responses=responses)
+    asyncio.run(workflow.make_plan(state))
+    _, payload, _ = provider.generate.await_args.args
+    resolved = case in {'exact', 'case_and_whitespace', 'later_period'}
+    assert payload['selected_metric_id'] == (metric_id if resolved else None)
+    assert payload['clarification_responses'] == [r.model_dump(mode='json') for r in responses]
+    catalogue = {m['id'] for m in payload['catalogue']}
+    assert catalogue == ({metric_id} if resolved else set(compiler.metrics) - ({metric_id} if case == 'unauthorised' else set()))
 
 
 @pytest.mark.parametrize('schema,payload',[

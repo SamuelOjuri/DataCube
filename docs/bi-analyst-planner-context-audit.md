@@ -91,3 +91,83 @@ These are local changes. Deploy the analyst backend to use prompt 1.2.0, then
 submit a new run. A previously paused run retains its recorded workflow version
 and should not be used to validate the updated planner. No database migration
 is needed for this context change.
+
+## Clarification-loop correction, 26 October 2026
+
+The saved run for "What is our conversion rate?" recorded the same two-year
+inclusive option twice. It made three planning calls and no tool calls, returning
+the metric clarification each time. The resume requests and checkpointed replies
+were intact; the planner continued treating the original question as ambiguous.
+Previously it received a flat list of reply strings without their clarification
+questions or offered options, and exact option selections were not resolved by
+the server before replanning.
+
+The graph now checkpoints each reply with its clarification. Exact metric-option
+matches are checked against the current permitted catalogue and narrow the next
+planning context to that selected metric. Free-text replies retain the full
+permitted context. The planner prompt explicitly combines the original request
+with these responses, derives a unique supported period from a selected metric,
+and retains requested filters, breakdowns and comparisons.
+
+Validation: 112 workflow, provider-contract and exploration tests passed against
+an isolated local PostgreSQL fixture. Added cases cover all four conversion
+choices, a filtered type breakdown, restart/resume, idempotent resubmission,
+case/whitespace matching and permission/option checks. Two live planner replays
+produced `conversion_two_year` with `two_year_cohort`, including the requested
+New Build filter and type breakdown in the second replay. The live replays did
+not execute analytical queries or modify saved workflow records.
+
+The initial correction used graph `2.5.0` and planner prompt
+`bi-conversation-1.3.0`. Before deployment, a new question that explicitly names
+the two-year inclusive conversion rate avoids this metric clarification path.
+
+## Wider clarification audit, 26 October 2026
+
+The follow-up audit found and corrected these additional gaps:
+
+- A draft patch was discarded when the planner requested clarification. A
+  free-text entity reply also replanned from the last completed answer instead
+  of the current plan. A separate checkpointed working scope now retains the
+  metric, period, filters, grain, breakdown, comparison and explicit comparison
+  clearing. The request for causal explanation is retained across replanning.
+- Period options combined periods from unrelated metrics. They now use the
+  resolved metric's supported periods, or the remaining candidates when the
+  metric is unresolved.
+- Exact period choices could be omitted or contradicted by a model patch.
+  Offered, permitted metric and period selections now populate the effective
+  plan. A repeated question about a resolved choice triggers one bounded model
+  repair; another repetition fails without executing a query or asking the user
+  the same question again.
+- An earlier exact metric selection could constrain a later free-text correction
+  to the old metric. Free text now releases that constraint while preserving the
+  working scope and clarification history for the planner to interpret.
+- The exploration handoff omitted structured clarification history and the
+  working scope. Both are now supplied to SQL generation with instructions to
+  retain the selected definition, period and filters.
+- Entity labels differing only by case could not be selected unambiguously.
+  Literal matches now precede case-insensitive matches. The resolver accepts the
+  same 256-character maximum as metric filters and offered candidates. Missing
+  entity matches ask for a full name rather than offering an empty exact-choice list.
+
+Existing protections were also checked: whitespace-only replies are rejected
+by the shared contract before admission and do not consume a resume receipt.
+Names are already normalized by the shared contracts and governed views;
+no frontend change is needed for label padding.
+
+All 163 focused clarification, workflow, provider-contract, exploration and
+metric API tests passed against isolated local PostgreSQL. These include
+restart/resume, baseline-only filter replacement, explicit period enforcement,
+comparison clearing, correction of earlier choices, bounded repair, long and
+case-only entity labels, blank-reply rejection, permissions, stale IDs,
+cancelled runs and idempotent resubmission.
+
+Five live synthetic cases passed: exact conversion choice with a type filter,
+period clarification retaining a monthly breakdown and baseline, a free-text
+entity correction retaining comparison filters, a later change to the conversion
+definition, and clarified revenue scope passed to daily SQL generation. The SQL
+passed the governed query validator; no live analytical SQL was executed.
+
+Current versions are graph `2.6.0`, planner prompt `bi-conversation-1.4.0` and
+exploration prompt `bi-exploration-1.8.0`. Deploy the backend, then
+start a new run. Previously paused runs remain fenced to their recorded versions.
+No database migration is required.

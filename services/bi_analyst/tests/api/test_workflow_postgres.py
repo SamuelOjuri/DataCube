@@ -156,6 +156,55 @@ def test_clarification_survives_restart_and_resume_is_idempotent(setup):
         assert [stage for stage,_ in provider.calls] == ['plan']
 
 
+@pytest.mark.parametrize('metric_id,breakdown', [
+    ('conversion_five_year', False), ('conversion_closed_five_year', False),
+    ('conversion_two_year', False), ('conversion_closed_two_year', False),
+    ('conversion_two_year', True),
+])
+def test_offered_conversion_choice_resolves_after_restart_and_preserves_scope(setup, metric_id, breakdown):
+    admin, _, _, _, start = setup
+    compiler = Compiler()
+    choices = [m for m in compiler.metrics.values() if m.family == 'conversion']
+
+    class ClarificationProvider:
+        async def generate(self, stage, payload, schema):
+            # Reproduce the loop unless the planner receives the selected option with its question.
+            if not payload.get('selected_metric_id'):
+                return schema.model_validate({'action':'clarify', 'reason':'metric',
+                    'candidate_metrics':[m.id for m in choices]}), {}
+            assert payload['selected_metric_id'] == metric_id
+            response, = payload['clarification_responses']
+            assert response['clarification']['question'] == 'Which metric definition should I use?'
+            assert response['answer'] == f'{compiler.metrics[metric_id].label} ({metric_id})'
+            assert [m['id'] for m in payload['catalogue']] == [metric_id]
+            patch = {'metric_id':metric_id, 'period':compiler.metrics[metric_id].periods[0]}
+            if breakdown:
+                assert 'New Build' in payload['question']
+                patch.update(dimensions=['type'], filters=[{'dimension':'type','values':['New Build']}])
+            return schema.model_validate({'action':'plan', 'patch':patch}), {}
+
+    with start(ClarificationProvider()) as client:
+        question = 'What is our conversion rate?' + (' By type for New Build projects.' if breakdown else '')
+        run_id = submit(client, question=question)
+        pending = settle(client, run_id)
+        assert pending['status'] == 'awaiting_clarification'
+        option = f'{compiler.metrics[metric_id].label} ({metric_id})'
+        assert option in pending['clarification']['options']
+        reply = {'clarification_id':pending['clarification']['id'],
+                 'idempotency_key':str(uuid4()), 'answer':option}
+    with start(ClarificationProvider()) as client:
+        assert client.post(f'/v1/runs/{run_id}/resume', json=reply).status_code == 200
+        completed = settle(client, run_id)
+        assert completed['status'] == 'completed', completed
+        assert completed['answer']['summary'] and completed['clarification'] is None
+        plan = admin.execute('SELECT plan FROM analyst_state.workflow_jobs WHERE run_id=%s', (run_id,)).fetchone()['plan']
+        assert plan['metric_id'] == metric_id
+        assert plan['period'] == compiler.metrics[metric_id].periods[0]
+        assert plan['dimensions'] == (['type'] if breakdown else [])
+        assert completed['model_calls'] == 2 and completed['tool_calls'] >= 1
+        assert client.post(f'/v1/runs/{run_id}/resume', json=reply).status_code == 200
+
+
 @pytest.mark.parametrize('existing_summary', [False, True])
 def test_legacy_answer_reads_and_event_replay_gain_summary_without_rewriting_history(setup, existing_summary):
     admin, _, _, _, start = setup
@@ -223,6 +272,74 @@ def test_entities_interrupt_before_query_and_accept_exact_reply(setup):
             assert row['answer']['claims'][0]['value'] == '3.00'
     finally:
         admin.execute("DELETE FROM public.projects WHERE monday_id IN ('wf_roof1','wf_roof2')")
+
+
+def test_partial_monthly_plan_survives_period_clarification_and_restart(setup):
+    admin, _, _, _, start = setup
+    patch = {'metric_id':'invoice_monthly_actual', 'grain':'month', 'dimensions':['category'],
+             'filters':[{'dimension':'category','values':['A']}], 'comparison':{'period':'previous_month'}}
+
+    class PeriodProvider:
+        async def generate(self, stage, payload, schema):
+            if not payload['replies']:
+                data = {'action':'clarify', 'reason':'period', 'patch':patch, 'asks_for_cause':True}
+            else:
+                assert payload['previous_plan']['filters'] == [{'dimension':'category','operator':'in','values':['A']}]
+                data = {'action':'plan', 'patch':{}}
+            return schema.model_validate(data), {}
+
+    with start(PeriodProvider()) as client:
+        run_id = submit(client, question='Why did monthly invoiced revenue for category A change?')
+        pending = settle(client, run_id)
+        assert pending['status'] == 'awaiting_clarification'
+        assert set(pending['clarification']['options']) == set(Compiler().metrics['invoice_monthly_actual'].periods)
+        reply = {'clarification_id':pending['clarification']['id'], 'idempotency_key':str(uuid4()), 'answer':'last_month'}
+    with start(PeriodProvider()) as client:
+        assert client.post(f'/v1/runs/{run_id}/resume', json=reply).status_code == 200
+        row = settle(client, run_id)
+        assert row['status'] == 'completed', row
+        plan = admin.execute('SELECT plan FROM analyst_state.workflow_jobs WHERE run_id=%s', (run_id,)).fetchone()['plan']
+        assert plan['metric_id'] == 'invoice_monthly_actual' and plan['period'] == 'last_month'
+        assert plan['grain'] == 'month' and plan['dimensions'] == ['category']
+        assert plan['comparison']['period'] == 'previous_month' and plan['filters'][0]['values'] == ['A']
+        assert any('do not establish causes' in notice for notice in row['answer']['notices'])
+
+
+@pytest.mark.parametrize('labels,choice,expected', [
+    (['Roofing','roofing'], 'Roofing','3.00'), (['Roofing','roofing'], 'roofing','7.00'),
+    (['Roofing ' + 'x' * 140,'Roofing Short'], 'Roofing ' + 'x' * 140,'3.00'),
+])
+def test_entity_options_preserve_case_and_supported_label_length(setup, labels, choice, expected):
+    admin, _, _, _, start = setup
+    admin.execute("INSERT INTO public.projects(monday_id,category,total_order_value) VALUES ('wf_case1',%s,3),('wf_case2',%s,7)", labels)
+    try:
+        with start(ScriptedProvider(patch={'filters':[{'dimension':'category','values':['roo']}]})) as client:
+            run_id = submit(client)
+            pending = settle(client, run_id)
+            assert set(pending['clarification']['options']) == set(labels)
+            assert client.post(f'/v1/runs/{run_id}/resume', json={'clarification_id':pending['clarification']['id'],
+                'idempotency_key':str(uuid4()), 'answer':choice}).status_code == 200
+            row = settle(client, run_id)
+            assert row['status'] == 'completed', row
+            assert row['answer']['claims'][0]['value'] == expected
+    finally:
+        admin.execute("DELETE FROM public.projects WHERE monday_id IN ('wf_case1','wf_case2')")
+
+
+@pytest.mark.parametrize('answer', ['   ', '\n\t', '\u2003'])
+def test_blank_reply_is_rejected_without_consuming_a_resume_receipt(setup, answer):
+    admin, _, _, _, start = setup
+    with start(ScriptedProvider(clarify=True)) as client:
+        run_id = submit(client)
+        pending = settle(client, run_id)
+        body = {'clarification_id':pending['clarification']['id'], 'idempotency_key':str(uuid4()), 'answer':answer}
+        assert client.post(f'/v1/runs/{run_id}/resume', json=body).status_code == 422
+        row = settle(client, run_id)
+        assert row['status'] == 'awaiting_clarification' and row['model_calls'] == 1
+        assert admin.execute('SELECT resume_receipts FROM analyst_state.workflow_jobs WHERE run_id=%s',
+                             (run_id,)).fetchone()['resume_receipts'] == {}
+        assert client.post(f'/v1/runs/{run_id}/resume', json={**body, 'answer':'Use parent value'}).status_code == 200
+        assert settle(client, run_id)['status'] == 'completed'
 
 
 def test_duplicate_and_competing_submissions_across_instances(setup):

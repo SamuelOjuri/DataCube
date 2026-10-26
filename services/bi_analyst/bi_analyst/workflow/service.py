@@ -31,7 +31,7 @@ class WorkflowService:
         self.tasks = {}
         self.cancellations = set()
         self.admission = asyncio.Lock()
-        self.versions = {'graph':'2.4.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
+        self.versions = {'graph':'2.6.0','prompt':PROMPT_VERSION,'model':MODEL,'generation':GENERATION,
                          'exploration':{'prompt':EXPLORE_PROMPT_VERSION,'policy':POLICY_VERSION},
                          'catalogue':metrics.compiler.catalogue.version,'catalogue_sha256':metrics.compiler.catalogue_hash,
                          'langgraph':version('langgraph'),'checkpointer':version('langgraph-checkpoint-postgres')}

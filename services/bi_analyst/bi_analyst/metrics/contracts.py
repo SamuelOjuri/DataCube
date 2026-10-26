@@ -140,7 +140,7 @@ class EntityRequest(Contract):
     metric_version: str = Field(pattern=r"^[1-9][0-9]*\.[0-9]+\.[0-9]+$")
     population: Literal["reportable", "hidden_inventory"]
     dimension: Dimension
-    query: str = Field(min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=256)
 
 
 class EntityResolution(Contract):

@@ -17,7 +17,8 @@ from ..exploration.service import ExplorationQueryError
 from ..metrics.compiler import InvalidMetricRequest
 from ..metrics.contracts import EntityRequest, MetricRequest, MetricResult
 from ..operations.telemetry import operation_context
-from .contracts import Clarification, ExplanationAnswer, PlanDraft, Presentation, ResultReference
+from .contracts import Clarification, ClarificationResponse, ExplanationAnswer, PlanDraft, Presentation, ResultReference
+from .clarifications import match_option, selected_scope
 from .evidence import ground, select_presentation
 from .explanation import explain as explanation_for
 from .planning_context import build_planning_context
@@ -34,11 +35,13 @@ MATCHED_NOTHING = ("The query ran but matched no records: it returned no rows, o
 class GraphState(Contract):
     question: str
     previous_plan: dict | None = None
+    planning_scope: dict | None = None
     plan: dict | None = None
     explore: bool = False
     explanation: dict | None = None
     asks_for_cause: bool = False
     replies: list[str] = Field(default_factory=list)
+    clarification_responses: list[ClarificationResponse] = Field(default_factory=list)
     clarification: dict | None = None
     result: dict | None = None
     presentation: dict | None = None
@@ -100,36 +103,63 @@ class ConversationGraph:
             raise HTTPException(503,'metric_not_certified')
         await self.stage('retrieving_definitions')
         permitted = {m.id:m for m in permitted}
+        selected = selected_scope(state.clarification_responses, permitted)
+        selected_metric = selected.get('metric_id')
+        if selected_metric:
+            permitted = {selected_metric:permitted[selected_metric]}
+            if len(permitted[selected_metric].periods) == 1:
+                selected.setdefault('period', permitted[selected_metric].periods[0])
         await self.stage('planning')
         context = build_planning_context(self.metrics.compiler, list(permitted.values()),
             now=datetime.now(timezone.utc), business_timezone=self.service.settings.business_timezone,
             max_rows=self.service.settings.metric_max_rows)
-        draft = await self.model('plan', {**context, 'question':state.question,'replies':state.replies,
-            'previous_plan':state.previous_plan,
-            'instructions':'Understand the question and return one plan patch. Null inherits; [] clears lists. Select an explicit period for a new plan. Unsupported time windows require unsupported, never a substitute period. Set asks_for_cause when the user requests an explanation of causes.'},PlanDraft)
+        data = dict(state.planning_scope if state.planning_scope is not None else state.previous_plan or {})
+        payload = {**context, 'question':state.question,'replies':state.replies,
+            'clarification_responses':[response.model_dump(mode='json') for response in state.clarification_responses],
+            'selected_metric_id':selected_metric,
+            'selected_period':selected.get('period'),
+            'previous_plan':dict(data) or None,
+            'instructions':'Understand the question and return one plan patch. previous_plan is the working scope, including partial plans retained through clarification. Null inherits; [] clears lists. Select an explicit period for a new plan. Unsupported time windows require unsupported, never a substitute period. Set asks_for_cause when the user requests an explanation of causes.'}
+        asks_for_cause = state.asks_for_cause
+        for attempt in range(2):
+            draft = await self.model('plan', payload, PlanDraft)
+            asks_for_cause = asks_for_cause or draft.asks_for_cause
+            data.update(draft.patch.model_dump(mode='json', exclude_none=True, exclude={'clear_comparison'}))
+            if draft.patch.clear_comparison:
+                data['comparison'] = None
+            data.update(selected)
+            metric = permitted.get(data.get('metric_id'))
+            repeated = draft.action == 'clarify' and (
+                draft.reason == 'metric' and selected_metric or draft.reason == 'period' and selected.get('period'))
+            if not repeated:
+                break
+            if attempt:
+                raise ProviderFailure('model_invalid_plan')
+            payload = {**payload, 'previous_plan':dict(data) or None,
+                       'planning_feedback':'The requested clarification was already answered by the exact offered choice. Use the selected metric/period and retain the working scope. Return a plan, unsupported if its scope needs exploration, or clarify a different unresolved part. Do not ask the answered question again.'}
         if draft.action == 'unsupported':
             if self.service.settings.exploratory_enabled:
-                return {'explore':True,'plan':None,'clarification':None,'asks_for_cause':draft.asks_for_cause}
+                return {'explore':True,'plan':None,'clarification':None,'planning_scope':data,
+                        'asks_for_cause':asks_for_cause}
             return {'explanation':explanation_for('unsupported').model_dump(mode='json'),'plan':None,'clarification':None}
         if draft.action == 'clarify':
             ids = draft.candidate_metrics or list(permitted)
             if not set(ids) <= permitted.keys():
                 raise ProviderFailure('model_invalid_plan')
             reason = draft.reason if draft.reason != 'unsupported' else 'scope'
-            return {'clarification':Clarification(id=uuid4(),reason=reason,
+            period_metrics = [metric] if metric else [permitted[i] for i in ids]
+            return {'plan':None, 'planning_scope':data, 'asks_for_cause':asks_for_cause,
+                'clarification':Clarification(id=uuid4(),reason=reason,
                 question={'metric':'Which metric definition should I use?', 'period':'Which supported reporting period should I use?',
                           'scope':'Please specify the metric, reporting period and breakdown you need.'}[reason],
                 options=[f'{permitted[i].label} ({i})' for i in ids] if reason == 'metric' else
-                        sorted({period for m in permitted.values() for period in m.periods}) if reason == 'period' else []).model_dump(mode='json')}
-        data = dict(state.previous_plan or {})
-        changes = draft.patch.model_dump(mode='json',exclude_none=True,exclude={'clear_comparison'})
-        data.update(changes)
-        if draft.patch.clear_comparison:
-            data['comparison'] = None
+                        sorted({period for m in period_metrics for period in m.periods}) if reason == 'period' else []).model_dump(mode='json')}
         metric = permitted.get(data.get('metric_id'))
         if metric is None or not data.get('period'):
-            return {'clarification':Clarification(id=uuid4(),reason='scope',
-                question='Please specify a supported metric definition and reporting period.').model_dump(mode='json')}
+            return {'plan':None, 'planning_scope':data, 'asks_for_cause':asks_for_cause,
+                'clarification':Clarification(id=uuid4(),reason='period' if metric else 'metric',
+                question='Which supported reporting period should I use?' if metric else 'Which metric definition should I use?',
+                options=list(metric.periods) if metric else [f'{m.label} ({m.id})' for m in permitted.values()]).model_dump(mode='json')}
         # Version, population, completeness and permissions are server-owned.
         data.update(metric_version=metric.version,population=metric.population,include_total=True)
         try:
@@ -140,7 +170,7 @@ class ConversationGraph:
         except (ValidationError, InvalidMetricRequest):
             raise ProviderFailure('model_invalid_plan') from None
         return {'plan':plan.model_dump(mode='json'),'clarification':None,
-                'asks_for_cause':draft.asks_for_cause}
+                'planning_scope':data,'asks_for_cause':asks_for_cause}
 
     async def clarify(self, state):
         # No side effects before interrupt: LangGraph replays this node on resume.
@@ -151,18 +181,22 @@ class ConversationGraph:
         if not isinstance(reply,str) or not reply.strip() or len(reply)>2000:
             raise HTTPException(422,'invalid_clarification_reply')
         await self.jobs.guard(self.actor,self.run_id,self.token)
+        responses = [*state.clarification_responses, ClarificationResponse(clarification=pending, answer=reply)]
         plan = state.plan
         if pending.reason == 'entity':
-            choices = [item for item in pending.options if item.casefold() == reply.strip().casefold()]
-            if len(choices) == 1:
+            choice = match_option(pending.options, reply)
+            if choice is not None:
                 plan = MetricRequest.model_validate(plan).model_dump(mode='json')
                 filters = plan['comparison']['filters'] if pending.comparison else plan['filters']
                 for item in filters:
                     if item['dimension'] == pending.dimension:
-                        item['values'] = [choices[0] if v == pending.value else v for v in item['values']]
-                return {'plan':plan,'clarification':None,'replies':[*state.replies,reply]}
-        # Replan from the last resolved scope, retaining every authenticated reply.
-        return {'replies':[*state.replies,reply],'clarification':None,'plan':None}
+                        item['values'] = [choice if v == pending.value else v for v in item['values']]
+                return {'plan':plan,'clarification':None,'replies':[*state.replies,reply],
+                        'clarification_responses':responses}
+        # Replan from the current working scope, retaining every authenticated reply.
+        return {'replies':[*state.replies,reply],'clarification':None,'plan':None,
+                'clarification_responses':responses,
+                'planning_scope':plan if plan is not None else state.planning_scope}
 
     async def resolve_entities(self, state):
         await self.stage('resolving_entities')
@@ -179,7 +213,9 @@ class ConversationGraph:
                         dimension=item.dimension,query=value))
                     if resolution.status != 'resolved':
                         return {'plan':plan.model_dump(mode='json'),'clarification':Clarification(id=uuid4(),reason='entity',
-                            question=f'Choose an exact {item.dimension} value for this filter.',options=resolution.candidates,
+                            question=f'Choose an exact {item.dimension} value for this filter.' if resolution.candidates else
+                                     f'I could not find that {item.dimension}. Please enter its full name.',
+                            options=resolution.candidates,
                             dimension=item.dimension,value=value,comparison=comparison).model_dump(mode='json')}
                     item.values[i] = resolution.candidates[0]
         return {'plan':plan.model_dump(mode='json'),'clarification':None}
@@ -251,6 +287,8 @@ class ConversationGraph:
         previous = state.previous_plan or {}
         today = datetime.now(ZoneInfo(self.service.settings.business_timezone)).date()
         payload = {'question':state.question,'replies':state.replies,
+                   'clarification_responses':[response.model_dump(mode='json') for response in state.clarification_responses],
+                   'clarified_scope':state.planning_scope,
                    'previous':previous.get('exploration') or ({'certified_plan':previous} if previous else None),
                    'context':exploration.context(today),'feedback':[]}
         checked, empty = set(), None

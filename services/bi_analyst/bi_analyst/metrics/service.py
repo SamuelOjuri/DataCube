@@ -198,19 +198,20 @@ class MetricService:
             async with self.db.transaction(analytical=True) as conn:
                 await conn.execute("SELECT set_config('TimeZone',%s,true)", (self.settings.business_timezone,))
                 # position() treats %, _, quotes and backslashes as literal text.
-                # Exact case-insensitive matches precede substring suggestions.
+                # Preserve a literal offered choice even when labels differ only by case.
                 rows = await (await conn.execute(
                     f'SELECT DISTINCT CASE WHEN length("{column}")<=256 THEN "{column}" END AS value, '
-                    f'length("{column}")>256 AS oversized, lower("{column}")=lower(%s) AS exact '
+                    f'length("{column}")>256 AS oversized, "{column}"=%s AS literal, lower("{column}")=lower(%s) AS exact '
                     f'FROM analyst_query."{metric.relation}" WHERE position(lower(%s) in lower("{column}"))>0 '
-                    f'ORDER BY exact DESC,value NULLS LAST LIMIT 21',
-                    (body.query, body.query))).fetchall()
+                    f'ORDER BY literal DESC,exact DESC,value NULLS LAST LIMIT 21',
+                    (body.query, body.query, body.query))).fetchall()
             async with self.store.scoped(principal):
                 pass  # Recheck permission after releasing the reader.
         exact = [r["value"] for r in rows if r["exact"] and not r["oversized"]]
-        candidates = exact if exact else [r["value"] for r in rows[:20] if not r["oversized"]]
-        truncated = ((len(rows) > 20 or any(r["oversized"] for r in rows))
+        literal = [r["value"] for r in rows if r["literal"] and not r["oversized"]]
+        candidates = literal or exact or [r["value"] for r in rows[:20] if not r["oversized"]]
+        truncated = (not literal and (len(rows) > 20 or any(r["oversized"] for r in rows))
                      and not (exact and not rows[-1]["exact"]))
-        status = "resolved" if len(exact) == 1 and not truncated else "clarification_required" if candidates or truncated else "not_found"
+        status = "resolved" if len(literal or exact) == 1 and not truncated else "clarification_required" if candidates or truncated else "not_found"
         return EntityResolution(dimension=body.dimension, query=body.query, status=status,
                                 candidates=candidates[:20], truncated=truncated)

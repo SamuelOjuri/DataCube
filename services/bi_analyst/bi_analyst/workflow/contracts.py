@@ -55,6 +55,11 @@ class Clarification(Contract):
     comparison: bool = False
 
 
+class ClarificationResponse(Contract):
+    clarification: Clarification
+    answer: str = Field(min_length=1, max_length=2000)
+
+
 class ResultReference(Contract):
     result_id: UUID
     query_reference: str

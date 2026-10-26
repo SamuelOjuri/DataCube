@@ -20,7 +20,7 @@ from bi_analyst.exploration.policy import UnsafeQuery
 from bi_analyst.exploration.service import ExplorationQueryError, ExplorationService, cell, describe
 from bi_analyst.metrics.compiler import Compiler
 from bi_analyst.metrics.contracts import Freshness
-from bi_analyst.workflow.contracts import PlanDraft, WorkflowRun
+from bi_analyst.workflow.contracts import Clarification, ClarificationResponse, PlanDraft, WorkflowRun
 from bi_analyst.workflow.explanation import LEADS, explain, narrative
 from bi_analyst.workflow.graph import EXPLORATION_ATTEMPTS, MATCHED_NOTHING, ConversationGraph, GraphState
 from bi_analyst.workflow.provider import EXPLORE_SYSTEM, SYSTEM, GeminiProvider
@@ -80,7 +80,7 @@ def test_unsupported_plans_route_to_exploration_only_when_enabled(enabled):
     state = GraphState(question='What was the revenue for January 2026?')
     if enabled:
         assert asyncio.run(workflow.make_plan(state)) == {'explore': True, 'plan': None, 'clarification': None,
-                                                          'asks_for_cause': True}
+                                                          'planning_scope': {}, 'asks_for_cause': True}
     else:
         explanation = asyncio.run(workflow.make_plan(state))['explanation']
         assert explanation['kind'] == 'explanation' and explanation['reason'] == 'unsupported'
@@ -93,6 +93,24 @@ def test_exploration_follow_up_skips_certified_planner():
     state = GraphState(question='Now by category', previous_plan={'exploration': {'sql': 'SELECT 1'}})
     assert asyncio.run(workflow.make_plan(state))['explore'] is True
     assert provider.calls == []
+
+
+def test_exploration_receives_the_clarification_context_and_retained_scope():
+    response = ClarificationResponse(clarification=Clarification(id=uuid4(), reason='period',
+        question='Which period?', options=['last_month']), answer='last_month')
+    provider = Provider({'action':'unsupported', 'patch':{'metric_id':'invoice_monthly_actual',
+                                                       'filters':[{'dimension':'category','values':['A']}]}} , REVENUE.model_dump())
+    workflow = graph(provider)
+    state = GraphState(question='Show daily revenue for category A.', replies=['last_month'],
+                       clarification_responses=[response])
+    routed = GraphState.model_validate({**state.model_dump(), **asyncio.run(workflow.make_plan(state))})
+    asyncio.run(workflow.explore(routed))
+    stage, payload = provider.calls[-1]
+    assert stage == 'explore'
+    assert payload['clarification_responses'] == [response.model_dump(mode='json')]
+    assert payload['clarified_scope']['period'] == 'last_month'
+    assert payload['clarified_scope']['metric_id'] == 'invoice_monthly_actual'
+    assert payload['clarified_scope']['filters'][0]['values'] == ['A']
 
 
 def test_explore_repairs_invalid_sql_then_grounds_and_persists_answer():
